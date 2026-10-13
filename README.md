@@ -70,12 +70,13 @@ The smoke test runs logged out, so it exercises GitHub's classic PR markup. The 
 
 Release Firefox only installs signed add-ons for good. FloHub is signed as an *unlisted* add-on: Mozilla signs it automatically, and it doesn't appear on addons.mozilla.org.
 
-1. Bump `version` in `static/manifest.json` (and `package.json`). AMO never signs the same version twice.
-2. Tag the commit `v<version>` and push the tag.
+To release, tag any commit on `main` as `v<version>` and push the tag, for example `git tag v0.2.0 && git push origin v0.2.0`. The version comes from the tag: one to four dot-separated numbers, higher than the latest release, since AMO never signs the same version twice. `static/manifest.json` stays at `0.0.0`, which marks local builds; `FLOHUB_VERSION=0.2.0 bun run build:firefox` sets a version by hand. A release includes every commit up to the tagged one.
 
-`.github/workflows/sign-firefox.yaml` then signs the build and attaches it as `flohub-<version>.xpi` to the tag's GitHub release: to the one you drafted on GitHub's release page if it exists, otherwise to a new one. The job runs in the `amo` environment, which holds the `AMO_JWT_ISSUER` and `AMO_JWT_SECRET` secrets, accepts only `v*` tags and waits for a required reviewer's approval.
+`.github/workflows/sign-firefox.yaml` then signs the build. It attaches `flohub-<version>.xpi` and `updates.json` to the tag's GitHub release: to the one you drafted on GitHub's release page if it exists, otherwise to a new one. The job runs in the `amo` environment, which holds the `AMO_JWT_ISSUER` and `AMO_JWT_SECRET` secrets, accepts only `v*` tags and waits for a required reviewer's approval.
 
-The first signature ties the add-on ID in `build.ts` to the AMO account that owns the keys, so every later release must be signed with that account's keys. Firefox doesn't update the add-on on its own: install the new `.xpi` from the release.
+The first signature ties the add-on ID in `build.ts` to the AMO account that owns the keys, so every later release must be signed with that account's keys.
+
+Firefox updates FloHub on its own, starting with the first release that includes this update setup (the releases after 0.1.1). The Firefox manifest's `update_url` points at `releases/latest/download/updates.json`, which always resolves to the newest release's `updates.json`. Firefox checks it once a day; **Check for Updates** in `about:addons` checks right away. Installed copies keep that URL for good, so the repository must keep its name and the release assets their names. 0.1.0 and 0.1.1 have no `update_url`: install the next release's `.xpi` once by hand, and later versions arrive on their own.
 
 ## Layout
 
