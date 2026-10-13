@@ -36,6 +36,14 @@ jobs:
           path: web-ext-artifacts/*.xpi
       - name: Attach the signed add-on to the release
         if: github.ref_type == 'tag'
-        run: gh release create "$GITHUB_REF_NAME" web-ext-artifacts/*.xpi --generate-notes
+        run: |
+          xpi="flohub-${GITHUB_REF_NAME#v}.xpi"
+          cp web-ext-artifacts/*.xpi "$xpi"
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$xpi" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$xpi" --generate-notes
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
