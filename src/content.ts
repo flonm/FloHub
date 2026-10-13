@@ -27,6 +27,7 @@ let lastAnchorSearch = 0;
 let anchorRetry: ReturnType<typeof setTimeout> | undefined;
 let stackCollapsed = false;
 let showMerged = false;
+let floatingMinimized = false;
 let pendingNotice: string | null = null;
 let viewerIsAuthor = false;
 let claimedKey: string | null = null;
@@ -51,14 +52,21 @@ const actions = {
     showMerged = !showMerged;
     update({ showMerged });
   },
+  toggleMinimized: () => {
+    floatingMinimized = !floatingMinimized;
+    void chrome.storage.local.set({ floatingMinimized });
+    floating.setMinimized(floatingMinimized);
+  },
   compareVersions: () => compareVersions(),
 };
 const inline = new ReviewBar("inline", actions);
 const floating = new ReviewBar("floating", actions);
 const viewedTree = new ViewedTree(notify);
 
-void chrome.storage.local.get(["stackCollapsed", "pokes"]).then((stored) => {
+void chrome.storage.local.get(["stackCollapsed", "floatingMinimized", "pokes"]).then((stored) => {
   stackCollapsed = stored.stackCollapsed === true;
+  floatingMinimized = stored.floatingMinimized === true;
+  floating.setMinimized(floatingMinimized);
   pokes = (stored.pokes as Record<string, number> | undefined) ?? {};
   update({ stackCollapsed, ...(current ? { pokedAt: pokedAtFor(current) } : {}) });
 });

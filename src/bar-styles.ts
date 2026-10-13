@@ -25,6 +25,7 @@ export const BAR_STYLES = `
   z-index: 90;
   max-width: calc(100vw - 32px);
 }
+:host([data-mode="floating"][data-minimized]) { left: 0; }
 
 * { box-sizing: border-box; }
 svg { flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
@@ -97,6 +98,32 @@ button { font: inherit; color: inherit; }
   cursor: pointer;
 }
 .pill:hover { background: var(--rb-bg-muted); }
+.dock { display: flex; align-items: center; gap: 6px; }
+.minimize {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--rb-border);
+  background: var(--rb-bg);
+  box-shadow: var(--rb-shadow);
+}
+.minimize svg { transform: rotate(-90deg); }
+.tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--rb-border);
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
+  background: var(--rb-bg);
+  box-shadow: var(--rb-shadow);
+  color: var(--rb-muted);
+  cursor: pointer;
+}
+.tab:hover { background: var(--rb-bg-muted); color: var(--rb-fg); }
+.tab svg { transform: rotate(90deg); }
 .faces { display: inline-flex; align-items: center; }
 .face { position: relative; display: inline-flex; margin-right: -4px; }
 .face .avatar { width: 24px; height: 24px; outline: 2px solid var(--rb-bg); }
