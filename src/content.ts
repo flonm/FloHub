@@ -2,14 +2,18 @@ import { type BarState, ReviewBar } from "./bar";
 import { findInlineAnchor } from "./anchor";
 import { ViewedTree } from "./file-tree";
 import { send } from "./messages";
-import { type PullRef, parsePullRef, pullKey } from "./pull-ref";
+import { type PullRef, parsePullRef, pullKey, pullTab } from "./pull-ref";
+import { ReviewDialog } from "./review-dialog";
 import { deriveReviewers, type Reviewer } from "./reviewers";
+import { createShortcutMatcher, type ReviewEvent } from "./shortcuts";
 import { deriveStack } from "./stack";
+import { Toast } from "./toast";
 
 const AUTO_REFRESH_GAP_MS = 15_000;
 const STICKY_HEADER_HEIGHT = 96;
 const ANCHOR_RETRY_MS = 1_000;
 const AGE_TICK_MS = 60_000;
+const TEXT_FIELDS = "input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox'], [role='combobox'], [role='searchbox']";
 
 let current: PullRef | null = null;
 let state: BarState = { kind: "loading" };
@@ -20,7 +24,11 @@ let lastAnchorSearch = 0;
 let stackCollapsed = false;
 let showMerged = false;
 let pendingNotice: string | null = null;
+let viewerIsAuthor = false;
 const busy = new Set<string>();
+const dialog = new ReviewDialog();
+const toast = new Toast();
+const matchShortcut = createShortcutMatcher();
 
 const actions = {
   refresh: () => void load(true),
@@ -64,6 +72,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") void load(false);
 });
 addEventListener("focus", () => void load(false));
+addEventListener("keydown", onKeydown, true);
 
 sync();
 
@@ -157,6 +166,7 @@ async function load(force: boolean): Promise<void> {
 
   if (reply.ok) {
     const pullRequest = reply.value.repository?.pullRequest;
+    viewerIsAuthor = pullRequest?.author?.login === reply.value.viewer.login;
     state = pullRequest
       ? {
           kind: "ready",
@@ -199,4 +209,80 @@ async function rerequest(reviewer: Reviewer): Promise<void> {
   }
   render();
   await load(true);
+}
+
+function onKeydown(event: KeyboardEvent): void {
+  if (!current || dialog.isOpen) return;
+  const action = matchShortcut({
+    key: event.key,
+    metaKey: event.metaKey,
+    ctrlKey: event.ctrlKey,
+    shiftKey: event.shiftKey,
+    altKey: event.altKey,
+    repeat: event.repeat,
+    editable: isTextField(event),
+    time: event.timeStamp,
+  });
+  if (!action) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (action.type === "navigate") navigateStack(action.direction);
+  else if (action.withComment) openReview(action.event);
+  else void approveNow();
+}
+
+function isTextField(event: KeyboardEvent): boolean {
+  const target = event.composedPath()[0];
+  if (!(target instanceof Element)) return false;
+  return (target instanceof HTMLElement && target.isContentEditable) || !!target.closest(TEXT_FIELDS);
+}
+
+function navigateStack(direction: 1 | -1): void {
+  if (state.kind !== "ready") return;
+  const position = state.stack.currentPosition + direction;
+  const target = state.stack.entries.find((entry) => entry.position === position);
+  if (!target) {
+    toast.show(direction === 1 ? "Already at the top of the stack." : "Already at the bottom of the stack.", "info");
+    return;
+  }
+  location.assign(`${target.url}${pullTab(location.pathname)}`);
+}
+
+async function approveNow(): Promise<void> {
+  const ref = current;
+  if (!ref || isOwnPull()) return;
+  toast.show(`Approving #${ref.number}…`, "info");
+  const failure = await submitReview(ref, "APPROVE", "");
+  toast.show(failure ?? `Approved #${ref.number}.`, failure ? "danger" : "success");
+}
+
+function openReview(event: ReviewEvent): void {
+  const ref = current;
+  if (!ref || isOwnPull()) return;
+  dialog.open({
+    event,
+    number: ref.number,
+    pendingComments: send({ type: "pending-comments", ref }).then((reply) => {
+      if (!reply.ok) throw new Error(reply.message);
+      return reply.value;
+    }),
+    submit: async (body) => {
+      const failure = await submitReview(ref, event, body);
+      if (!failure) toast.show(event === "APPROVE" ? `Approved #${ref.number}.` : `Requested changes on #${ref.number}.`, "success");
+      return failure;
+    },
+  });
+}
+
+async function submitReview(ref: PullRef, event: ReviewEvent, body: string): Promise<string | null> {
+  const reply = await send({ type: "submit-review", ref, event, body });
+  if (!reply.ok) return `Could not submit the review: ${reply.message}`;
+  void load(true);
+  return null;
+}
+
+function isOwnPull(): boolean {
+  if (!viewerIsAuthor) return false;
+  toast.show("GitHub doesn't let you review your own pull request.", "info");
+  return true;
 }

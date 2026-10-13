@@ -1,4 +1,5 @@
 import type { PullRef } from "./pull-ref";
+import type { ReviewEvent } from "./shortcuts";
 import type { RawPullRequest } from "./reviewers";
 import type { RawStack, RawStackPull } from "./stack";
 import type { ViewedFile, ViewedFiles } from "./viewed";
@@ -152,7 +153,7 @@ export async function fetchOverview(ref: PullRef): Promise<Overview> {
  * @param login The reviewer to ask again.
  */
 export async function rerequestReview(ref: PullRef, login: string): Promise<void> {
-  await request(`/repos/${ref.owner}/${ref.repo}/pulls/${ref.number}/requested_reviewers`, {
+  await request(`${pullPath(ref)}/requested_reviewers`, {
     method: "POST",
     body: JSON.stringify({ reviewers: [login] }),
   });
@@ -191,6 +192,40 @@ export async function setFileViewed(pullRequestId: string, path: string, viewed:
     { pullRequestId, path },
   );
   if (!data[field]) throw new GitHubError("failed", "GitHub did not save the change. Check the token's permissions.");
+}
+
+/**
+ * @param ref The pull request.
+ * @returns How many draft comments the viewer's unsubmitted review holds, or null when there is none.
+ */
+export async function fetchPendingComments(ref: PullRef): Promise<number | null> {
+  const pending = await findPendingReview(ref);
+  if (!pending) return null;
+  const comments = (await request(`${pullPath(ref)}/reviews/${pending.id}/comments?per_page=100`, {})) as unknown[];
+  return comments.length;
+}
+
+/**
+ * Submits a review. A pending review the viewer started is submitted with its draft comments,
+ * the way GitHub's own "Submit review" does; otherwise a new review is created.
+ * @param ref The pull request.
+ * @param event Approve or request changes.
+ * @param body The review comment; may be empty.
+ */
+export async function submitReview(ref: PullRef, event: ReviewEvent, body: string): Promise<void> {
+  const pending = await findPendingReview(ref);
+  const payload = JSON.stringify(body ? { event, body } : { event });
+  const path = pending ? `${pullPath(ref)}/reviews/${pending.id}/events` : `${pullPath(ref)}/reviews`;
+  await request(path, { method: "POST", body: payload });
+}
+
+async function findPendingReview(ref: PullRef): Promise<{ id: number } | null> {
+  const reviews = (await request(`${pullPath(ref)}/reviews?per_page=100`, {})) as { id: number; state: string }[];
+  return reviews.find((review) => review.state === "PENDING") ?? null;
+}
+
+function pullPath(ref: PullRef): string {
+  return `/repos/${ref.owner}/${ref.repo}/pulls/${ref.number}`;
 }
 
 /**

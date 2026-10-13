@@ -67,6 +67,14 @@
       #status[data-tone="success"] { color: var(--success); }
       #status[data-tone="error"] { color: var(--danger); }
       code { font-size: 12px; }
+      kbd {
+        padding: 1px 6px;
+        border: 1px solid var(--border);
+        border-bottom-width: 2px;
+        border-radius: 4px;
+        color: var(--fg);
+        font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
       .disclaimer {
         margin: 16px 0;
         padding: 12px 16px;
@@ -86,6 +94,15 @@
         human has reviewed it line by line. It may break whenever GitHub changes its pages. Use it at your own risk.
       </div>
       <p>Shows a pull request's stack with each layer's status, and every reviewer's verdict with one-click re-request, on every tab.</p>
+
+      <h2>Shortcuts</h2>
+      <ul>
+        <li><kbd>⌘⇧↑</kbd> / <kbd>⌘⇧↓</kbd> (<kbd>Ctrl</kbd> outside macOS): go to the pull request above / below in the stack</li>
+        <li><kbd>R</kbd> then <kbd>Y</kbd>: approve right away, without a comment</li>
+        <li><kbd>R</kbd> then <kbd>A</kbd>: approve with a comment</li>
+        <li><kbd>R</kbd> then <kbd>N</kbd>: request changes with a comment</li>
+      </ul>
+      <p>They never fire while you type in a text field. A pending review with draft comments is submitted with your verdict.</p>
 
       <h2>Token</h2>
       <p>

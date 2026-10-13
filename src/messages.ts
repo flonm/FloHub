@@ -1,12 +1,15 @@
 import type { FailureCode, Overview } from "./github";
 import type { PullRef } from "./pull-ref";
 import type { ViewedFiles } from "./viewed";
+import type { ReviewEvent } from "./shortcuts";
 
 export type Message =
   | { type: "overview"; ref: PullRef }
   | { type: "rerequest"; ref: PullRef; login: string }
   | { type: "viewed-files"; ref: PullRef }
   | { type: "set-viewed"; pullRequestId: string; path: string; viewed: boolean }
+  | { type: "pending-comments"; ref: PullRef }
+  | { type: "submit-review"; ref: PullRef; event: ReviewEvent; body: string }
   | { type: "open-options" };
 
 export type Reply<T> = { ok: true; value: T } | { ok: false; code: FailureCode; message: string };
@@ -16,6 +19,8 @@ export interface ReplyByType {
   rerequest: null;
   "viewed-files": ViewedFiles;
   "set-viewed": null;
+  "pending-comments": number | null;
+  "submit-review": null;
   "open-options": null;
 }
 
