@@ -38,6 +38,8 @@ export interface StackEntry {
   position: number;
   tone: StackTone;
   label: string;
+  /** More about the status, shown when hovering the badge. */
+  detail: string | null;
   merged: boolean;
   current: boolean;
   resolvedThreads: number;
@@ -84,7 +86,7 @@ export function deriveStack(
 }
 
 function toEntry(pull: RawStackPull, position: number, current: boolean): StackEntry {
-  const { tone, label } = deriveStatus(pull);
+  const { tone, label, detail } = deriveStatus(pull);
   return {
     number: pull.number,
     title: pull.title,
@@ -92,6 +94,7 @@ function toEntry(pull: RawStackPull, position: number, current: boolean): StackE
     position,
     tone,
     label,
+    detail,
     merged: pull.state === "MERGED",
     current,
     resolvedThreads: pull.reviewThreads.nodes.filter((thread) => thread.isResolved).length,
@@ -105,24 +108,31 @@ function toEntry(pull: RawStackPull, position: number, current: boolean): StackE
  *
  * Pull requests further up a stack target another branch, where branch protection leaves
  * `reviewDecision` empty; their decision comes from the latest approvals and change requests.
+ * An approval counts even while branch rules still require more reviews, with a detail that says so.
  * @param pull The pull request.
  * @returns The badge tone and label.
  */
-export function deriveStatus(pull: RawStackPull): { tone: StackTone; label: string } {
-  if (pull.state === "MERGED") return { tone: "done", label: "Merged" };
-  if (pull.state === "CLOSED") return { tone: "neutral", label: "Closed" };
-  if (pull.isDraft) return { tone: "neutral", label: "Draft" };
-  if (pull.mergeable === "CONFLICTING") return { tone: "danger", label: "Merge conflict" };
+export function deriveStatus(pull: RawStackPull): { tone: StackTone; label: string; detail: string | null } {
+  if (pull.state === "MERGED") return { tone: "done", label: "Merged", detail: null };
+  if (pull.state === "CLOSED") return { tone: "neutral", label: "Closed", detail: null };
+  if (pull.isDraft) return { tone: "neutral", label: "Draft", detail: null };
+  if (pull.mergeable === "CONFLICTING") return { tone: "danger", label: "Merge conflict", detail: null };
   const checks = pull.statusCheckRollup?.state;
-  if (checks === "FAILURE" || checks === "ERROR") return { tone: "danger", label: "Checks failed" };
+  if (checks === "FAILURE" || checks === "ERROR") return { tone: "danger", label: "Checks failed", detail: null };
 
   const states = pull.latestOpinionatedReviews.nodes.map((review) => review.state);
-  const decision =
-    pull.reviewDecision ??
-    (states.includes("CHANGES_REQUESTED") ? "CHANGES_REQUESTED" : states.includes("APPROVED") ? "APPROVED" : null);
-  if (decision === "CHANGES_REQUESTED") return { tone: "attention", label: "Changes requested" };
-  if (decision === "APPROVED") return { tone: "success", label: "Approved" };
-  return { tone: "accent", label: "Needs review" };
+  if (pull.reviewDecision === "CHANGES_REQUESTED" || states.includes("CHANGES_REQUESTED")) {
+    return { tone: "attention", label: "Changes requested", detail: null };
+  }
+  if (pull.reviewDecision === "APPROVED") return { tone: "success", label: "Approved", detail: null };
+  if (states.includes("APPROVED")) {
+    const detail =
+      pull.reviewDecision === "REVIEW_REQUIRED"
+        ? "Approved, but GitHub's branch rules still require more reviews before this can merge."
+        : null;
+    return { tone: "success", label: "Approved", detail };
+  }
+  return { tone: "accent", label: "Needs review", detail: null };
 }
 
 /**
