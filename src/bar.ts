@@ -199,7 +199,7 @@ export class ReviewBar {
       chip.append(el("span", { class: "previous" }, `· poked ${when}`));
     } else if (reviewer.canPoke) {
       const poke = iconButton(
-        "bell",
+        "pointer",
         `Poke ${reviewer.name}: send them a new review request notification`,
         () => this.actions.poke(reviewer),
         `poke:${reviewer.key}`,
