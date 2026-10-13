@@ -1,5 +1,6 @@
 import { type BarState, ReviewBar } from "./bar";
 import { findInlineAnchor } from "./anchor";
+import { DiffHighlights, type HighlightStatus } from "./diff-highlights";
 import { ViewedTree } from "./file-tree";
 import { send } from "./messages";
 import { type PullRef, parsePullRef, pullKey, pullTab } from "./pull-ref";
@@ -37,6 +38,7 @@ let loadedFresh = false;
 let viewerIsAuthor = false;
 let claimedKey: string | null = null;
 let pokes: Record<string, number> = {};
+let highlight: HighlightStatus | null = null;
 const busy = new Set<string>();
 const dialog = new ReviewDialog();
 const versionsDialog = new VersionsDialog();
@@ -63,10 +65,18 @@ const actions = {
     floating.setMinimized(floatingMinimized);
   },
   compareVersions: () => compareVersions(),
+  toggleHighlight: () => {
+    if (highlight) highlights.setHidden(!highlight.hidden);
+    schedule();
+  },
 };
 const inline = new ReviewBar("inline", actions);
 const floating = new ReviewBar("floating", actions);
 const viewedTree = new ViewedTree(notify);
+const highlights = new DiffHighlights((status) => {
+  highlight = status;
+  update({ highlight });
+});
 
 void chrome.storage.local.get(["stackCollapsed", "floatingMinimized", "pokes"]).then((stored) => {
   stackCollapsed = stored.stackCollapsed === true;
@@ -117,6 +127,7 @@ function sync(): void {
   if (!ref) {
     current = null;
     viewedTree.sync(null);
+    highlights.sync(null);
     inline.host.remove();
     updateVisibility();
     return;
@@ -138,6 +149,7 @@ function sync(): void {
   if (!floating.host.isConnected) document.body.append(floating.host);
   if (!inline.host.isConnected) mountInline(ref);
   viewedTree.sync(ref);
+  highlights.sync(ref);
   updateVisibility();
 }
 
@@ -247,6 +259,7 @@ function readyState(overview: Overview, ref: PullRef, exact: boolean): Extract<B
       count: (exact && pullRequest.forcePushes?.totalCount) || 0,
       lastAt: (exact && pullRequest.forcePushes?.nodes.at(-1)?.createdAt) || null,
     },
+    highlight,
     notice: null,
   };
 }
@@ -261,6 +274,7 @@ async function load(force: boolean): Promise<void> {
   lastLoad = Date.now();
   const run = ++generation;
   viewedTree.refresh(ref);
+  highlights.refresh(ref);
 
   if (state.kind === "ready") {
     state = { ...state, refreshing: true };

@@ -186,8 +186,15 @@ export function pickBase(compares: { onBase: boolean; aheadBy: number }[]): numb
 export function defaultRange(versions: Version[]): { from: number; to: number } | null {
   const current = versions.at(-1);
   if (!current || versions.length < 2) return null;
-  const reviewed = versions.find((version) => version.viewerLatestReview && !version.current);
-  return { from: (reviewed ?? versions.at(-2)!).number, to: current.number };
+  return { from: (lastReviewedVersion(versions) ?? versions.at(-2)!).number, to: current.number };
+}
+
+/**
+ * @param versions Oldest first.
+ * @returns The version the viewer last reviewed, or null when they never did or reviewed the current one.
+ */
+export function lastReviewedVersion(versions: Version[]): Version | null {
+  return versions.find((version) => version.viewerLatestReview && !version.current) ?? null;
 }
 
 function earliest(a: string, b?: string): string {

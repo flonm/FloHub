@@ -141,15 +141,53 @@ const CHANGE_STATS: Record<string, { additions: number; deletions: number }> = {
 
 const EMPTY_INBOX = { viewer: { login: "octocat" }, review: { nodes: [] }, mine: { nodes: [] } };
 
+const README_FIRST_HUNK = [
+  " gh stack rebase [flags] [branch]",
+  " ```",
+  " ",
+  "-Fetches the latest changes from `origin`, then ensures each branch in the stack has the tip of the previous layer in its commit history. Rebases branches in order from trunk upward. If a branch's PR has been merged, the rebase automatically switches to `--onto` mode to correctly replay commits on top of the merge target.",
+  "+Fetches the latest changes from `origin`, then ensures each branch in the stack has the tip of the previous layer in its commit history. Rebases branches in order from trunk upward. If GitHub already rebased the stack, matching rewritten remote tips are adopted locally when your branches have not changed since the previous fetch and contain the same ordered commits. If a branch's PR has been merged, the rebase automatically switches to `--onto` mode to correctly replay commits on top of the merge target.",
+  " ",
+  " If a rebase conflict occurs, the operation pauses and prints the conflicted files with line numbers. Resolve the conflicts, stage with `git add`, and continue with `--continue`. To undo the entire rebase, use `--abort` to restore all branches to their pre-rebase state.",
+  " ",
+];
+const README_SECOND_CONTEXT = [
+  " ",
+  " A clean remote-ahead update (PRs added on top of your local stack) is pulled down automatically without prompting, so `sync` is safe to run in automation. Sync only prompts when the stacks have truly diverged.",
+  " ",
+];
+const README_SECOND_TAIL = [" #### Diverged stacks", " ", " When neither stack is a clean prefix of the other — for example, you added a branch locally while separate PRs were added to the same stack on GitHub — sync cannot merge the two automatically. In an interactive terminal it offers three choices:"];
+/** README.md as GitHub's page shows it (the current version), and as the reviewed v1 had it: moved, with another added line. */
+const README_CURRENT = [
+  "@@ -193,7 +193,7 @@ Pull from remote and do a cascading rebase across the stack.",
+  ...README_FIRST_HUNK,
+  "@@ -321,6 +321,8 @@ Performs a synchronization of the entire stack:",
+  ...README_SECOND_CONTEXT,
+  "+If GitHub already rebased the same stack branches, `sync` adopts those rewritten remote tips when your local tips have not changed since the previous fetch and `git range-diff` confirms the same commits in the same order. If local and remote commits both changed, sync stops rather than overwriting either side.",
+  "+",
+  ...README_SECOND_TAIL,
+].join("\n");
+const README_REVIEWED = [
+  "@@ -180,7 +180,7 @@ Pull from remote and do a cascading rebase across the stack.",
+  ...README_FIRST_HUNK,
+  "@@ -300,6 +300,8 @@ Performs a synchronization of the entire stack:",
+  ...README_SECOND_CONTEXT,
+  "+Sync adopts server rebases.",
+  "+",
+  ...README_SECOND_TAIL,
+].join("\n");
+
 const VERSION_FILES: Record<string, { filename: string; status: string; patch: string; sha: string }[]> = {
   aaaaaaa1: [
     { filename: "cmd/rebase.go", status: "modified", sha: "r1", patch: "@@ -10,3 +10,4 @@ func Rebase() {\n \tsync()\n+\tadopt(branch)\n \treturn nil" },
-    { filename: "README.md", status: "modified", sha: "m1", patch: "@@ -1,2 +1,3 @@\n # gh-stack\n+Adopts server rebases.\n " },
+    { filename: "README.md", status: "modified", sha: "m1", patch: README_REVIEWED },
+    { filename: "docs/same.md", status: "modified", sha: "s1", patch: "@@ -1,2 +1,3 @@\n # gh-stack\n+Adopts server rebases.\n " },
     { filename: "cmd/legacy.go", status: "modified", sha: "l1", patch: "@@ -4,2 +4,2 @@\n-old()\n+older()" },
   ],
   ccccccc3: [
     { filename: "cmd/rebase.go", status: "modified", sha: "r3", patch: "@@ -42,3 +42,5 @@ func Rebase() {\n \tsync()\n+\tadopt(branch, equivalent)\n+\tlog(branch)\n \treturn nil" },
-    { filename: "README.md", status: "modified", sha: "m3", patch: "@@ -8,2 +8,3 @@\n # gh-stack\n+Adopts server rebases.\n " },
+    { filename: "README.md", status: "modified", sha: "m3", patch: README_CURRENT },
+    { filename: "docs/same.md", status: "modified", sha: "s3", patch: "@@ -8,2 +8,3 @@\n # gh-stack\n+Adopts server rebases.\n " },
     { filename: "cmd/adopt_test.go", status: "added", sha: "t3", patch: "@@ -0,0 +1,2 @@\n+package cmd\n+func TestAdopt(t *testing.T) {}" },
   ],
 };
@@ -391,6 +429,11 @@ function visibleText(text: string): string {
     .trim();
 }
 
+async function diffAnchorOf(path: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(path));
+  return `diff-${Buffer.from(digest).toString("hex")}`;
+}
+
 function check(condition: boolean, message: string): void {
   if (!condition) throw new Error(`FAILED: ${message}`);
   console.log(`ok - ${message}`);
@@ -478,12 +521,17 @@ check(
 const fileRows = (await versions.locator("details.file > summary").allInnerTexts()).map(visibleText);
 check(
   JSON.stringify(fileRows) ===
-    JSON.stringify(["cmd/adopt_test.go Newly changed +4", "cmd/legacy.go No longer changed −3", "cmd/rebase.go Changed +2 −1"]),
+    JSON.stringify([
+      "README.md Changed +1 −1",
+      "cmd/adopt_test.go Newly changed +4",
+      "cmd/legacy.go No longer changed −3",
+      "cmd/rebase.go Changed +2 −1",
+    ]),
   `interdiff lists files whose change differs, ignoring moved hunks: ${JSON.stringify(fileRows)}`,
 );
 check(
   (await versions.locator("details.unchanged > summary").innerText()).startsWith("1 file makes the same change"),
-  "README.md, whose hunk only moved, counts as unchanged",
+  "docs/same.md, whose hunk only moved, counts as unchanged",
 );
 await page.waitForTimeout(250);
 await page.screenshot({ path: `${SCREENSHOTS}/versions-light.png` });
@@ -492,6 +540,43 @@ await versions.getByText("No differences.").waitFor();
 check(true, "picking the same version on both sides shows no differences");
 await page.keyboard.press("Escape");
 check(await versions.isHidden(), "Escape closes the versions dialog");
+
+const readmeDiff = page.locator(`#${await diffAnchorOf("README.md")}`);
+const changedCell = readmeDiff.locator("[data-flohub-since]");
+await changedCell.first().waitFor();
+const readmeAnchor = await diffAnchorOf("README.md");
+check(
+  (await changedCell.count()) === 1 &&
+    (await page.locator(`#${readmeAnchor}R324 ~ td.blob-code`).getAttribute("data-flohub-since")) === "v1",
+  "only the line added since the reviewed version is highlighted, on the head side",
+);
+check(
+  (await readmeDiff.locator("flohub-since-badge").innerText()) === "Changed since your review (v1)",
+  "the file header says it changed since the review",
+);
+const removedMarker = page.locator(`#${readmeAnchor}R323 ~ td.blob-code flohub-removed`);
+check((await removedMarker.locator("button").innerText()) === "−1", "a marker shows where a reviewed line is gone");
+await removedMarker.locator("button").click();
+check(
+  (await removedMarker.locator(".panel").innerText()).includes("+Sync adopts server rebases."),
+  "the marker lists the line that is gone",
+);
+await removedMarker.locator("button").click();
+await readmeDiff.locator(`#${readmeAnchor}R324`).scrollIntoViewIfNeeded();
+await page.waitForTimeout(150);
+await readmeDiff.screenshot({ path: `${SCREENSHOTS}/since-review-light.png` });
+check(
+  visibleText(await inlineBar(page).locator(".bar", { hasText: "Versions" }).innerText()).includes(
+    "3 files changed since your review (v1), highlighted in Files changed · 1 file is no longer changed",
+  ),
+  "the versions row says what changed since the review",
+);
+await inlineBar(page).getByRole("button", { name: "Hide" }).click();
+await page.waitForFunction(() => document.querySelectorAll("[data-flohub-since], flohub-removed, flohub-since-badge").length === 0);
+check(true, "Hide takes every highlight off the diff");
+await inlineBar(page).getByRole("button", { name: "Show" }).click();
+await changedCell.first().waitFor();
+check(true, "Show puts the highlights back");
 
 const tree = page.getByRole("tree", { name: "File Tree" });
 const viewedToggle = (path: string) => tree.locator(`flohub-viewed[data-path="${path}"]`);

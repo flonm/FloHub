@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { baseBranches, baseCandidates, defaultRange, deriveVersions, pickBase, type RawVersionPull } from "./versions";
+import { baseBranches, baseCandidates, defaultRange, deriveVersions, lastReviewedVersion, pickBase, type RawVersionPull } from "./versions";
 
 const commit = (oid: string, committedDate: string) => ({ oid, committedDate });
 
@@ -199,5 +199,15 @@ describe("pickBase", () => {
 
   test("never takes a candidate the version doesn't descend from", () => {
     expect(pickBase([{ onBase: false, aheadBy: 9 }, { onBase: false, aheadBy: 2 }])).toBe(0);
+  });
+});
+
+describe("lastReviewedVersion", () => {
+  test("is the viewer's last reviewed version, unless that is the current one", () => {
+    const reviewed = (oid: string) =>
+      deriveVersions(pull({ reviews: { nodes: [{ author: { login: "me" }, submittedAt: null, commit: commit(oid, "2026-10-01T08:00:00Z") }] } }), [], "me").versions;
+    expect(lastReviewedVersion(reviewed("v2"))?.number).toBe(2);
+    expect(lastReviewedVersion(reviewed("v3"))).toBeNull();
+    expect(lastReviewedVersion(deriveVersions(pull(), [], "me").versions)).toBeNull();
   });
 });
