@@ -3,15 +3,21 @@ import {
   fetchPendingComments,
   fetchViewedFiles,
   GitHubError,
+  readToken,
   rerequestReview,
   setFileViewed,
   submitReview,
 } from "./github";
 import type { Message, Reply, ReplyByType } from "./messages";
+import { clearOverviewCache, queueCacheWrite, writeCachedOverview } from "./overview-cache";
 
 chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) => {
   handle(message).then(sendResponse);
   return true;
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && "token" in changes) void queueCacheWrite(clearOverviewCache);
 });
 
 chrome.action.onClicked.addListener(() => {
@@ -21,8 +27,14 @@ chrome.action.onClicked.addListener(() => {
 async function handle(message: Message): Promise<Reply<ReplyByType[Message["type"]]>> {
   try {
     switch (message.type) {
-      case "overview":
-        return { ok: true, value: await fetchOverview(message.ref) };
+      case "overview": {
+        const token = await readToken();
+        const overview = await fetchOverview(message.ref);
+        void queueCacheWrite(async () => {
+          if ((await readToken()) === token) await writeCachedOverview(message.ref, overview);
+        });
+        return { ok: true, value: overview };
+      }
       case "rerequest":
         await rerequestReview(message.ref, message.login);
         return { ok: true, value: null };

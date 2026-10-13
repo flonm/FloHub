@@ -7,7 +7,7 @@ import { ReviewDialog } from "./review-dialog";
 import { deriveReviewers, type Reviewer } from "./reviewers";
 import { createShortcutMatcher, type ReviewEvent } from "./shortcuts";
 import type { Overview } from "./github";
-import { readCachedOverview, writeCachedOverview } from "./overview-cache";
+import { readCachedOverview } from "./overview-cache";
 import { deriveStack } from "./stack";
 import { Toast } from "./toast";
 
@@ -26,6 +26,8 @@ let lastAnchorSearch = 0;
 let stackCollapsed = false;
 let showMerged = false;
 let pendingNotice: string | null = null;
+/** Whether a fresh overview arrived for this pull request; until then a ready state comes from the cache. */
+let loadedFresh = false;
 let viewerIsAuthor = false;
 const busy = new Set<string>();
 const dialog = new ReviewDialog();
@@ -103,6 +105,7 @@ function sync(): void {
     busy.clear();
     showMerged = false;
     pendingNotice = null;
+    loadedFresh = false;
     viewedTree.sync(null);
     lastAnchorSearch = 0;
     render();
@@ -162,7 +165,7 @@ async function showCached(ref: PullRef): Promise<void> {
   const ready = readyState(cached.overview, ref, cached.exact);
   if (!ready) return;
   if (cached.exact) viewerIsAuthor = isAuthor(cached.overview);
-  state = { ...ready, refreshing: true };
+  state = { ...ready, refreshing: true, notice: pendingNotice };
   render();
 }
 
@@ -218,7 +221,7 @@ async function load(force: boolean): Promise<void> {
   if (reply.ok) {
     viewerIsAuthor = isAuthor(reply.value);
     const ready = readyState(reply.value, ref, true);
-    if (ready) void writeCachedOverview(ref, reply.value);
+    loadedFresh = ready !== null;
     state = ready
       ? {
           ...ready,
@@ -232,7 +235,7 @@ async function load(force: boolean): Promise<void> {
       : { kind: "error", message: "Pull request not found." };
   } else if (reply.code !== "failed") {
     state = { kind: "setup", message: reply.message };
-  } else if (state.kind === "ready") {
+  } else if (state.kind === "ready" && loadedFresh) {
     state = { ...state, refreshing: false, notice: reply.message };
   } else {
     state = { kind: "error", message: reply.message };

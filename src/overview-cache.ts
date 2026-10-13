@@ -74,8 +74,19 @@ export async function readCachedOverview(ref: PullRef): Promise<CachedOverview |
   }
 }
 
+let writes: Promise<void> = Promise.resolve();
+
 /**
- * Stores a freshly fetched overview and drops expired or surplus entries.
+ * Runs cache writes one after another. Only the service worker writes, so tabs never overwrite each other's index.
+ * @param write The write to queue.
+ */
+export function queueCacheWrite(write: () => Promise<void>): Promise<void> {
+  writes = writes.then(write, write);
+  return writes;
+}
+
+/**
+ * Stores a freshly fetched overview and drops expired or surplus entries. Call it through queueCacheWrite.
  * @param ref The pull request.
  * @param overview The overview GitHub returned.
  */
@@ -96,10 +107,14 @@ export async function writeCachedOverview(ref: PullRef, overview: Overview): Pro
   }
 }
 
-/** Drops every cached overview, for when the token, and with it the viewer, changes. */
+/** Drops every cached overview, for when the token, and with it the viewer, changes. Call it through queueCacheWrite. */
 export async function clearOverviewCache(): Promise<void> {
-  const index = await readIndex();
-  await chrome.storage.local.remove([INDEX_KEY, ...Object.keys(index).map((key) => ENTRY_PREFIX + key)]);
+  try {
+    const index = await readIndex();
+    await chrome.storage.local.remove([INDEX_KEY, ...Object.keys(index).map((key) => ENTRY_PREFIX + key)]);
+  } catch {
+    // Entries left behind still expire after a week.
+  }
 }
 
 async function readIndex(): Promise<CacheIndex> {

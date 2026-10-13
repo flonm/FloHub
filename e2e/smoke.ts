@@ -114,6 +114,8 @@ function createFixture(options: { partial?: boolean } = {}) {
     reviewState,
     /** Milliseconds to hold back the overview query, to see what the bar shows before it arrives. */
     overviewDelay: 0,
+    /** An HTTP status to fail the overview query with, or 0 to answer it. */
+    overviewFailure: 0,
     async handle(route: Route) {
       const request = route.request();
       const graphql = request.url().endsWith("/graphql")
@@ -149,6 +151,10 @@ function createFixture(options: { partial?: boolean } = {}) {
       }
       if (graphql) {
         if (this.overviewDelay > 0) await new Promise((resolve) => setTimeout(resolve, this.overviewDelay));
+        if (this.overviewFailure > 0) {
+          await route.fulfill({ status: this.overviewFailure, json: { message: "Bad gateway" } });
+          return;
+        }
         await route.fulfill({
           json: {
             data: {
@@ -494,6 +500,15 @@ check(
 );
 await inlineBar(cachedPage).getByText("Changes requested").first().waitFor({ timeout: 10_000 });
 check(true, "reviewers fill in once the fresh overview arrives");
+cachedFixture.overviewDelay = 1_000;
+cachedFixture.overviewFailure = 502;
+await cachedPage.reload();
+await inlineBar(cachedPage).locator(".stack-list").waitFor({ timeout: 3_000 });
+await inlineBar(cachedPage).getByRole("button", { name: "Retry" }).waitFor({ timeout: 10_000 });
+check(
+  (await inlineBar(cachedPage).locator(".chips > li").count()) === 0,
+  "when the first fresh load fails, the cached overview gives way to the error and Retry",
+);
 await cached.close();
 
 const dark = await launch("dark");
