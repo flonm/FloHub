@@ -25,7 +25,12 @@ async function fetchAndStore(): Promise<Inbox> {
     await clearInbox();
     throw new GitHubError("no-token", "Add a GitHub token to see your inbox.");
   }
-  const inbox = buildInbox(await fetchInbox(), Date.now());
+  const raw = await fetchInbox().catch(async (error: unknown) => {
+    // A count the token can no longer refresh would sit on the toolbar icon for good.
+    if (error instanceof GitHubError && error.code !== "failed") await clearInbox();
+    throw error;
+  });
+  const inbox = buildInbox(raw, Date.now());
   if ((await readToken()) !== token) throw new GitHubError("failed", "The token changed. Try again.");
   await chrome.storage.local.set({ [STORAGE_KEY]: inbox });
   await showBadge(inbox.reviewCount);

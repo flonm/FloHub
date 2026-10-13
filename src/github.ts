@@ -129,7 +129,7 @@ export type Overview = RawOverview & {
   unreadable: string[];
 };
 
-export type FailureCode = "no-token" | "unauthorized" | "failed";
+export type FailureCode = "no-token" | "unauthorized" | "scopes" | "failed";
 
 export class GitHubError extends Error {
   constructor(
@@ -304,16 +304,29 @@ async function graphql<T>(
 ): Promise<{ data: T; unreadable: string[] }> {
   const body = (await request("/graphql", { method: "POST", body: JSON.stringify({ query, variables }) }, token)) as {
     data?: T | null;
-    errors?: { message: string; path?: (string | number)[] }[];
+    errors?: { type?: string; message: string; path?: (string | number)[] }[];
   };
   const errors = body.errors ?? [];
   if (!body.data) {
+    const scopes = missingScopes(errors);
+    if (scopes !== null) throw new GitHubError("scopes", scopes);
     throw new GitHubError("failed", errors.map((error) => error.message).join(" ") || "GitHub returned no data.");
   }
   const unreadable = errors.map(
     (error) => error.path?.filter((segment): segment is string => typeof segment === "string").at(-1) ?? error.message,
   );
   return { data: body.data, unreadable: [...new Set(unreadable)] };
+}
+
+/**
+ * @param errors The errors of a GraphQL response that returned no data.
+ * @returns What the token lacks, when that is why GitHub refused the query, or null.
+ */
+export function missingScopes(errors: { type?: string; message: string }[]): string | null {
+  const refused = errors.find((error) => error.type === "INSUFFICIENT_SCOPES");
+  if (!refused) return null;
+  const scopes = /following scopes: \[([^\]]*)\]/.exec(refused.message)?.[1]?.replaceAll("'", "").trim();
+  return scopes ? `The token lacks the ${scopes} scope.` : "The token lacks a scope FloHub needs.";
 }
 
 async function request(path: string, init: RequestInit, explicitToken?: string): Promise<unknown> {
