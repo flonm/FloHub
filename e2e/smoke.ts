@@ -204,7 +204,9 @@ function createFixture(options: { partial?: boolean; failReadd?: boolean; inbox?
   const viewed = { ...CHANGED_FILES };
   const submissions: { path: string; body: unknown }[] = [];
   const reviewState = { pendingComments: null as number | null };
+  const compareLog: string[] = [];
   return {
+    compareLog,
     rerequests,
     requestLog,
     viewedMarks,
@@ -298,6 +300,8 @@ function createFixture(options: { partial?: boolean; failReadd?: boolean; inbox?
                   ...STACK_PULLS.find((pull) => pull.number === CURRENT),
                   ...(options.partial ? { statusCheckRollup: null } : {}),
                   baseRefName: "main",
+                  baseRefOid: "basebase",
+                  headRefOid: "ccccccc3",
                   stack: {
                     number: 338,
                     size: STACK_PULLS.length,
@@ -316,7 +320,7 @@ function createFixture(options: { partial?: boolean; failReadd?: boolean; inbox?
                       review("mojombo", "CHANGES_REQUESTED"),
                       review("coderabbitai", "COMMENTED", "Bot"),
                       review("pjhyett", "DISMISSED"),
-                      review("octocat", "APPROVED"),
+                      { ...review("octocat", "APPROVED"), commit: { oid: "aaaaaaa1" } },
                       review("wycats", "COMMENTED"),
                     ],
                   },
@@ -380,6 +384,7 @@ function createFixture(options: { partial?: boolean; failReadd?: boolean; inbox?
       const compare = /\/compare\/(\w+)\.\.\.(\w+)/.exec(request.url());
       if (compare) {
         const [, base, head] = compare as unknown as [string, string, string];
+        compareLog.push(`${base}...${head}`);
         const files = VERSION_FILES[head] ?? VERSION_FILES.ccccccc3!;
         await route.fulfill({
           json: { status: head === "ccccccc3" ? "ahead" : "diverged", merge_base_commit: { sha: head === "ccccccc3" ? base : "oldbase" }, files },
@@ -561,15 +566,23 @@ check(
   (await removedMarker.locator(".panel").innerText()).includes("+Sync adopts server rebases."),
   "the marker lists the line that is gone",
 );
-await removedMarker.locator("button").click();
+await page.keyboard.press("Escape");
+check(
+  !(await removedMarker.locator(".panel").evaluate((panel) => panel.matches(":popover-open"))),
+  "Escape closes the list of lines that are gone",
+);
 await readmeDiff.locator(`#${readmeAnchor}R324`).scrollIntoViewIfNeeded();
 await page.waitForTimeout(150);
 await readmeDiff.screenshot({ path: `${SCREENSHOTS}/since-review-light.png` });
+const versionsRow = inlineBar(page).locator(".bar", { hasText: "Versions" });
 check(
-  visibleText(await inlineBar(page).locator(".bar", { hasText: "Versions" }).innerText()).includes(
-    "3 files changed since your review (v1), highlighted in Files changed · 1 file is no longer changed",
-  ),
+  visibleText(await versionsRow.innerText()).includes("3 files changed since your review (v1), highlighted in Files changed"),
   "the versions row says what changed since the review",
+);
+await versionsRow.getByText("1 file is no longer changed").click();
+check(
+  (await versionsRow.locator(".dropped li").allInnerTexts()).join() === "cmd/legacy.go",
+  "the files the pull request no longer changes are listed on demand, reachable by keyboard",
 );
 await inlineBar(page).getByRole("button", { name: "Hide" }).click();
 await page.waitForFunction(() => document.querySelectorAll("[data-flohub-since], flohub-removed, flohub-since-badge").length === 0);
@@ -577,6 +590,13 @@ check(true, "Hide takes every highlight off the diff");
 await inlineBar(page).getByRole("button", { name: "Show" }).click();
 await changedCell.first().waitFor();
 check(true, "Show puts the highlights back");
+const comparesBeforeReload = fixture.compareLog.length;
+await page.reload();
+await changedCell.first().waitFor();
+check(
+  fixture.compareLog.length === comparesBeforeReload,
+  `a reload takes the highlights from storage, without comparing again: ${fixture.compareLog.length - comparesBeforeReload} new compares`,
+);
 
 // GitHub's React diff, which it serves to signed-in viewers: the same README.md lines in its split markup.
 const reactRow = (left: number | null, right: number | null, marker: string, text: string) => {

@@ -274,7 +274,6 @@ async function load(force: boolean): Promise<void> {
   lastLoad = Date.now();
   const run = ++generation;
   viewedTree.refresh(ref);
-  highlights.refresh(ref);
 
   if (state.kind === "ready") {
     state = { ...state, refreshing: true };
@@ -286,6 +285,14 @@ async function load(force: boolean): Promise<void> {
 
   if (reply.ok) {
     viewerIsAuthor = isAuthor(reply.value);
+    const pullRequest = reply.value.repository?.pullRequest;
+    if (pullRequest?.headRefOid && pullRequest.baseRefOid) {
+      const viewer = reply.value.viewer.login;
+      // A pending review is the viewer's unsubmitted draft, not a review of what they saw.
+      const reviews = pullRequest.reviews.nodes.filter((review) => review.author?.login === viewer && review.state !== "PENDING");
+      const reviewed = reviews.at(-1)?.commit?.oid ?? null;
+      highlights.update(ref, { head: pullRequest.headRefOid, base: pullRequest.baseRefOid, reviewed });
+    }
     const ready = readyState(reply.value, ref, true);
     loadedFresh = ready !== null;
     state = ready

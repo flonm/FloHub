@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parsePullRef, pullTab } from "./pull-ref";
+import { isWholeFilesTab, parsePullRef, pullTab } from "./pull-ref";
 
 describe("parsePullRef", () => {
   test.each([
@@ -32,5 +32,18 @@ describe("pullTab", () => {
     ["/octo-org/octo-repo/pull/7383/unknown", ""],
   ])("%s → %s", (pathname, tab) => {
     expect(pullTab(pathname)).toBe(tab);
+  });
+});
+
+describe("isWholeFilesTab", () => {
+  test.each([
+    ["/o/r/pull/1/files", true],
+    ["/o/r/pull/1/changes/", true],
+    ["/o/r/pull/1/files/abc123..def456", false],
+    ["/o/r/pull/1/changes/abc123", false],
+    ["/o/r/pull/1/commits", false],
+    ["/o/r/pull/1", false],
+  ])("%s → %p", (pathname, expected) => {
+    expect(isWholeFilesTab(pathname)).toBe(expected);
   });
 });

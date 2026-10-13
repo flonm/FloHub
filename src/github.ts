@@ -43,6 +43,8 @@ query ($owner: String!, $name: String!, $number: Int!) {
     pullRequest(number: $number) {
       ...StackPull
       baseRefName
+      baseRefOid
+      headRefOid
       author { login }
       viewerCanUpdate
       forcePushes: timelineItems(last: 1, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
@@ -65,6 +67,7 @@ query ($owner: String!, $name: String!, $number: Int!) {
           state
           submittedAt
           author { __typename login avatarUrl url }
+          commit { oid }
         }
       }
       stack {
@@ -141,7 +144,9 @@ query ($owner: String!, $name: String!, $number: Int!) {
           ... on AutomaticBaseChangeSucceededEvent { oldBase }
         }
       }
-      reviews(last: 100) { nodes { author { login } submittedAt commit { oid committedDate } } }
+      reviews(last: 100, states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]) {
+        nodes { author { login } submittedAt commit { oid committedDate } }
+      }
     }
   }
 }`;
@@ -178,6 +183,9 @@ export interface RawOverview {
       | (RawPullRequest &
           RawStackPull & {
             baseRefName: string;
+            /** Missing from overviews cached before these fields existed. */
+            baseRefOid?: string;
+            headRefOid?: string;
             stack: RawStack | null;
             forcePushes: { totalCount: number; nodes: ({ createdAt?: string } | null)[] } | null;
           })

@@ -30,6 +30,17 @@ export function pullKey(ref: PullRef): string {
   return `${ref.owner}/${ref.repo}#${ref.number}`;
 }
 
+const WHOLE_FILES_TAB = /^\/[^/]+\/[^/]+\/pull\/\d+\/(files|changes)\/?$/;
+
+/**
+ * @param pathname A page's path.
+ * @returns Whether it's the Files changed tab of the whole pull request, not of one commit or a range of them
+ * (`/files/<a>..<b>`, `/changes/<sha>`), which show other lines.
+ */
+export function isWholeFilesTab(pathname: string): boolean {
+  return WHOLE_FILES_TAB.test(pathname);
+}
+
 /**
  * @param pathname A pull request page's path.
  * @returns The tab segment to carry over to another pull request, like "/files", or "" for the Conversation tab.

@@ -25,7 +25,7 @@ export interface RawPullRequest {
   viewerCanUpdate: boolean;
   reviewRequests: { nodes: { requestedReviewer: RawActor | RawTeam | null }[] };
   reviews: {
-    nodes: { state: RawReviewState; submittedAt: string | null; author: RawActor | null }[];
+    nodes: { state: RawReviewState; submittedAt: string | null; author: RawActor | null; commit?: { oid: string } | null }[];
   };
 }
 

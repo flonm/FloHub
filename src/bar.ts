@@ -69,6 +69,8 @@ export class ReviewBar {
   private readonly root: HTMLElement;
   private state: BarState = { kind: "loading" };
   private expanded = false;
+  /** Whether the list of files the pull request no longer changes is open, kept across re-renders. */
+  private droppedOpen = false;
   private entering = false;
   private minimized = false;
 
@@ -166,19 +168,25 @@ export class ReviewBar {
           ? `Nothing changed since your review (v${highlight.since.number})`
           : `${files} changed since your review (v${highlight.since.number}), highlighted in Files changed`;
       bar.append(el("span", { class: "message" }, `· ${text}`));
-      if (highlight.droppedFiles.length > 0 && !highlight.hidden) {
-        const dropped = highlight.droppedFiles.length;
-        bar.append(
-          el(
-            "span",
-            { class: "message", title: highlight.droppedFiles.join("\n") },
-            `· ${dropped} ${dropped === 1 ? "file is" : "files are"} no longer changed`,
-          ),
-        );
+      if (highlight.truncated && !highlight.hidden) {
+        bar.append(el("span", { class: "message" }, "· GitHub lists at most 300 files, so files past that weren't compared"));
       }
       bar.append(
         button("text-button", highlight.hidden ? "Show" : "Hide", () => this.actions.toggleHighlight(), "toggle-highlight"),
       );
+      if (highlight.droppedFiles.length > 0 && !highlight.hidden) {
+        const dropped = highlight.droppedFiles.length;
+        const details = el("details", { class: "dropped" });
+        details.open = this.droppedOpen;
+        details.addEventListener("toggle", () => (this.droppedOpen = details.open));
+        const list = el("ul");
+        for (const path of highlight.droppedFiles) list.append(el("li", {}, path));
+        details.append(
+          el("summary", { "data-focus-key": "dropped-files" }, `${dropped} ${dropped === 1 ? "file is" : "files are"} no longer changed`),
+          list,
+        );
+        bar.append(details);
+      }
     }
     return bar;
   }
