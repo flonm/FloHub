@@ -13,6 +13,7 @@ const AUTO_REFRESH_GAP_MS = 15_000;
 const STICKY_HEADER_HEIGHT = 96;
 const ANCHOR_RETRY_MS = 1_000;
 const AGE_TICK_MS = 60_000;
+const POKE_MEMORY_MS = 86_400_000;
 const TEXT_FIELDS = "input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox'], [role='combobox'], [role='searchbox']";
 
 let current: PullRef | null = null;
@@ -27,6 +28,7 @@ let showMerged = false;
 let pendingNotice: string | null = null;
 let viewerIsAuthor = false;
 let claimedKey: string | null = null;
+let pokes: Record<string, number> = {};
 const busy = new Set<string>();
 const dialog = new ReviewDialog();
 const toast = new Toast();
@@ -35,6 +37,7 @@ const matchShortcut = createShortcutMatcher();
 const actions = {
   refresh: () => void load(true),
   rerequest: (reviewer: Reviewer) => void rerequest(reviewer),
+  poke: (reviewer: Reviewer) => void poke(reviewer),
   openOptions: () => void send({ type: "open-options" }),
   toggleStack: () => {
     stackCollapsed = !stackCollapsed;
@@ -50,9 +53,10 @@ const inline = new ReviewBar("inline", actions);
 const floating = new ReviewBar("floating", actions);
 const viewedTree = new ViewedTree(notify);
 
-void chrome.storage.local.get("stackCollapsed").then((stored) => {
+void chrome.storage.local.get(["stackCollapsed", "pokes"]).then((stored) => {
   stackCollapsed = stored.stackCollapsed === true;
-  update({ stackCollapsed });
+  pokes = (stored.pokes as Record<string, number> | undefined) ?? {};
+  update({ stackCollapsed, ...(current ? { pokedAt: pokedAtFor(current) } : {}) });
 });
 setInterval(() => update({ now: Date.now() }), AGE_TICK_MS);
 
@@ -197,6 +201,7 @@ async function load(force: boolean): Promise<void> {
           now: Date.now(),
           refreshing: false,
           busy,
+          pokedAt: pokedAtFor(ref),
           notice:
             reply.value.unreadable.length > 0
               ? `This token cannot read ${reply.value.unreadable.join(", ")}, so parts may be missing. Check its permissions.`
@@ -314,4 +319,37 @@ function isOwnPull(): boolean {
   if (!viewerIsAuthor) return false;
   toast.show("GitHub doesn't let you review your own pull request.", "info");
   return true;
+}
+
+/** @returns When the viewer last poked each reviewer of a pull request, by reviewer key. */
+function pokedAtFor(ref: PullRef): Map<string, number> {
+  const prefix = `${pullKey(ref)}|`;
+  return new Map(
+    Object.entries(pokes)
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([key, at]) => [key.slice(prefix.length), at]),
+  );
+}
+
+async function poke(reviewer: Reviewer): Promise<void> {
+  const ref = current;
+  if (!ref || state.kind !== "ready" || reviewer.kind === "bot" || busy.has(reviewer.key)) return;
+  busy.add(reviewer.key);
+  render();
+
+  const reply = await send({ type: "poke", ref, reviewer: { kind: reviewer.kind, name: reviewer.name } });
+  busy.delete(reviewer.key);
+  if (reply.ok) {
+    const now = Date.now();
+    pokes = Object.fromEntries([
+      ...Object.entries(pokes).filter(([, at]) => now - at < POKE_MEMORY_MS),
+      [`${pullKey(ref)}|${reviewer.key}`, now],
+    ]);
+    void chrome.storage.local.set({ pokes });
+    toast.show(`Poked ${reviewer.name}. GitHub notifies them within a minute.`, "success");
+  } else {
+    toast.show(reply.message, "danger");
+  }
+  if (current && pullKey(current) === pullKey(ref)) update({ pokedAt: pokedAtFor(ref) });
+  await load(true);
 }

@@ -96,19 +96,21 @@ const CHANGE_STATS: Record<string, { additions: number; deletions: number }> = {
   "skills/gh-stack/SKILL.md": { additions: 0, deletions: 0 },
 };
 
-function createFixture(options: { partial?: boolean } = {}) {
+function createFixture(options: { partial?: boolean; failReadd?: boolean } = {}) {
   const requested: (object | null)[] = [
     actor("mojombo"),
     { __typename: "Team", name: "backend", combinedSlug: "github/backend", avatarUrl: null, url: "https://github.com/orgs/github/teams/backend" },
   ];
   if (options.partial) requested.push(null);
   const rerequests: string[] = [];
+  const requestLog: string[] = [];
   const viewedMarks: string[] = [];
   const viewed = { ...CHANGED_FILES };
   const submissions: { path: string; body: unknown }[] = [];
   const reviewState = { pendingComments: null as number | null };
   return {
     rerequests,
+    requestLog,
     viewedMarks,
     submissions,
     reviewState,
@@ -191,10 +193,32 @@ function createFixture(options: { partial?: boolean } = {}) {
         });
         return;
       }
-      if (request.method() === "POST" && request.url().endsWith("/requested_reviewers")) {
-        const { reviewers } = request.postDataJSON() as { reviewers: string[] };
+      if (request.url().endsWith("/requested_reviewers")) {
+        const { reviewers = [], team_reviewers: teams = [] } = request.postDataJSON() as {
+          reviewers?: string[];
+          team_reviewers?: string[];
+        };
+        const names = [...reviewers, ...teams.map((slug) => `team:${slug}`)];
+        if (request.method() === "DELETE") {
+          requestLog.push(...names.map((name) => `remove:${name}`));
+          for (let index = requested.length - 1; index >= 0; index--) {
+            const entry = requested[index] as { login?: string; combinedSlug?: string } | null;
+            const slug = entry?.combinedSlug?.split("/").at(-1);
+            if ((entry?.login && reviewers.includes(entry.login)) || (slug && teams.includes(slug))) requested.splice(index, 1);
+          }
+          await route.fulfill({ status: 200, json: {} });
+          return;
+        }
+        requestLog.push(...names.map((name) => `add:${name}`));
+        if (options.failReadd) {
+          await route.fulfill({ status: 500, json: { message: "Server Error" } });
+          return;
+        }
         rerequests.push(...reviewers);
         for (const login of reviewers) requested.push(actor(login));
+        for (const slug of teams) {
+          requested.push({ __typename: "Team", name: slug, combinedSlug: `github/${slug}`, avatarUrl: null, url: `https://github.com/orgs/github/teams/${slug}` });
+        }
         await route.fulfill({ status: 201, json: {} });
         return;
       }
@@ -576,6 +600,51 @@ await darkKeyPage.locator("flohub-dialog dialog").getByText("No pending review c
 await darkKeyPage.keyboard.type("Please split the rebase planner out of this change.");
 await darkKeyPage.screenshot({ path: `${SCREENSHOTS}/review-dialog-dark.png` });
 await darkKeys.close();
+
+const pokes = await launch("light");
+const pokeFixture = createFixture();
+await pokes.route("https://api.github.com/**", (route) => pokeFixture.handle(route));
+const pokePage = await pokes.newPage();
+await pokePage.goto(`${PULL_URL}/files`);
+await inlineBar(pokePage).locator(".stack-list").waitFor();
+const pokeButtons = await inlineBar(pokePage).getByRole("button", { name: /^Poke / }).evaluateAll((buttons) =>
+  buttons.map((button) => button.getAttribute("aria-label")?.split(":")[0]),
+);
+check(
+  JSON.stringify(pokeButtons) === JSON.stringify(["Poke mojombo", "Poke github/backend"]),
+  `only currently requested reviewers can be poked: ${JSON.stringify(pokeButtons)}`,
+);
+await inlineBar(pokePage).getByRole("button", { name: /^Poke mojombo/ }).click();
+await pokePage.locator("flohub-toast").getByText("Poked mojombo. GitHub notifies them within a minute.").waitFor();
+await inlineBar(pokePage).locator(".chips > li", { hasText: "mojombo" }).getByText("· poked just now").waitFor();
+await inlineBar(pokePage).getByRole("button", { name: /^Poke github\/backend/ }).click();
+await inlineBar(pokePage).locator(".chips > li", { hasText: "github/backend" }).getByText("· poked just now").waitFor();
+check(
+  pokeFixture.requestLog.join() === "remove:mojombo,add:mojombo,remove:team:backend,add:team:backend",
+  `a poke removes and re-adds the request, for users and teams: ${pokeFixture.requestLog.join()}`,
+);
+await inlineBar(pokePage).screenshot({ path: `${SCREENSHOTS}/poke-light.png` });
+await pokePage.reload();
+await inlineBar(pokePage).locator(".chips > li", { hasText: "mojombo" }).getByText("· poked just now").waitFor();
+check(
+  (await inlineBar(pokePage).getByRole("button", { name: /^Poke / }).count()) === 0,
+  "a poked reviewer can't be poked again within the hour, across reloads",
+);
+await pokes.close();
+
+const failedPoke = await launch("light");
+const failedFixture = createFixture({ failReadd: true });
+await failedPoke.route("https://api.github.com/**", (route) => failedFixture.handle(route));
+const failedPage = await failedPoke.newPage();
+await failedPage.goto(`${PULL_URL}/files`);
+await inlineBar(failedPage).locator(".stack-list").waitFor();
+await inlineBar(failedPage).getByRole("button", { name: /^Poke mojombo/ }).click();
+await failedPage.locator("flohub-toast").getByText(/Re-request mojombo by hand\./).waitFor();
+check(
+  failedFixture.requestLog.join() === "remove:mojombo,add:mojombo,add:mojombo",
+  `a failed re-add is retried once and then tells you to re-request by hand: ${failedFixture.requestLog.join()}`,
+);
+await failedPoke.close();
 
 const partial = await launch("light");
 await partial.route("https://api.github.com/**", (route) => createFixture({ partial: true }).handle(route));

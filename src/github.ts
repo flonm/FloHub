@@ -195,6 +195,34 @@ export async function setFileViewed(pullRequestId: string, path: string, viewed:
 }
 
 /**
+ * Reminds a requested reviewer: removing and re-adding the review request makes GitHub send a new notification,
+ * while asking again for a pending reviewer does nothing. Re-adding is retried once, and a failure says so,
+ * because the request is gone at that point.
+ * @param ref The pull request.
+ * @param reviewer A requested user, or a team by its `org/slug`.
+ */
+export async function pokeReviewer(ref: PullRef, reviewer: { kind: "user" | "team"; name: string }): Promise<void> {
+  const path = `${pullPath(ref)}/requested_reviewers`;
+  const body = JSON.stringify(
+    reviewer.kind === "team" ? { team_reviewers: [reviewer.name.split("/").at(-1)] } : { reviewers: [reviewer.name] },
+  );
+  await request(path, { method: "DELETE", body });
+  try {
+    await request(path, { method: "POST", body });
+  } catch {
+    try {
+      await request(path, { method: "POST", body });
+    } catch (error) {
+      const reason = error instanceof GitHubError ? error.message : "GitHub did not answer.";
+      throw new GitHubError(
+        "failed",
+        `Removed the review request for ${reviewer.name} but could not add it back (${reason}). Re-request ${reviewer.name} by hand.`,
+      );
+    }
+  }
+}
+
+/**
  * @param ref The pull request.
  * @returns How many draft comments the viewer's unsubmitted review holds, or null when there is none.
  */

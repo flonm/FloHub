@@ -3,6 +3,7 @@ import {
   fetchPendingComments,
   fetchViewedFiles,
   GitHubError,
+  pokeReviewer,
   rerequestReview,
   setFileViewed,
   submitReview,
@@ -23,6 +24,9 @@ async function handle(message: Message): Promise<Reply<ReplyByType[Message["type
     switch (message.type) {
       case "overview":
         return { ok: true, value: await fetchOverview(message.ref) };
+      case "poke":
+        await pokeReviewer(message.ref, message.reviewer);
+        return { ok: true, value: null };
       case "rerequest":
         await rerequestReview(message.ref, message.login);
         return { ok: true, value: null };
