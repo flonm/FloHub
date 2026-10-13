@@ -45,7 +45,7 @@ bun run build
 
 1. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick `dist/`.
 
-   For Firefox (128 or later), run `bun run build:firefox` instead, open `about:debugging#/runtime/this-firefox`, click **Load Temporary Add-on…** and pick `dist-firefox/manifest.json`. Firefox drops temporary add-ons on restart. If the options page says FloHub can't read GitHub, click **Allow access to GitHub**, or allow it under the add-on's **Permissions** in `about:addons`.
+   For Firefox (128 or later), run `bun run build:firefox` instead, open `about:debugging#/runtime/this-firefox`, click **Load Temporary Add-on…** and pick `dist-firefox/manifest.json`. Firefox drops temporary add-ons on restart. To keep it installed, download the signed `.xpi` from the latest [release](../../releases) and open it in Firefox. If the options page says FloHub can't read GitHub, click **Allow access to GitHub**, or allow it under the add-on's **Permissions** in `about:addons`.
 2. Click the extension's toolbar icon, or "Set up token" in the bar, and paste a token. [This link](https://github.com/settings/tokens/new?description=FloHub&scopes=repo,read:org) creates a classic token with the right scopes, and it needs no organization approval:
    - `repo`: read pull requests, re-request reviews and mark files as viewed
    - `read:org`: show requested teams
@@ -61,9 +61,21 @@ After `bun run build`, click the reload icon on the extension's card in `chrome:
 | `bun run test` | Unit tests: reviewer states, stack status precedence, last activity, ages, URL parsing, file tree path matching, line counts |
 | `bun run typecheck` | `tsc --noEmit` |
 | `bun run lint:firefox` | Builds `dist-firefox/` and runs Mozilla's `web-ext lint` on it |
+| `bun run sign:firefox` | Builds `dist-firefox/` and has addons.mozilla.org sign it as an unlisted add-on. The signed `.xpi` lands in `web-ext-artifacts/`. Needs `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` from [your AMO API keys](https://addons.mozilla.org/developers/addon/api/key/). |
 | `bun run e2e` | Builds, loads `dist/` into Playwright's Chromium, mocks `api.github.com`, and drives a public PR (`PULL_URL` overrides it). Screenshots go to `e2e/screenshots/`. |
 
 The smoke test runs logged out, so it exercises GitHub's classic PR markup. The bar anchors to the first page heading containing `#<number>` (see `src/anchor.ts`). If a GitHub redesign breaks that, the floating pill still works. Fix the anchor there.
+
+## Release
+
+Release Firefox only installs signed add-ons for good. FloHub is signed as an *unlisted* add-on: Mozilla signs it automatically, and it doesn't appear on addons.mozilla.org.
+
+1. Bump `version` in `static/manifest.json` (and `package.json`). AMO never signs the same version twice.
+2. Tag the commit `v<version>` and push the tag.
+
+`.github/workflows/sign-firefox.yaml` then signs the build and attaches the `.xpi` to a GitHub release. The job runs in the `amo` environment, which holds the `AMO_JWT_ISSUER` and `AMO_JWT_SECRET` secrets, accepts only `v*` tags and waits for a required reviewer's approval.
+
+The first signature ties the add-on ID in `build.ts` to the AMO account that owns the keys, so every later release must be signed with that account's keys. Firefox doesn't update the add-on on its own: install the new `.xpi` from the release.
 
 ## Layout
 

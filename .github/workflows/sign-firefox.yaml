@@ -1,0 +1,41 @@
+name: Sign Firefox add-on
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    environment: amo
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run test
+      - name: Check the tag matches the manifest version
+        if: github.ref_type == 'tag'
+        run: |
+          version="$(jq -r .version static/manifest.json)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match manifest version $version."
+            exit 1
+          fi
+      - run: bun run sign:firefox
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flohub-firefox
+          path: web-ext-artifacts/*.xpi
+      - name: Attach the signed add-on to the release
+        if: github.ref_type == 'tag'
+        run: gh release create "$GITHUB_REF_NAME" web-ext-artifacts/*.xpi --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
