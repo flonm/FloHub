@@ -71,6 +71,47 @@ const STACK_PULLS = [
   stackPull(348, "docs(stack): document server rebases", { isDraft: true }, [0, 0], 190),
 ];
 
+function inboxPull(number: number, title: string, overrides: Record<string, unknown> = {}, repo = "github/gh-stack") {
+  return {
+    ...stackPull(number, title),
+    url: `https://github.com/${repo}/pull/${number}`,
+    repository: { nameWithOwner: repo },
+    author: { login: "hubot", avatarUrl: "https://avatars.githubusercontent.com/hubot?v=4" },
+    latestReviews: { nodes: [] },
+    stack: null,
+    ...overrides,
+  };
+}
+
+const INBOX_STACK = {
+  number: 900,
+  size: 3,
+  entries: { nodes: [901, 902, 903].map((number, index) => ({ position: index + 1, pullRequest: { number } })) },
+};
+
+const INBOX = {
+  viewer: { login: "octocat" },
+  review: {
+    nodes: [
+      inboxPull(901, "feat(api): add the stack endpoint", { stack: INBOX_STACK }),
+      inboxPull(903, "feat(ui): render the stack", { stack: INBOX_STACK, timelineItems: { nodes: [{ __typename: "HeadRefForcePushedEvent", createdAt: ago(1) }] } }),
+      inboxPull(
+        77,
+        "fix(auth): refresh tokens before they expire and retry the failed request once",
+        { latestReviews: { nodes: [{ author: { login: "octocat" } }] }, timelineItems: { nodes: [{ __typename: "HeadRefForcePushedEvent", createdAt: ago(48) }] } },
+        "octo-org/api",
+      ),
+    ],
+  },
+  mine: {
+    nodes: [
+      inboxPull(120, "docs: explain the stack badge", { reviewDecision: "APPROVED" }),
+      inboxPull(121, "feat(stack): show failing checks", { statusCheckRollup: { state: "FAILURE" } }, "octo-org/api"),
+      {},
+    ],
+  },
+};
+
 const UNREADABLE = "Resource not accessible by personal access token";
 
 const CHANGED_FILES: Record<string, string> = {
@@ -96,7 +137,9 @@ const CHANGE_STATS: Record<string, { additions: number; deletions: number }> = {
   "skills/gh-stack/SKILL.md": { additions: 0, deletions: 0 },
 };
 
-function createFixture(options: { partial?: boolean; failReadd?: boolean } = {}) {
+const EMPTY_INBOX = { viewer: { login: "octocat" }, review: { nodes: [] }, mine: { nodes: [] } };
+
+function createFixture(options: { partial?: boolean; failReadd?: boolean; inbox?: object; inboxGate?: Promise<unknown> } = {}) {
   const requested: (object | null)[] = [
     actor("mojombo"),
     { __typename: "Team", name: "backend", combinedSlug: "github/backend", avatarUrl: null, url: "https://github.com/orgs/github/teams/backend" },
@@ -145,6 +188,11 @@ function createFixture(options: { partial?: boolean; failReadd?: boolean } = {})
             },
           },
         });
+        return;
+      }
+      if (graphql?.query.includes("review: search(")) {
+        await options.inboxGate;
+        await route.fulfill({ json: { data: options.inbox ?? INBOX } });
         return;
       }
       if (graphql) {
@@ -240,7 +288,14 @@ function createFixture(options: { partial?: boolean; failReadd?: boolean } = {})
   };
 }
 
-async function launch(colorScheme: "light" | "dark"): Promise<BrowserContext> {
+function badgeText(context: BrowserContext): Promise<string | undefined> {
+  return context.serviceWorkers()[0]?.evaluate(() => chrome.action.getBadgeText({})) ?? Promise.resolve(undefined);
+}
+
+/**
+ * @param api Answers GitHub's API from the start, so the refresh the stored token starts never reaches the real one.
+ */
+async function launch(colorScheme: "light" | "dark", api?: (route: Route) => Promise<void>): Promise<BrowserContext> {
   const context = await chromium.launchPersistentContext(await mkdtemp(join(tmpdir(), "flohub-")), {
     channel: "chromium",
     headless: true,
@@ -248,6 +303,7 @@ async function launch(colorScheme: "light" | "dark"): Promise<BrowserContext> {
     viewport: { width: 1280, height: 860 },
     args: [`--disable-extensions-except=${EXTENSION}`, `--load-extension=${EXTENSION}`],
   });
+  if (api) await context.route("https://api.github.com/**", api);
   const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
   await worker.evaluate(() => chrome.storage.local.set({ token: "test-token" }));
   return context;
@@ -475,6 +531,154 @@ await page.waitForURL(/\/pull\/\d+$/);
 await inlineBar(page).getByText("Re-requested").first().waitFor();
 check(await inlineBar(page).isVisible(), "bar survives in-page navigation to the Conversation tab");
 await light.close();
+
+for (const scheme of ["light", "dark"] as const) {
+  const inboxContext = await launch(scheme, (route) => createFixture().handle(route));
+  // Tabs the extension opens skip the route, so their rows point at pull requests that do not exist and do not redirect.
+  await inboxContext.route("https://github.com/octo-org/api/pull/77/files", (route) =>
+    route.fulfill({ contentType: "text/html", body: "<title>Pull request</title>" }),
+  );
+  const popupId = new URL(inboxContext.serviceWorkers()[0]?.url() ?? "").host;
+  const popup = await inboxContext.newPage();
+  await popup.setViewportSize({ width: 504, height: 600 });
+  await popup.goto(`chrome-extension://${popupId}/popup.html`);
+  await popup.getByText("feat(ui): render the stack").waitFor();
+  if (scheme === "light") {
+    const sections = await popup.locator("section").evaluateAll((elements) =>
+      elements.map((section) => ({
+        heading: section.querySelector("h2")?.textContent,
+        rows: [...section.querySelectorAll(".pull")].map((row) => row.querySelector(".title")?.textContent),
+      })),
+    );
+    check(
+      JSON.stringify(sections) ===
+        JSON.stringify([
+          {
+            heading: "Waiting for your review3",
+            rows: [
+              "#903 feat(ui): render the stack",
+              "#901 feat(api): add the stack endpoint",
+              "#77 fix(auth): refresh tokens before they expire and retry the failed request once",
+            ],
+          },
+          { heading: "Your pull requests2", rows: ["#121 feat(stack): show failing checks", "#120 docs: explain the stack badge"] },
+        ]),
+      `popup groups review requests by stack, top layer first, and puts failing own PRs first: ${JSON.stringify(sections)}`,
+    );
+    check(
+      (await popup.locator(".pull", { hasText: "#77" }).getByText("Re-requested").count()) === 1,
+      "a review request the viewer answered before is marked as re-requested",
+    );
+    const positions = await popup.locator(".pull").evaluateAll((rows) =>
+      rows.map((row) => row.querySelector(".position [aria-hidden]")?.textContent ?? null),
+    );
+    check(
+      JSON.stringify(positions) === JSON.stringify(["3/3", "1/3", null, null, null]) &&
+        (await popup.locator(".group-label").count()) === 0,
+      `stacked rows show their layer inline, with no group heading: ${JSON.stringify(positions)}`,
+    );
+    const badge = await inboxContext.serviceWorkers()[0]?.evaluate(() => chrome.action.getBadgeText({}));
+    check(badge === "3", `the toolbar badge counts the review requests: "${badge}"`);
+    const longTitle = await popup.locator(".pull", { hasText: "#77" }).locator(".title").evaluate((title) => ({
+      truncated: title.scrollWidth > title.clientWidth,
+      tooltip: title.getAttribute("title"),
+    }));
+    check(
+      longTitle.truncated && longTitle.tooltip === "#77 fix(auth): refresh tokens before they expire and retry the failed request once",
+      `a long title truncates and keeps the full title as a tooltip: ${JSON.stringify(longTitle)}`,
+    );
+
+    const focusedRow = () => popup.evaluate(() => document.activeElement?.querySelector(".number")?.textContent?.trim() ?? null);
+    check((await focusedRow()) === "#903", `the popup opens with focus on the first row: ${await focusedRow()}`);
+    const visited: (string | null)[] = [];
+    for (const key of ["ArrowDown", "j", "j", "k", "End", "ArrowUp", "Home", "ArrowUp"]) {
+      await popup.keyboard.press(key);
+      visited.push(await focusedRow());
+    }
+    check(
+      visited.join() === "#901,#77,#121,#77,#120,#121,#903,#903",
+      `arrow keys and j/k move through both sections, Home and End jump to the ends: ${visited.join()}`,
+    );
+    const tabStops = await popup.locator('.pull[tabindex="0"]').count();
+    check(tabStops === 1, `the list holds a single tab stop: ${tabStops}`);
+    await popup.keyboard.press("Shift+Tab");
+    await popup.keyboard.press("ArrowDown");
+    check((await focusedRow()) === "#903", "the arrow down steps from the header back into the list");
+
+    const [opened] = await Promise.all([
+      inboxContext.waitForEvent("page"),
+      popup.locator(".pull", { hasText: "#77" }).click({ modifiers: ["ControlOrMeta"] }),
+    ]);
+    check(opened.url() === "https://github.com/octo-org/api/pull/77", `a row opens its pull request in a tab: ${opened.url()}`);
+    await opened.close();
+    await popup.keyboard.press("End");
+    await popup.keyboard.press("k");
+    const [background] = await Promise.all([inboxContext.waitForEvent("page"), popup.keyboard.press("ControlOrMeta+Enter")]);
+    check(
+      background.url() === "https://github.com/octo-org/api/pull/121" && !popup.isClosed(),
+      `Cmd/Ctrl+Enter opens the focused row in a background tab and keeps the popup open: ${background.url()}`,
+    );
+    await background.close();
+    const [middle] = await Promise.all([
+      inboxContext.waitForEvent("page"),
+      popup.locator(".pull", { hasText: "#121" }).click({ button: "middle" }),
+    ]);
+    check(middle.url() === "https://github.com/octo-org/api/pull/121" && !popup.isClosed(), `a middle click opens a background tab: ${middle.url()}`);
+    await middle.close();
+
+    const existing = await inboxContext.newPage();
+    await existing.goto("https://github.com/octo-org/api/pull/77/files");
+    const launcher = await inboxContext.newPage();
+    await launcher.goto(`chrome-extension://${popupId}/popup.html`);
+    await launcher.locator(".pull", { hasText: "#77" }).waitFor();
+    const pagesBefore = inboxContext.pages().length;
+    await launcher.locator(".pull", { hasText: "#77" }).focus();
+    await Promise.all([launcher.waitForEvent("close"), launcher.keyboard.press("Enter").catch(() => undefined)]);
+    check(
+      inboxContext.pages().length === pagesBefore - 1 && inboxContext.pages().filter((tab) => tab.url().includes("/pull/77")).length === 1,
+      "Enter switches to a tab that already shows the pull request and closes the popup",
+    );
+    await existing.close();
+    await popup.mouse.move(0, 0);
+    await popup.keyboard.press("Home");
+  }
+  await popup.waitForFunction(() => [...document.images].every((image) => image.complete));
+  await popup.screenshot({ path: `${SCREENSHOTS}/popup-${scheme}.png`, fullPage: true });
+  await inboxContext.serviceWorkers()[0]?.evaluate(() => chrome.storage.local.remove("token"));
+  await popup.reload();
+  await popup.getByRole("button", { name: "Set up token" }).waitFor();
+  check(
+    (await badgeText(inboxContext)) === "" && (await popup.evaluate(() => document.activeElement?.textContent)) === "Set up token",
+    `without a token the popup asks for one, focuses the button and the badge clears (${scheme})`,
+  );
+  await inboxContext.close();
+}
+
+for (const scheme of ["light", "dark"] as const) {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const emptyContext = await launch(scheme, (route) => createFixture({ inbox: EMPTY_INBOX, inboxGate: gate }).handle(route));
+  const popupId = new URL(emptyContext.serviceWorkers()[0]?.url() ?? "").host;
+  const popup = await emptyContext.newPage();
+  await popup.setViewportSize({ width: 504, height: 600 });
+  await popup.goto(`chrome-extension://${popupId}/popup.html`);
+  await popup.locator(".skeleton").waitFor();
+  check((await popup.locator("main").getAttribute("aria-busy")) === "true", `the first open shows a busy skeleton (${scheme})`);
+  if (scheme === "light") await popup.screenshot({ path: `${SCREENSHOTS}/popup-loading-light.png`, fullPage: true });
+  release();
+  await popup.getByText("Nothing to review").waitFor();
+  check(
+    (await popup.locator("section").count()) === 0 && (await popup.locator("main").getAttribute("aria-busy")) === "false",
+    `an empty inbox shows one combined empty state (${scheme})`,
+  );
+  await popup.screenshot({ path: `${SCREENSHOTS}/popup-empty-${scheme}.png`, fullPage: true });
+  if (scheme === "light") {
+    // The popup closes while the key is still being pressed.
+    await Promise.all([popup.waitForEvent("close"), popup.keyboard.press("Escape").catch(() => undefined)]);
+    check(true, "Escape closes the popup");
+  }
+  await emptyContext.close();
+}
 
 const dark = await launch("dark");
 await dark.route("https://api.github.com/**", (route) => createFixture().handle(route));

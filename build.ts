@@ -25,7 +25,7 @@ const OUT = TARGETS[target];
 await Bun.$`rm -rf ${OUT}`;
 
 const result = await Bun.build({
-  entrypoints: ["src/background.ts", "src/content.ts", "src/options.ts"],
+  entrypoints: ["src/background.ts", "src/content.ts", "src/options.ts", "src/popup.ts"],
   outdir: OUT,
   target: "browser",
   format: "iife",

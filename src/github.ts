@@ -1,3 +1,4 @@
+import type { RawInbox } from "./inbox";
 import type { PullRef } from "./pull-ref";
 import type { ReviewEvent } from "./shortcuts";
 import type { RawPullRequest } from "./reviewers";
@@ -70,6 +71,28 @@ query ($owner: String!, $name: String!, $number: Int!) {
   }
 }`;
 
+const INBOX_QUERY = `
+${STACK_PULL_FRAGMENT}
+fragment InboxPull on PullRequest {
+  ...StackPull
+  repository { nameWithOwner }
+  author { login avatarUrl }
+  latestReviews(first: 20) { nodes { author { login } } }
+  stack {
+    number
+    size
+    entries(first: 50) { nodes { position pullRequest { number } } }
+  }
+}
+query ($review: String!, $mine: String!) {
+  viewer { login }
+  review: search(query: $review, type: ISSUE, first: 50) { nodes { ... on PullRequest { ...InboxPull } } }
+  mine: search(query: $mine, type: ISSUE, first: 50) { nodes { ... on PullRequest { ...InboxPull } } }
+}`;
+
+const REVIEW_SEARCH = "is:pr is:open archived:false review-requested:@me";
+const MINE_SEARCH = "is:pr is:open archived:false author:@me";
+
 const VIEWED_FILES_QUERY = `
 query ($owner: String!, $name: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $name) {
@@ -106,7 +129,7 @@ export type Overview = RawOverview & {
   unreadable: string[];
 };
 
-export type FailureCode = "no-token" | "unauthorized" | "failed";
+export type FailureCode = "no-token" | "unauthorized" | "scopes" | "failed";
 
 export class GitHubError extends Error {
   constructor(
@@ -257,6 +280,15 @@ function pullPath(ref: PullRef): string {
 }
 
 /**
+ * Searches the open pull requests that wait for the viewer's review, directly or through a team, and the viewer's own.
+ * @returns The raw search results, 50 of each at most.
+ */
+export async function fetchInbox(): Promise<RawInbox> {
+  const { data } = await graphql<RawInbox>(INBOX_QUERY, { review: REVIEW_SEARCH, mine: MINE_SEARCH });
+  return data;
+}
+
+/**
  * @param token A token to check instead of the stored one.
  * @returns The login the token belongs to.
  */
@@ -272,16 +304,29 @@ async function graphql<T>(
 ): Promise<{ data: T; unreadable: string[] }> {
   const body = (await request("/graphql", { method: "POST", body: JSON.stringify({ query, variables }) }, token)) as {
     data?: T | null;
-    errors?: { message: string; path?: (string | number)[] }[];
+    errors?: { type?: string; message: string; path?: (string | number)[] }[];
   };
   const errors = body.errors ?? [];
   if (!body.data) {
+    const scopes = missingScopes(errors);
+    if (scopes !== null) throw new GitHubError("scopes", scopes);
     throw new GitHubError("failed", errors.map((error) => error.message).join(" ") || "GitHub returned no data.");
   }
   const unreadable = errors.map(
     (error) => error.path?.filter((segment): segment is string => typeof segment === "string").at(-1) ?? error.message,
   );
   return { data: body.data, unreadable: [...new Set(unreadable)] };
+}
+
+/**
+ * @param errors The errors of a GraphQL response that returned no data.
+ * @returns What the token lacks, when that is why GitHub refused the query, or null.
+ */
+export function missingScopes(errors: { type?: string; message: string }[]): string | null {
+  const refused = errors.find((error) => error.type === "INSUFFICIENT_SCOPES");
+  if (!refused) return null;
+  const scopes = /following scopes: \[([^\]]*)\]/.exec(refused.message)?.[1]?.replaceAll("'", "").trim();
+  return scopes ? `The token lacks the ${scopes} scope.` : "The token lacks a scope FloHub needs.";
 }
 
 async function request(path: string, init: RequestInit, explicitToken?: string): Promise<unknown> {
