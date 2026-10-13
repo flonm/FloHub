@@ -11,7 +11,7 @@ export type IconName =
   | "branch"
   | "pointer";
 
-type Shape = ["path", { d: string }] | ["circle", { cx: string; cy: string; r: string; class?: string }];
+type Shape = ["path", { d: string; class?: string }] | ["circle", { cx: string; cy: string; r: string; class?: string }];
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -35,7 +35,8 @@ const ICONS: Record<IconName, Shape[]> = {
     [
       "path",
       {
-        d: "M6.25 8.5V2.75a1.125 1.125 0 0 1 2.25 0V7.5M8.5 6.75a1.125 1.125 0 0 1 2.25 0V8M10.75 7.25a1.125 1.125 0 0 1 2.25 0v2.5c0 2.75-1.75 4.5-4.25 4.5H8.1c-1.3 0-2.25-.55-2.95-1.55L3.2 10.05a1.05 1.05 0 0 1 1.7-1.25l1.35 1.45",
+        class: "fill",
+        d: "M2.45 6.25H8.25L7.95 4.45C7.85 3.75 8.4 3.15 9.05 3.3C9.55 3.42 9.85 3.9 9.95 4.5L10.1 5.25C12.6 5.2 14.35 6.55 14.35 8.75C14.35 11.2 12.85 12.9 10.6 12.9H9.6C8 12.9 6.9 11.8 6.9 10.4V8.35H2.45A1.05 1.05 0 0 1 2.45 6.25Z",
       },
     ],
   ],
