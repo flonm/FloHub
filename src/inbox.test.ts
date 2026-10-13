@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildInbox, type RawInbox, type RawInboxPull } from "./inbox";
+import { buildInbox, isStale, type RawInbox, type RawInboxPull, STALE_AFTER_MS } from "./inbox";
 
 function buildPull(number: number, overrides: Partial<RawInboxPull> = {}): RawInboxPull {
   return {
@@ -96,5 +96,18 @@ describe("buildInbox", () => {
     const inbox = buildInbox({ ...buildRaw([buildPull(1), buildPull(2)]), mine: { nodes: [{}] } }, 0);
     expect(inbox.reviewCount).toBe(2);
     expect(inbox.mine).toEqual([]);
+  });
+});
+
+describe("isStale", () => {
+  const lastActivity = "2026-10-10T09:00:00Z";
+  const then = Date.parse(lastActivity);
+
+  test("flags a pull request without activity for two days", () => {
+    expect(isStale({ lastActivity }, then + STALE_AFTER_MS)).toBe(true);
+  });
+
+  test("leaves a recently active pull request alone", () => {
+    expect(isStale({ lastActivity }, then + STALE_AFTER_MS - 1)).toBe(false);
   });
 });

@@ -551,6 +551,14 @@ for (const scheme of ["light", "dark"] as const) {
       (await popup.locator(".pull", { hasText: "#77" }).getByText("Re-requested").count()) === 1,
       "a review request the viewer answered before is marked as re-requested",
     );
+    const positions = await popup.locator(".pull").evaluateAll((rows) =>
+      rows.map((row) => row.querySelector(".position [aria-hidden]")?.textContent ?? null),
+    );
+    check(
+      JSON.stringify(positions) === JSON.stringify(["3/3", "1/3", null, null, null]) &&
+        (await popup.locator(".group-label").count()) === 0,
+      `stacked rows show their layer inline, with no group heading: ${JSON.stringify(positions)}`,
+    );
     const badge = await inboxContext.serviceWorkers()[0]?.evaluate(() => chrome.action.getBadgeText({}));
     check(badge === "3", `the toolbar badge counts the review requests: "${badge}"`);
     const [opened] = await Promise.all([

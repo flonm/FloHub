@@ -1,6 +1,6 @@
 import { formatAge } from "./age";
-import { el, iconButton } from "./dom";
-import type { Inbox, InboxGroup, InboxPull } from "./inbox";
+import { el, icon, iconButton } from "./dom";
+import { type Inbox, type InboxGroup, type InboxPull, isStale } from "./inbox";
 import { send } from "./messages";
 
 type Problem = { kind: "setup" | "error"; message: string } | null;
@@ -71,13 +71,15 @@ function renderBody(): HTMLElement {
     return main;
   }
   main.append(
-    renderSection("Waiting for your review", inbox.review, "Nothing waits for your review.", true),
-    renderSection("Your pull requests", inbox.mine, "You have no open pull requests.", false),
+    renderSection("Waiting for your review", inbox.review, "Nothing waits for your review.", "review"),
+    renderSection("Your pull requests", inbox.mine, "You have no open pull requests.", "mine"),
   );
   return main;
 }
 
-function renderSection(title: string, groups: InboxGroup[], empty: string, showAuthor: boolean): HTMLElement {
+type SectionKind = "review" | "mine";
+
+function renderSection(title: string, groups: InboxGroup[], empty: string, kind: SectionKind): HTMLElement {
   const count = groups.reduce((sum, entry) => sum + entry.pulls.length, 0);
   const section = el("section", { "aria-label": title });
   const heading = el("h2", {}, title);
@@ -87,24 +89,25 @@ function renderSection(title: string, groups: InboxGroup[], empty: string, showA
     section.append(el("p", { class: "empty" }, empty));
     return section;
   }
-  const list = el("ul");
-  for (const entry of groups) list.append(renderGroup(entry, showAuthor));
+  const list = el("ul", { class: "groups" });
+  for (const entry of groups) list.append(renderGroup(entry, kind));
   section.append(list);
   return section;
 }
 
-function renderGroup(entry: InboxGroup, showAuthor: boolean): HTMLElement {
-  const item = el("li");
-  const label = el("div", { class: "group-label" }, entry.repo);
-  if (entry.stackNumber !== null) label.append(el("span", {}, `· Stack of ${entry.stackSize}`));
-  const list = el("ul");
-  for (const pull of entry.pulls) list.append(renderPull(pull, entry, showAuthor));
-  item.append(label, list);
+function renderGroup(entry: InboxGroup, kind: SectionKind): HTMLElement {
+  // Layers of one stack stay adjacent; a rail joins them only when the inbox holds more than one.
+  const joined = entry.stackNumber !== null && entry.pulls.length > 1;
+  const item = el("li", { class: joined ? "group joined" : "group" });
+  const list = el("ul", { class: "layers" });
+  if (entry.stackNumber !== null) list.setAttribute("aria-label", `Stack of ${entry.stackSize} in ${entry.repo}`);
+  for (const pull of entry.pulls) list.append(renderPull(pull, entry, kind));
+  item.append(list);
   return item;
 }
 
-function renderPull(pull: InboxPull, entry: InboxGroup, showAuthor: boolean): HTMLElement {
-  const item = el("li");
+function renderPull(pull: InboxPull, entry: InboxGroup, kind: SectionKind): HTMLElement {
+  const item = el("li", { class: "layer" });
   const link = el("a", { class: "pull", href: pull.url, "data-focus-key": `pull:${pull.url}` });
   link.addEventListener("click", (event) => {
     event.preventDefault();
@@ -113,22 +116,70 @@ function renderPull(pull: InboxPull, entry: InboxGroup, showAuthor: boolean): HT
     if (!background) window.close();
   });
 
+  const now = Date.now();
   const title = el("span", { class: "title" });
   title.append(el("span", { class: "number" }, `#${pull.number} `), pull.title);
-  const meta = el("span", { class: "meta" });
-  if (pull.rerequested) meta.append(el("span", { class: "tag" }, "Re-requested"));
-  if (showAuthor && pull.author) meta.append(el("span", {}, pull.author));
-  if (pull.position !== null && entry.stackNumber !== null) {
-    meta.append(el("span", { title: "Layer in its stack, counted from the base" }, `Layer ${pull.position}/${entry.stackSize}`));
-  }
-  if (pull.totalThreads > 0) {
-    meta.append(el("span", {}, `${pull.resolvedThreads}/${pull.totalThreads} resolved`));
-  }
-  const age = formatAge(pull.lastActivity, Date.now());
-  meta.append(el("span", { title: `Last activity ${age.spoken}` }, age.short));
 
-  link.append(el("span", { class: "state", "data-tone": pull.tone }, pull.label), title, meta);
+  const age = formatAge(pull.lastActivity, now);
+  const stale = kind === "review" && isStale(pull, now);
+  const time = el(
+    "time",
+    {
+      class: stale ? "age stale" : "age",
+      datetime: pull.lastActivity,
+      title: stale ? `Waiting since the last activity ${age.spoken}` : `Last activity ${age.spoken}`,
+    },
+    age.short,
+  );
+
+  const meta = el("span", { class: "meta" });
+  if (kind === "review") {
+    if (pull.rerequested) meta.append(el("span", { class: "tag", "data-tone": "attention" }, "Re-requested"));
+    if (pull.author) meta.append(el("span", { class: "item author" }, pull.author));
+    if (pull.tone !== "accent") meta.append(renderStatus(pull));
+  } else {
+    meta.append(renderStatus(pull));
+  }
+  meta.append(el("span", { class: "item repo" }, entry.repo));
+  if (entry.stackNumber !== null && pull.position !== null) {
+    const position = `Layer ${pull.position} of ${entry.stackSize} in its stack, counted from the base`;
+    const layer = el("span", { class: "item position", title: position });
+    layer.append(el("span", { "aria-hidden": "true" }, `${pull.position}/${entry.stackSize}`), el("span", { class: "visually-hidden" }, position));
+    meta.append(layer);
+  }
+  if (pull.totalThreads > 0) meta.append(renderThreads(pull));
+
+  const lead = el("span", { class: "lead" });
+  lead.append(kind === "review" ? renderAvatar(pull) : el("span", { class: "node", "data-tone": pull.tone }));
+
+  link.append(lead, title, time, meta);
   item.append(link);
   return item;
 }
 
+function renderStatus(pull: InboxPull): HTMLElement {
+  return el("span", { class: "item status", "data-tone": pull.tone }, pull.label);
+}
+
+function renderThreads(pull: InboxPull): HTMLElement {
+  const done = pull.resolvedThreads === pull.totalThreads;
+  const label = `${pull.resolvedThreads} of ${pull.totalThreads} conversations resolved`;
+  const threads = el("span", { class: done ? "item threads done" : "item threads", title: label });
+  threads.append(icon("comment"), el("span", { "aria-hidden": "true" }, `${pull.resolvedThreads}/${pull.totalThreads}`));
+  threads.append(el("span", { class: "visually-hidden" }, label));
+  return threads;
+}
+
+function renderAvatar(pull: InboxPull): HTMLElement {
+  const placeholder = (): HTMLElement => {
+    const span = el("span", { class: "avatar placeholder" });
+    span.append(icon("people"));
+    return span;
+  };
+  if (!pull.avatarUrl) return placeholder();
+  const url = new URL(pull.avatarUrl);
+  url.searchParams.set("s", "40");
+  const image = el("img", { class: "avatar", src: url.toString(), alt: "", width: "20", height: "20" });
+  image.addEventListener("error", () => image.replaceWith(placeholder()));
+  return image;
+}

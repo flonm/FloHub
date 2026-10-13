@@ -127,3 +127,16 @@ function newest(entry: InboxGroup): number {
 function urgency(entry: InboxGroup): number {
   return Math.min(...entry.pulls.map((pull) => URGENCY[pull.tone]));
 }
+
+/** How long a review request may sit without activity before the inbox flags it as waiting too long. */
+export const STALE_AFTER_MS = 2 * 86_400_000;
+
+/**
+ * @param pull The pull request.
+ * @param now The current time in epoch milliseconds.
+ * @returns Whether it has seen no push, edit or review for at least {@link STALE_AFTER_MS}.
+ */
+export function isStale(pull: Pick<InboxPull, "lastActivity">, now: number): boolean {
+  return now - Date.parse(pull.lastActivity) >= STALE_AFTER_MS;
+}
+
