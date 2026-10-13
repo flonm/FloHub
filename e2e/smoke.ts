@@ -80,8 +80,12 @@ function createFixture(options: { partial?: boolean } = {}) {
   ];
   if (options.partial) requested.push(null);
   const rerequests: string[] = [];
+  const submissions: { path: string; body: unknown }[] = [];
+  const reviewState = { pendingComments: null as number | null };
   return {
     rerequests,
+    submissions,
+    reviewState,
     async handle(route: Route) {
       const request = route.request();
       if (request.url().endsWith("/graphql")) {
@@ -135,6 +139,19 @@ function createFixture(options: { partial?: boolean } = {}) {
         rerequests.push(...reviewers);
         for (const login of reviewers) requested.push(actor(login));
         await route.fulfill({ status: 201, json: {} });
+        return;
+      }
+      const reviews = /\/pulls\/\d+\/reviews(\/\d+\/(comments|events))?(\?|$)/.exec(new URL(request.url()).pathname + "?");
+      if (reviews) {
+        const path = new URL(request.url()).pathname.replace(/^.*\/pulls\/\d+/, "");
+        if (request.method() === "POST") {
+          submissions.push({ path, body: request.postDataJSON() });
+          await route.fulfill({ status: 200, json: { id: 9, state: "APPROVED" } });
+        } else if (path.endsWith("/comments")) {
+          await route.fulfill({ json: Array.from({ length: reviewState.pendingComments ?? 0 }, (_, id) => ({ id })) });
+        } else {
+          await route.fulfill({ json: reviewState.pendingComments === null ? [] : [{ id: 9, state: "PENDING" }] });
+        }
         return;
       }
       await route.fulfill({ status: 404, json: { message: "Not mocked" } });
@@ -302,6 +319,94 @@ await inlineBar(darkPage).getByRole("button", { name: "Set up token" }).waitFor(
 check(true, "missing token shows the setup prompt");
 await inlineBar(darkPage).screenshot({ path: `${SCREENSHOTS}/setup-dark.png` });
 await dark.close();
+
+const keys = await launch("light");
+const keyFixture = createFixture();
+await keys.route("https://api.github.com/**", (route) => keyFixture.handle(route));
+const keyPage = await keys.newPage();
+await keyPage.goto(`${PULL_URL}/files`);
+await inlineBar(keyPage).locator(".stack-list").waitFor();
+const toast = keyPage.locator("flohub-toast");
+const reviewDialog = keyPage.locator("flohub-dialog dialog");
+
+await keyPage.keyboard.press("r");
+await keyPage.keyboard.press("y");
+await toast.getByText(`Approved #${CURRENT}.`).waitFor();
+check(
+  JSON.stringify(keyFixture.submissions) === JSON.stringify([{ path: "/reviews", body: { event: "APPROVE" } }]),
+  `R→Y approves without a comment: ${JSON.stringify(keyFixture.submissions)}`,
+);
+
+await keyPage.keyboard.press("r");
+await keyPage.keyboard.press("a");
+await keyPage.getByRole("dialog", { name: `Approve #${CURRENT}` }).waitFor();
+await reviewDialog.getByText("No pending review comments.").waitFor();
+check(
+  await reviewDialog.getByRole("textbox").evaluate((node) => node === (node.getRootNode() as ShadowRoot).activeElement),
+  "R→A opens the approve dialog with the comment box focused",
+);
+await keyPage.keyboard.type("ry looks good");
+await keyPage.screenshot({ path: `${SCREENSHOTS}/review-dialog-light.png` });
+await keyPage.keyboard.press("Meta+Enter");
+await reviewDialog.waitFor({ state: "hidden" });
+check(
+  JSON.stringify(keyFixture.submissions.slice(1)) ===
+    JSON.stringify([{ path: "/reviews", body: { event: "APPROVE", body: "ry looks good" } }]),
+  "typing inside the dialog fires no shortcut, and ⌘↵ submits the approval with its comment",
+);
+
+await keyPage.keyboard.press("r");
+await keyPage.keyboard.press("n");
+await reviewDialog.getByText("No pending review comments.").waitFor();
+await keyPage.keyboard.press("Meta+Enter");
+await reviewDialog.getByText("Add a comment that explains the changes you're requesting.").waitFor();
+await keyPage.keyboard.press("Escape");
+await reviewDialog.waitFor({ state: "hidden" });
+check(keyFixture.submissions.length === 2, "R→N refuses an empty change request, and Escape closes the dialog");
+
+keyFixture.reviewState.pendingComments = 2;
+await keyPage.keyboard.press("r");
+await keyPage.keyboard.press("n");
+await reviewDialog.getByText("Submits your pending review with its 2 draft comments.").waitFor();
+await keyPage.screenshot({ path: `${SCREENSHOTS}/review-dialog-pending-light.png` });
+await keyPage.keyboard.press("Meta+Enter");
+await toast.getByText(`Requested changes on #${CURRENT}.`).waitFor();
+check(
+  JSON.stringify(keyFixture.submissions[2]) ===
+    JSON.stringify({ path: "/reviews/9/events", body: { event: "REQUEST_CHANGES" } }),
+  "R→N with draft comments submits the pending review, comment optional",
+);
+
+const filter = keyPage.getByPlaceholder("Filter changed files");
+await filter.click();
+await keyPage.keyboard.type("ry");
+await keyPage.keyboard.press("Escape");
+await filter.blur();
+check(keyFixture.submissions.length === 3, "keys typed into GitHub's own text fields are ignored");
+
+const upRequest = keyPage.waitForRequest((request) => request.isNavigationRequest(), { timeout: 10_000 });
+await keyPage.keyboard.press("Meta+Shift+ArrowUp");
+const up = (await upRequest).url();
+check(up === `${REPO_URL}/pull/345/files`, `⌘⇧↑ requests ${up}`);
+await keyPage.goto(`${PULL_URL}/files`);
+await inlineBar(keyPage).locator(".stack-list").waitFor();
+const downRequest = keyPage.waitForRequest((request) => request.isNavigationRequest(), { timeout: 10_000 });
+await keyPage.keyboard.press("Meta+Shift+ArrowDown");
+const down = (await downRequest).url();
+check(down === `${REPO_URL}/pull/341/files`, `⌘⇧↓ moves down the stack: ${down}`);
+await keys.close();
+
+const darkKeys = await launch("dark");
+await darkKeys.route("https://api.github.com/**", (route) => createFixture().handle(route));
+const darkKeyPage = await darkKeys.newPage();
+await darkKeyPage.goto(`${PULL_URL}/files`);
+await inlineBar(darkKeyPage).locator(".stack-list").waitFor();
+await darkKeyPage.keyboard.press("r");
+await darkKeyPage.keyboard.press("n");
+await darkKeyPage.locator("flohub-dialog dialog").getByText("No pending review comments.").waitFor();
+await darkKeyPage.keyboard.type("Please split the rebase planner out of this change.");
+await darkKeyPage.screenshot({ path: `${SCREENSHOTS}/review-dialog-dark.png` });
+await darkKeys.close();
 
 const partial = await launch("light");
 await partial.route("https://api.github.com/**", (route) => createFixture({ partial: true }).handle(route));

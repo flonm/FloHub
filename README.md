@@ -20,6 +20,19 @@ A Chrome extension that adds a Graphite-style overview to every GitHub pull requ
 - **What's left out:** the PR author's own replies, unsubmitted drafts, and bots that only commented.
 - **Placement:** the overview sits inline under the PR title. Once the header scrolls away, a compact pill appears at the bottom left with the stack strip, layer position and reviewer faces. It expands to the full overview (Escape closes it).
 
+## Shortcuts
+
+Graphite's shortcuts, on every pull request tab. They never fire while you type in a text field.
+
+| Keys | Action |
+|---|---|
+| <kbd>⌘</kbd><kbd>⇧</kbd><kbd>↑</kbd> / <kbd>⌘</kbd><kbd>⇧</kbd><kbd>↓</kbd> (<kbd>Ctrl</kbd> outside macOS) | Go to the pull request above / below in the stack, on the same tab |
+| <kbd>R</kbd> then <kbd>Y</kbd> | Approve right away, without a comment |
+| <kbd>R</kbd> then <kbd>A</kbd> | Open the approve dialog to add a comment |
+| <kbd>R</kbd> then <kbd>N</kbd> | Open the request-changes dialog (a comment is required unless you have draft comments) |
+
+If you have a pending review with draft comments, every review shortcut submits it, so the drafts go out with your verdict, as with GitHub's "Submit review". In the dialog, <kbd>⌘</kbd><kbd>↵</kbd> submits and <kbd>Esc</kbd> cancels.
+
 ## Install
 
 ```bash
@@ -52,3 +65,4 @@ The smoke test runs logged out, so it exercises GitHub's classic PR markup. The 
 - `src/content.ts`: follows GitHub's in-page navigation, mounts the bars, and refreshes on focus and on visibility changes.
 - `src/reviewers.ts`, `src/stack.ts`, `src/age.ts`: pure derivation of reviewer states, layer statuses and ages from the raw query.
 - `src/bar.ts`, `src/stack-view.ts`, `src/dom.ts`, `src/bar-styles.ts`: the Shadow DOM UI, themed through GitHub's Primer CSS variables.
+- `src/shortcuts.ts`, `src/review-dialog.ts`, `src/toast.ts`: the key sequences, the review dialog, and the feedback toast.
