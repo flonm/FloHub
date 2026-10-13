@@ -1,4 +1,12 @@
-import { fetchOverview, fetchPendingComments, GitHubError, rerequestReview, submitReview } from "./github";
+import {
+  fetchOverview,
+  fetchPendingComments,
+  fetchViewedFiles,
+  GitHubError,
+  rerequestReview,
+  setFileViewed,
+  submitReview,
+} from "./github";
 import type { Message, Reply, ReplyByType } from "./messages";
 
 chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) => {
@@ -17,6 +25,11 @@ async function handle(message: Message): Promise<Reply<ReplyByType[Message["type
         return { ok: true, value: await fetchOverview(message.ref) };
       case "rerequest":
         await rerequestReview(message.ref, message.login);
+        return { ok: true, value: null };
+      case "viewed-files":
+        return { ok: true, value: await fetchViewedFiles(message.ref) };
+      case "set-viewed":
+        await setFileViewed(message.pullRequestId, message.path, message.viewed);
         return { ok: true, value: null };
       case "pending-comments":
         return { ok: true, value: await fetchPendingComments(message.ref) };

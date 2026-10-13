@@ -73,6 +73,22 @@ const STACK_PULLS = [
 
 const UNREADABLE = "Resource not accessible by personal access token";
 
+const CHANGED_FILES: Record<string, string> = {
+  "README.md": "VIEWED",
+  "cmd/rebase.go": "DISMISSED",
+  "cmd/rebase_test.go": "UNVIEWED",
+  "cmd/sync.go": "UNVIEWED",
+  "cmd/utils.go": "UNVIEWED",
+  "cmd/utils_test.go": "UNVIEWED",
+  "docs/src/content/docs/guides/ui.md": "VIEWED",
+  "docs/src/content/docs/reference/cli.md": "VIEWED",
+  "internal/git/git.go": "UNVIEWED",
+  "internal/git/gitops.go": "UNVIEWED",
+  "internal/git/gitops_test.go": "UNVIEWED",
+  "internal/git/mock_ops.go": "UNVIEWED",
+  "skills/gh-stack/SKILL.md": "UNVIEWED",
+};
+
 function createFixture(options: { partial?: boolean } = {}) {
   const requested: (object | null)[] = [
     actor("mojombo"),
@@ -80,15 +96,45 @@ function createFixture(options: { partial?: boolean } = {}) {
   ];
   if (options.partial) requested.push(null);
   const rerequests: string[] = [];
+  const viewedMarks: string[] = [];
+  const viewed = { ...CHANGED_FILES };
   const submissions: { path: string; body: unknown }[] = [];
   const reviewState = { pendingComments: null as number | null };
   return {
     rerequests,
+    viewedMarks,
     submissions,
     reviewState,
     async handle(route: Route) {
       const request = route.request();
-      if (request.url().endsWith("/graphql")) {
+      const graphql = request.url().endsWith("/graphql")
+        ? (request.postDataJSON() as { query: string; variables: { path?: string } })
+        : null;
+      const mutation = graphql?.query.match(/\b(markFileAsViewed|unmarkFileAsViewed)\b/)?.[1];
+      if (graphql && mutation) {
+        const path = graphql.variables.path ?? "";
+        viewedMarks.push(`${mutation === "markFileAsViewed" ? "mark" : "unmark"}:${path}`);
+        viewed[path] = mutation === "markFileAsViewed" ? "VIEWED" : "UNVIEWED";
+        await route.fulfill({ json: { data: { [mutation]: { clientMutationId: null } } } });
+        return;
+      }
+      if (graphql?.query.includes("viewerViewedState")) {
+        const nodes = Object.entries(viewed).map(([path, viewerViewedState]) => ({ path, viewerViewedState }));
+        await route.fulfill({
+          json: {
+            data: {
+              repository: {
+                pullRequest: {
+                  id: "PR_kwDOtest",
+                  files: { pageInfo: { hasNextPage: false, endCursor: null }, nodes },
+                },
+              },
+            },
+          },
+        });
+        return;
+      }
+      if (graphql) {
         await route.fulfill({
           json: {
             data: {
@@ -261,6 +307,83 @@ await inlineBar(page).getByRole("button", { name: "2 merged" }).click();
 await inlineBar(page).getByText("#338").waitFor();
 check((await inlineBar(page).getByText("Merged", { exact: true }).count()) === 2, "merged layers expand on demand");
 await inlineBar(page).screenshot({ path: `${SCREENSHOTS}/inline-light.png` });
+
+const tree = page.getByRole("tree", { name: "File Tree" });
+const viewedToggle = (path: string) => tree.locator(`flohub-viewed[data-path="${path}"]`);
+await viewedToggle("README.md").waitFor();
+check(
+  (await tree.locator("flohub-viewed").count()) === Object.keys(CHANGED_FILES).length,
+  "every file in the tree gets a Viewed checkbox",
+);
+check(
+  (await viewedToggle("README.md").getAttribute("aria-checked")) === "true" &&
+    (await viewedToggle("cmd/rebase_test.go").getAttribute("aria-checked")) === "false",
+  "tree checkboxes show the files the viewer marked as viewed",
+);
+check(
+  (await viewedToggle("cmd/rebase.go").getAttribute("data-state")) === "DISMISSED" &&
+    (await viewedToggle("cmd/rebase.go").getAttribute("title"))?.startsWith("Changed since you viewed it") === true,
+  "a file that changed since it was viewed is marked as such",
+);
+const viewedFolders = await tree
+  .locator('[role="treeitem"][data-flohub-viewed="VIEWED"]:not([data-flohub-file])')
+  .evaluateAll((items) => items.map((item) => item.querySelector(".ActionList-item-label")?.textContent?.trim()));
+check(
+  JSON.stringify(viewedFolders) === JSON.stringify(["docs/src/content/docs", "guides", "reference"]),
+  `only folders whose files are all viewed are dimmed: ${JSON.stringify(viewedFolders)}`,
+);
+const urlBeforeToggle = page.url();
+await viewedToggle("cmd/rebase_test.go").click();
+await tree.locator('flohub-viewed[data-path="cmd/rebase_test.go"][aria-checked="true"]').waitFor();
+await viewedToggle("README.md").click();
+await tree.locator('flohub-viewed[data-path="README.md"][aria-checked="false"]').waitFor();
+check(
+  fixture.viewedMarks.join() === "mark:cmd/rebase_test.go,unmark:README.md",
+  `tree checkboxes mark and unmark files through the API: ${fixture.viewedMarks.join()}`,
+);
+check(page.url() === urlBeforeToggle, "clicking a tree checkbox does not jump to the file");
+await page.evaluate(() => {
+  const header = document.querySelector('.file-header[data-path="cmd/sync.go"]');
+  const label = document.createElement("label");
+  label.innerHTML = '<input type="checkbox" class="js-reviewed-checkbox"> Viewed';
+  header?.append(label);
+});
+await viewedToggle("cmd/sync.go").click();
+await tree.locator('flohub-viewed[data-path="cmd/sync.go"][aria-checked="true"]').waitFor();
+check(
+  (await page.locator('.file-header[data-path="cmd/sync.go"] .js-reviewed-checkbox').isChecked()) &&
+    fixture.viewedMarks.length === 2,
+  "a tree checkbox clicks the file's own Viewed checkbox when it is on the page",
+);
+await page.locator('.file-header[data-path="cmd/sync.go"] .js-reviewed-checkbox').click();
+await tree.locator('flohub-viewed[data-path="cmd/sync.go"][aria-checked="false"]').waitFor();
+check(true, "unchecking the file's own Viewed checkbox updates the tree");
+await page.locator('.file-header[data-path="cmd/utils.go"]').first().waitFor({ state: "attached" });
+await page.evaluate(() => {
+  const header = document.querySelector('.file-header[data-path="cmd/utils.go"]');
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "react-viewed";
+  const render = (pressed: boolean) => {
+    button.setAttribute("aria-pressed", String(pressed));
+    button.setAttribute("aria-label", pressed ? "Viewed" : "Not Viewed");
+  };
+  render(true);
+  button.addEventListener("click", () => setTimeout(() => render(button.getAttribute("aria-pressed") !== "true"), 50));
+  header?.append(button);
+});
+await tree.locator('flohub-viewed[data-path="cmd/utils.go"][aria-checked="true"]').waitFor();
+check(true, "the tree takes the state of a React Viewed button when it appears");
+await viewedToggle("cmd/utils.go").click();
+await page.locator('.react-viewed[aria-pressed="false"][aria-label="Not Viewed"]').waitFor();
+await tree.locator('flohub-viewed[data-path="cmd/utils.go"][aria-checked="false"]').waitFor();
+await viewedToggle("cmd/utils.go").click();
+await page.locator('.react-viewed[aria-pressed="true"]').waitFor();
+check(fixture.viewedMarks.length === 2, "a tree checkbox presses the React Viewed button both ways instead of calling the API");
+await page.locator(".react-viewed").click();
+await tree.locator('flohub-viewed[data-path="cmd/utils.go"][aria-checked="false"]').waitFor();
+check(true, "pressing the React Viewed button updates the tree");
+await page.locator('nav[aria-label="File Tree Navigation"]').screenshot({ path: `${SCREENSHOTS}/file-tree-light.png` });
 
 await inlineBar(page).getByRole("button", { name: "Stack" }).click();
 check(
