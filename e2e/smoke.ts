@@ -112,6 +112,8 @@ function createFixture(options: { partial?: boolean } = {}) {
     viewedMarks,
     submissions,
     reviewState,
+    /** Milliseconds to hold back the overview query, to see what the bar shows before it arrives. */
+    overviewDelay: 0,
     async handle(route: Route) {
       const request = route.request();
       const graphql = request.url().endsWith("/graphql")
@@ -146,6 +148,7 @@ function createFixture(options: { partial?: boolean } = {}) {
         return;
       }
       if (graphql) {
+        if (this.overviewDelay > 0) await new Promise((resolve) => setTimeout(resolve, this.overviewDelay));
         await route.fulfill({
           json: {
             data: {
@@ -451,6 +454,47 @@ await page.waitForURL(/\/pull\/\d+$/);
 await inlineBar(page).getByText("Re-requested").first().waitFor();
 check(await inlineBar(page).isVisible(), "bar survives in-page navigation to the Conversation tab");
 await light.close();
+
+const cached = await launch("light");
+const cachedFixture = createFixture();
+await cached.route("https://api.github.com/**", (route) => cachedFixture.handle(route));
+const cachedPage = await cached.newPage();
+await cachedPage.goto(`${PULL_URL}/files`);
+await inlineBar(cachedPage).locator(".stack-list").waitFor();
+await inlineBar(cachedPage).getByText("Changes requested").first().waitFor();
+cachedFixture.overviewDelay = 5_000;
+await cachedPage.reload();
+const reloadStarted = Date.now();
+await inlineBar(cachedPage).locator(".stack-list").waitFor({ timeout: 3_000 });
+check(
+  Date.now() - reloadStarted < 3_000 &&
+    (await inlineBar(cachedPage).locator(".chips > li").count()) === 6 &&
+    (await inlineBar(cachedPage).getByRole("button", { name: "Refresh reviewers" }).getAttribute("aria-busy")) === "true",
+  "a revisit shows the cached stack and reviewers at once, marked as refreshing",
+);
+await inlineBar(cachedPage).locator('.refresh:not([aria-busy="true"])').waitFor({ timeout: 10_000 });
+check(true, "the fresh overview replaces the cached one when it arrives");
+
+const cachedWorker = cached.serviceWorkers()[0];
+await cachedWorker?.evaluate((current) => {
+  const key = (n: number) => `github/gh-stack#${n}`;
+  return chrome.storage.local.get(["overviewIndex", `overview:${key(current)}`]).then((stored) => {
+    const overview = stored[`overview:${key(current)}`] as { repository: { pullRequest: { number: number } } };
+    overview.repository.pullRequest.number = 999;
+    const index = { [key(999)]: { savedAt: Date.now(), repo: "github/gh-stack", members: [current, 999] } };
+    return chrome.storage.local.set({ overviewIndex: index, [`overview:${key(999)}`]: overview });
+  });
+}, CURRENT);
+await cachedPage.reload();
+await inlineBar(cachedPage).locator(".stack-list").waitFor({ timeout: 3_000 });
+check(
+  (await inlineBar(cachedPage).locator('[aria-current="page"]').innerText()).includes(`#${CURRENT}`) &&
+    (await inlineBar(cachedPage).getByText("Loading reviewers…").count()) === 1,
+  "a layer without its own cache shows the stack cached from another layer, with reviewers still loading",
+);
+await inlineBar(cachedPage).getByText("Changes requested").first().waitFor({ timeout: 10_000 });
+check(true, "reviewers fill in once the fresh overview arrives");
+await cached.close();
 
 const dark = await launch("dark");
 await dark.route("https://api.github.com/**", (route) => createFixture().handle(route));

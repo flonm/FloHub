@@ -6,6 +6,8 @@ import { type PullRef, parsePullRef, pullKey, pullTab } from "./pull-ref";
 import { ReviewDialog } from "./review-dialog";
 import { deriveReviewers, type Reviewer } from "./reviewers";
 import { createShortcutMatcher, type ReviewEvent } from "./shortcuts";
+import type { Overview } from "./github";
+import { readCachedOverview, writeCachedOverview } from "./overview-cache";
 import { deriveStack } from "./stack";
 import { Toast } from "./toast";
 
@@ -104,6 +106,7 @@ function sync(): void {
     viewedTree.sync(null);
     lastAnchorSearch = 0;
     render();
+    void showCached(ref);
     void load(true);
   }
 
@@ -149,6 +152,54 @@ function update(changes: Partial<Extract<BarState, { kind: "ready" }>>): void {
   render();
 }
 
+/**
+ * Shows the last overview fetched for this pull request, or the stack from another of its layers,
+ * while the fresh one loads. It never replaces a state the fresh load already set.
+ */
+async function showCached(ref: PullRef): Promise<void> {
+  const cached = await readCachedOverview(ref);
+  if (!cached || state.kind !== "loading" || !current || pullKey(current) !== pullKey(ref)) return;
+  const ready = readyState(cached.overview, ref, cached.exact);
+  if (!ready) return;
+  if (cached.exact) viewerIsAuthor = isAuthor(cached.overview);
+  state = { ...ready, refreshing: true };
+  render();
+}
+
+/**
+ * @param overview An overview GitHub returned for this pull request or, when not exact, for another layer of its stack.
+ * @param ref The pull request on screen.
+ * @param exact Whether the overview is this pull request's own; otherwise only its stack is used.
+ * @returns The bar state, or null when the overview does not cover the pull request.
+ */
+function readyState(overview: Overview, ref: PullRef, exact: boolean): Extract<BarState, { kind: "ready" }> | null {
+  const pullRequest = overview.repository?.pullRequest;
+  if (!pullRequest) return null;
+  let stack;
+  if (exact) {
+    stack = deriveStack(pullRequest, pullRequest.baseRefName);
+  } else {
+    const sibling = pullRequest.stack?.entries.nodes.find((node) => node.pullRequest?.number === ref.number)?.pullRequest;
+    if (!sibling || !pullRequest.stack) return null;
+    stack = deriveStack({ ...sibling, stack: pullRequest.stack }, pullRequest.stack.baseRefName);
+  }
+  return {
+    kind: "ready",
+    reviewers: exact ? deriveReviewers(pullRequest, overview.viewer.login) : null,
+    stack,
+    stackCollapsed,
+    showMerged,
+    now: Date.now(),
+    refreshing: false,
+    busy,
+    notice: null,
+  };
+}
+
+function isAuthor(overview: Overview): boolean {
+  return overview.repository?.pullRequest?.author?.login === overview.viewer.login;
+}
+
 async function load(force: boolean): Promise<void> {
   const ref = current;
   if (!ref || (!force && Date.now() - lastLoad < AUTO_REFRESH_GAP_MS)) return;
@@ -165,18 +216,12 @@ async function load(force: boolean): Promise<void> {
   if (run !== generation || !current || pullKey(current) !== pullKey(ref)) return;
 
   if (reply.ok) {
-    const pullRequest = reply.value.repository?.pullRequest;
-    viewerIsAuthor = pullRequest?.author?.login === reply.value.viewer.login;
-    state = pullRequest
+    viewerIsAuthor = isAuthor(reply.value);
+    const ready = readyState(reply.value, ref, true);
+    if (ready) void writeCachedOverview(ref, reply.value);
+    state = ready
       ? {
-          kind: "ready",
-          reviewers: deriveReviewers(pullRequest, reply.value.viewer.login),
-          stack: deriveStack(pullRequest, pullRequest.baseRefName),
-          stackCollapsed,
-          showMerged,
-          now: Date.now(),
-          refreshing: false,
-          busy,
+          ...ready,
           notice:
             reply.value.unreadable.length > 0
               ? `This token cannot read ${reply.value.unreadable.join(", ")}, so parts may be missing. Check its permissions.`

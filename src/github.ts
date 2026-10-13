@@ -1,3 +1,4 @@
+import { clearOverviewCache } from "./overview-cache";
 import type { PullRef } from "./pull-ref";
 import type { ReviewEvent } from "./shortcuts";
 import type { RawPullRequest } from "./reviewers";
@@ -125,6 +126,7 @@ export async function readToken(): Promise<string> {
 
 /** @param token The personal access token to store; an empty string removes it. */
 export async function writeToken(token: string): Promise<void> {
+  await clearOverviewCache();
   if (token) await chrome.storage.local.set({ token });
   else await chrome.storage.local.remove("token");
 }
