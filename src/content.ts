@@ -15,6 +15,7 @@ const AUTO_REFRESH_GAP_MS = 15_000;
 const STICKY_HEADER_HEIGHT = 96;
 const ANCHOR_RETRY_MS = 1_000;
 const AGE_TICK_MS = 60_000;
+const CACHE_WAIT_MS = 300;
 const TEXT_FIELDS = "input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox'], [role='combobox'], [role='searchbox']";
 
 let current: PullRef | null = null;
@@ -23,6 +24,7 @@ let lastLoad = 0;
 let generation = 0;
 let scheduled = false;
 let lastAnchorSearch = 0;
+let anchorRetry: ReturnType<typeof setTimeout> | null = null;
 let stackCollapsed = false;
 let showMerged = false;
 let pendingNotice: string | null = null;
@@ -108,18 +110,33 @@ function sync(): void {
     loadedFresh = false;
     viewedTree.sync(null);
     lastAnchorSearch = 0;
-    render();
-    void showCached(ref);
+    void showFirst(ref);
     void load(true);
   }
 
   if (!floating.host.isConnected) document.body.append(floating.host);
-  if (!inline.host.isConnected && Date.now() - lastAnchorSearch >= ANCHOR_RETRY_MS) {
-    lastAnchorSearch = Date.now();
-    findInlineAnchor(document, ref.number)?.after(inline.host);
-  }
+  if (!inline.host.isConnected) attachInline(ref);
   viewedTree.sync(ref);
   updateVisibility();
+}
+
+/**
+ * Puts the inline bar under the PR header. Only failed searches are throttled, so when GitHub re-renders
+ * the header and takes the bar with it, the bar is back on the next frame. A throttled search retries on a timer,
+ * since a page that has settled sends no more mutations to retry on.
+ */
+function attachInline(ref: PullRef): void {
+  const wait = lastAnchorSearch + ANCHOR_RETRY_MS - Date.now();
+  if (wait > 0) {
+    anchorRetry ??= setTimeout(() => {
+      anchorRetry = null;
+      schedule();
+    }, wait);
+    return;
+  }
+  const anchor = findInlineAnchor(document, ref.number);
+  lastAnchorSearch = anchor ? 0 : Date.now();
+  anchor?.after(inline.host);
 }
 
 function updateVisibility(): void {
@@ -153,6 +170,15 @@ function update(changes: Partial<Extract<BarState, { kind: "ready" }>>): void {
   if (state.kind !== "ready") return;
   state = { ...state, ...changes };
   render();
+}
+
+/**
+ * Holds the loading state back until the cache answers, so a cached stack doesn't pop in after "Loading…".
+ * The wait is capped, since a slow storage read must not delay the loading state for long.
+ */
+async function showFirst(ref: PullRef): Promise<void> {
+  await Promise.race([showCached(ref), new Promise((resolve) => setTimeout(resolve, CACHE_WAIT_MS))]);
+  if (state.kind === "loading" && current && pullKey(current) === pullKey(ref)) render();
 }
 
 /**

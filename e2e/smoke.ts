@@ -481,6 +481,33 @@ check(
 await inlineBar(cachedPage).locator('.refresh:not([aria-busy="true"])').waitFor({ timeout: 10_000 });
 check(true, "the fresh overview replaces the cached one when it arrives");
 
+await cachedPage.goto(PULL_URL, { waitUntil: "commit" });
+const longestGap = await cachedPage.evaluate(
+  () =>
+    new Promise<number>((resolve) => {
+      const shown = () =>
+        !!document.querySelector('flohub-bar[data-mode="inline"]')?.shadowRoot?.querySelector(".stack-header");
+      let firstShown = 0;
+      let hiddenSince = 0;
+      let longest = 0;
+      const timer = setInterval(() => {
+        const now = performance.now();
+        if (shown()) {
+          if (!firstShown) firstShown = now;
+          if (hiddenSince) longest = Math.max(longest, now - hiddenSince);
+          hiddenSince = 0;
+        } else if (firstShown && !hiddenSince) {
+          hiddenSince = now;
+        }
+        if (firstShown && now - firstShown > 3_000) {
+          clearInterval(timer);
+          resolve(hiddenSince ? now - hiddenSince : longest);
+        }
+      }, 10);
+    }),
+);
+check(longestGap < 150, `once shown, the cached stack stays while GitHub re-renders the header (longest gap ${Math.round(longestGap)}ms)`);
+
 const cachedWorker = cached.serviceWorkers()[0];
 await cachedWorker?.evaluate((current) => {
   const key = (n: number) => `github/gh-stack#${n}`;
