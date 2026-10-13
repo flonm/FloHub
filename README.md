@@ -73,7 +73,7 @@ Release Firefox only installs signed add-ons for good. FloHub is signed as an *u
 1. Bump `version` in `static/manifest.json` (and `package.json`). AMO never signs the same version twice.
 2. Tag the commit `v<version>` and push the tag.
 
-`.github/workflows/sign-firefox.yaml` then signs the build with the `AMO_JWT_ISSUER` and `AMO_JWT_SECRET` repository secrets and attaches the `.xpi` to a GitHub release. Running the workflow by hand signs without a release and keeps the `.xpi` as a workflow artifact.
+`.github/workflows/sign-firefox.yaml` then signs the build and attaches the `.xpi` to a GitHub release. The job runs in the `amo` environment, which holds the `AMO_JWT_ISSUER` and `AMO_JWT_SECRET` secrets, accepts only `v*` tags and waits for a required reviewer's approval.
 
 The first signature ties the add-on ID in `build.ts` to the AMO account that owns the keys, so every later release must be signed with that account's keys. Firefox doesn't update the add-on on its own: install the new `.xpi` from the release.
 
