@@ -341,6 +341,31 @@ check(
 await page.locator('.file-header[data-path="cmd/sync.go"] .js-reviewed-checkbox').click();
 await tree.locator('flohub-viewed[data-path="cmd/sync.go"][aria-checked="false"]').waitFor();
 check(true, "unchecking the file's own Viewed checkbox updates the tree");
+await page.locator('.file-header[data-path="cmd/utils.go"]').first().waitFor({ state: "attached" });
+await page.evaluate(() => {
+  const header = document.querySelector('.file-header[data-path="cmd/utils.go"]');
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "react-viewed";
+  const render = (pressed: boolean) => {
+    button.setAttribute("aria-pressed", String(pressed));
+    button.setAttribute("aria-label", pressed ? "Viewed" : "Not Viewed");
+  };
+  render(true);
+  button.addEventListener("click", () => setTimeout(() => render(button.getAttribute("aria-pressed") !== "true"), 50));
+  header?.append(button);
+});
+await tree.locator('flohub-viewed[data-path="cmd/utils.go"][aria-checked="true"]').waitFor();
+check(true, "the tree takes the state of a React Viewed button when it appears");
+await viewedToggle("cmd/utils.go").click();
+await page.locator('.react-viewed[aria-pressed="false"][aria-label="Not Viewed"]').waitFor();
+await tree.locator('flohub-viewed[data-path="cmd/utils.go"][aria-checked="false"]').waitFor();
+await viewedToggle("cmd/utils.go").click();
+await page.locator('.react-viewed[aria-pressed="true"]').waitFor();
+check(fixture.viewedMarks.length === 2, "a tree checkbox presses the React Viewed button both ways instead of calling the API");
+await page.locator(".react-viewed").click();
+await tree.locator('flohub-viewed[data-path="cmd/utils.go"][aria-checked="false"]').waitFor();
+check(true, "pressing the React Viewed button updates the tree");
 await page.locator('nav[aria-label="File Tree Navigation"]').screenshot({ path: `${SCREENSHOTS}/file-tree-light.png` });
 
 await inlineBar(page).getByRole("button", { name: "Stack" }).click();

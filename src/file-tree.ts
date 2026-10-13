@@ -7,7 +7,7 @@ const TREE = '[role="tree"][aria-label*="file" i]';
 const ITEM = '[role="treeitem"]';
 const TOGGLE = "flohub-viewed";
 const ANCHOR_ID = /diff-[0-9a-f]{64}/;
-const VIEWED_NAME = /^(mark as )?viewed$/i;
+const VIEWED_NAME = /^(not |mark as |unmark as )?viewed$/i;
 const USER_CONTENT = ".markdown-body, .comment-body, .js-comment-body";
 const STATE_LABEL: Record<ViewedState, string> = {
   VIEWED: "Viewed",
@@ -74,8 +74,8 @@ export class ViewedTree {
   private readonly busy = new Set<string>();
   /** When the tree last changed each path through the API, so an older refetch cannot undo it. */
   private readonly changedAt = new Map<string, number>();
-  /** The last state seen on each page control. Only a change counts, since React may render from a stale cache. */
-  private seen = new WeakMap<HTMLElement, boolean>();
+  /** The last state seen on each file's page control, so a re-rendered control only counts when it changed. */
+  private readonly seen = new Map<string, boolean>();
 
   constructor(private readonly notify: (message: string) => void) {}
 
@@ -109,7 +109,7 @@ export class ViewedTree {
     this.generation++;
     this.busy.clear();
     this.changedAt.clear();
-    this.seen = new WeakMap();
+    this.seen.clear();
     for (const element of document.querySelectorAll(TOGGLE)) element.remove();
     for (const element of document.querySelectorAll("[data-flohub-file], [data-flohub-viewed], [data-flohub-row]")) {
       clearDecoration(element);
@@ -173,15 +173,7 @@ export class ViewedTree {
 
     for (const [item, path] of files) {
       const control = pageControl(path, loaded, headers);
-      if (control) {
-        const checked = isChecked(control);
-        const before = this.seen.get(control);
-        this.seen.set(control, checked);
-        if (before !== undefined && before !== checked && !this.busy.has(path)) {
-          loaded.states.set(path, stateFromCheckbox(checked, loaded.states.get(path)));
-          this.changedAt.delete(path);
-        }
-      }
+      if (control && !this.busy.has(path)) this.followControl(control, path, loaded);
       this.decorateFile(item, path, loaded.states.get(path) ?? "UNVIEWED");
     }
 
@@ -193,6 +185,26 @@ export class ViewedTree {
       setAttribute(folder, "data-flohub-viewed", allViewed ? "VIEWED" : null);
       const row = rowOf(folder);
       if (row) setAttribute(row, "data-flohub-row", allViewed ? "" : null);
+    }
+  }
+
+  /**
+   * Keeps the tree and the page's Viewed control for one file in step. A control that appears after the tree
+   * changed the file through the API may come from the page's stale cache, so the tree clicks it into line.
+   * Otherwise the control's state wins whenever it is new or changed.
+   */
+  private followControl(control: HTMLElement, path: string, loaded: Loaded): void {
+    const checked = isChecked(control);
+    const before = this.seen.get(path);
+    this.seen.set(path, checked);
+    if (before === undefined && this.changedAt.has(path)) {
+      this.changedAt.delete(path);
+      if (checked !== (loaded.states.get(path) === "VIEWED")) control.click();
+      return;
+    }
+    if (before !== checked) {
+      loaded.states.set(path, stateFromCheckbox(checked, loaded.states.get(path)));
+      this.changedAt.delete(path);
     }
   }
 
@@ -234,7 +246,7 @@ export class ViewedTree {
 
     const control = pageControl(path, loaded);
     if (control) {
-      this.seen.set(control, isChecked(control));
+      this.seen.set(path, isChecked(control));
       if (isChecked(control) !== viewed) control.click();
       this.redecorate();
       return;
