@@ -475,6 +475,19 @@ await dark.close();
 const keys = await launch("light");
 const keyFixture = createFixture();
 await keys.route("https://api.github.com/**", (route) => keyFixture.handle(route));
+await keys.route(`${PULL_URL}/files`, async (route) => {
+  const response = await route.fetch();
+  const headers = { ...response.headers() };
+  delete headers["content-security-policy"];
+  const pageShortcut = `<script>
+    window.pageKeys = [];
+    for (const type of ["keydown", "keyup"]) {
+      window.addEventListener(type, (event) => { if (event.key === "y") window.pageKeys.push(type); }, true);
+    }
+  </script>`;
+  const body = (await response.text()).replace(/<head[^>]*>/, (head) => `${head}${pageShortcut}`);
+  await route.fulfill({ response, headers, body });
+});
 const keyPage = await keys.newPage();
 await keyPage.goto(`${PULL_URL}/files`);
 await inlineBar(keyPage).locator(".stack-list").waitFor();
@@ -488,6 +501,10 @@ check(
   JSON.stringify(keyFixture.submissions) === JSON.stringify([{ path: "/reviews", body: { event: "APPROVE" } }]),
   `R→Y approves without a comment: ${JSON.stringify(keyFixture.submissions)}`,
 );
+const pageKeys = () => keyPage.evaluate(() => (window as unknown as { pageKeys: string[] }).pageKeys.join());
+check((await pageKeys()) === "", `GitHub's own y shortcut never sees the Y of R→Y: "${await pageKeys()}"`);
+await keyPage.keyboard.press("y");
+check((await pageKeys()) === "keydown,keyup", "a plain Y still reaches GitHub's own shortcut");
 
 await keyPage.keyboard.press("r");
 await keyPage.keyboard.press("a");
