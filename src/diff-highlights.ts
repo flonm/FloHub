@@ -96,9 +96,7 @@ interface DiffMarkup {
 /** GitHub's classic diff: line number cells carry `id="diff-<hash>L12"` and `R12`, followed by their code cell. */
 const CLASSIC: DiffMarkup = {
   codeCell(anchor, ref) {
-    let cell = document.getElementById(`${anchor}${ref.side}${ref.line}`)?.nextElementSibling ?? null;
-    while (cell && !cell.classList.contains("blob-code")) cell = cell.nextElementSibling;
-    return cell instanceof HTMLElement ? cell : null;
+    return nextCodeCell(document.getElementById(`${anchor}${ref.side}${ref.line}`), "blob-code");
   },
   firstCodeCell(anchor) {
     return document.getElementById(anchor)?.querySelector<HTMLElement>("td.blob-code:not(.blob-code-hunk)") ?? null;
@@ -107,6 +105,39 @@ const CLASSIC: DiffMarkup = {
     return document.getElementById(anchor)?.querySelector<HTMLElement>(".file-header .file-info") ?? null;
   },
 };
+
+/**
+ * GitHub's React diff, split or unified: the file's region has the `diff-<hash>` id, and line number cells carry
+ * `data-diff-side` and `data-line-number`, followed by their code cell. Its class names are hashed, so they're avoided.
+ */
+const REACT: DiffMarkup = {
+  codeCell(anchor, ref) {
+    const side = ref.side === "L" ? "left" : "right";
+    const number = document
+      .getElementById(anchor)
+      ?.querySelector(`td.new-diff-line-number[data-diff-side="${side}"][data-line-number="${ref.line}"]`);
+    return nextCodeCell(number ?? null, "diff-text-cell");
+  },
+  firstCodeCell(anchor) {
+    return document.getElementById(anchor)?.querySelector<HTMLElement>("td.diff-text-cell") ?? null;
+  },
+  fileHeader(anchor) {
+    return document.getElementById(anchor)?.querySelector<HTMLElement>("[data-diff-header-wrapper] h3")?.parentElement ?? null;
+  },
+};
+
+/** Tries each markup in turn, since GitHub serves either. */
+const MARKUP: DiffMarkup = {
+  codeCell: (anchor, ref) => CLASSIC.codeCell(anchor, ref) ?? REACT.codeCell(anchor, ref),
+  firstCodeCell: (anchor) => CLASSIC.firstCodeCell(anchor) ?? REACT.firstCodeCell(anchor),
+  fileHeader: (anchor, path) => CLASSIC.fileHeader(anchor, path) ?? REACT.fileHeader(anchor, path),
+};
+
+function nextCodeCell(numberCell: Element | null, className: string): HTMLElement | null {
+  let cell = numberCell?.nextElementSibling ?? null;
+  while (cell && !cell.classList.contains(className)) cell = cell.nextElementSibling;
+  return cell instanceof HTMLElement ? cell : null;
+}
 
 interface Loaded {
   key: string;
@@ -218,14 +249,14 @@ export class DiffHighlights {
     const since = `v${loaded.since.number}`;
     for (const { anchor, marks } of loaded.files) {
       if (marks.change === "dropped") continue;
-      const header = CLASSIC.fileHeader(anchor, marks.path);
+      const header = MARKUP.fileHeader(anchor, marks.path);
       if (header) decorateBadge(header, marks, since);
       for (const ref of marks.changed) {
-        const cell = CLASSIC.codeCell(anchor, ref);
+        const cell = MARKUP.codeCell(anchor, ref);
         if (cell && !cell.hasAttribute(CHANGED)) cell.setAttribute(CHANGED, since);
       }
       marks.removed.forEach((removed, index) => {
-        const cell = removed.after ? CLASSIC.codeCell(anchor, removed.after) : CLASSIC.firstCodeCell(anchor);
+        const cell = removed.after ? MARKUP.codeCell(anchor, removed.after) : MARKUP.firstCodeCell(anchor);
         if (cell) decorateRemoved(cell, removed, `${anchor}:${index}`, since);
       });
     }

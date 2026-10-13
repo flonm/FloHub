@@ -578,6 +578,48 @@ await inlineBar(page).getByRole("button", { name: "Show" }).click();
 await changedCell.first().waitFor();
 check(true, "Show puts the highlights back");
 
+// GitHub's React diff, which it serves to signed-in viewers: the same README.md lines in its split markup.
+const reactRow = (left: number | null, right: number | null, marker: string, text: string) => {
+  const side = (name: "left" | "right", line: number | null) =>
+    line === null
+      ? '<td class="empty-diff-line"></td><td class="empty-diff-line"></td>'
+      : `<td class="new-diff-line-number" data-diff-side="${name}" data-line-number="${line}">${line}</td>` +
+        `<td class="diff-text-cell" data-diff-side="${name}" data-line-number="${line}"><code>${marker}${text}</code></td>`;
+  return `<tr class="diff-line-row">${side("left", left)}${side("right", right)}</tr>`;
+};
+const REACT_PAGE = `<!doctype html><html><head><title>React diff</title></head><body><main>
+<div role="region" id="${readmeAnchor}"><div data-diff-header-wrapper="true"><div><div><h3><a href="#${readmeAnchor}"><code>README.md</code></a></h3></div></div></div>
+<table role="grid" data-diff-anchor="${readmeAnchor}"><tbody>
+<tr class="diff-line-row"><td colspan="4" class="diff-hunk-cell"><code class="diff-text-cell hunk">@@ -321,6 +321,8 @@</code></td></tr>
+${reactRow(323, 323, " ", "")}
+${reactRow(null, 324, "+", "If GitHub already rebased the same stack branches…")}
+${reactRow(null, 325, "+", "")}
+${reactRow(324, 326, " ", "#### Diverged stacks")}
+</tbody></table></div></main></body></html>`;
+await light.route("https://github.com/flohub/react-diff/**", (route) =>
+  route.fulfill({ body: REACT_PAGE, contentType: "text/html" }),
+);
+const reactPage = await light.newPage();
+await reactPage.goto("https://github.com/flohub/react-diff/pull/1/changes");
+await reactPage.locator("[data-flohub-since]").first().waitFor();
+check(
+  JSON.stringify(
+    await reactPage
+      .locator("[data-flohub-since]")
+      .evaluateAll((cells) => cells.map((cell) => `${cell.getAttribute("data-diff-side")}:${cell.getAttribute("data-line-number")}`)),
+  ) === JSON.stringify(["right:324"]),
+  "in GitHub's React diff, the line added since the review is highlighted",
+);
+check(
+  (await reactPage.locator('td.diff-text-cell[data-diff-side="right"][data-line-number="323"] flohub-removed button').innerText()) === "−1",
+  "in GitHub's React diff, the marker sits where the reviewed line is gone",
+);
+check(
+  (await reactPage.locator("[data-diff-header-wrapper] flohub-since-badge").innerText()) === "Changed since your review (v1)",
+  "in GitHub's React diff, the file header gets the badge",
+);
+await reactPage.close();
+
 const tree = page.getByRole("tree", { name: "File Tree" });
 const viewedToggle = (path: string) => tree.locator(`flohub-viewed[data-path="${path}"]`);
 await viewedToggle("README.md").waitFor();
