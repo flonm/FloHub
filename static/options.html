@@ -63,6 +63,8 @@
       }
       button[type="submit"] { background: var(--accent); border-color: var(--accent); color: #ffffff; }
       :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      .disclaimer p { margin: 0; color: var(--fg); }
+      [hidden] { display: none; }
       #status { min-height: 1.5em; margin-top: 12px; }
       #status[data-tone="success"] { color: var(--success); }
       #status[data-tone="error"] { color: var(--danger); }
@@ -104,6 +106,11 @@
       </ul>
       <p>They never fire while you type in a text field. A pending review with draft comments is submitted with your verdict.</p>
 
+      <div id="access" class="disclaimer" role="alert" hidden>
+        <p>FloHub can't read <code>github.com</code> or <code>api.github.com</code> yet, so the overview won't appear.</p>
+        <div class="actions"><button type="button" id="grant">Allow access to GitHub</button></div>
+      </div>
+
       <h2>Token</h2>
       <p>
         <a href="https://github.com/settings/tokens/new?description=FloHub&amp;scopes=repo,read:org">Create a token with the right scopes</a>
@@ -124,7 +131,7 @@
         </div>
         <p id="status" role="status" aria-live="polite"></p>
       </form>
-      <p>The token is stored only in this browser profile (<code>chrome.storage.local</code>) and sent only to <code>api.github.com</code>.</p>
+      <p>The token is stored only in this browser profile (<code>storage.local</code>) and sent only to <code>api.github.com</code>.</p>
     </main>
     <script src="options.js"></script>
   </body>

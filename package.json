@@ -5,14 +5,17 @@
   "type": "module",
   "scripts": {
     "build": "bun build.ts",
+    "build:firefox": "bun build.ts firefox",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
+    "lint:firefox": "bun run build:firefox && web-ext lint --source-dir dist-firefox",
     "e2e": "bun run build && bun e2e/smoke.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.4.3",
     "@types/chrome": "^0.3.5",
     "playwright": "1.63.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "web-ext": "8"
   }
 }

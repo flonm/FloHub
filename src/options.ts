@@ -4,6 +4,16 @@ const form = document.querySelector<HTMLFormElement>("#token-form");
 const input = document.querySelector<HTMLInputElement>("#token");
 const status = document.querySelector<HTMLParagraphElement>("#status");
 const clear = document.querySelector<HTMLButtonElement>("#clear");
+const access = document.querySelector<HTMLDivElement>("#access");
+const grant = document.querySelector<HTMLButtonElement>("#grant");
+const origins = requiredOrigins();
+
+if (access && grant) {
+  void showAccess(access);
+  grant.addEventListener("click", () => {
+    void chrome.permissions.request({ origins }).then(() => showAccess(access));
+  });
+}
 
 if (form && input && status && clear) {
   void readToken().then(async (token) => {
@@ -45,4 +55,15 @@ function show(message: string, tone: "info" | "success" | "error"): void {
   if (!status) return;
   status.textContent = message;
   status.dataset.tone = tone;
+}
+
+/** @returns Every origin the content script and the GitHub API calls need. */
+function requiredOrigins(): string[] {
+  const manifest = chrome.runtime.getManifest();
+  const matches = manifest.content_scripts?.flatMap((script) => script.matches ?? []) ?? [];
+  return [...new Set([...matches, ...(manifest.host_permissions ?? [])])];
+}
+
+async function showAccess(notice: HTMLElement): Promise<void> {
+  notice.hidden = await chrome.permissions.contains({ origins });
 }
