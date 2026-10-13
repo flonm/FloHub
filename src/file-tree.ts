@@ -3,10 +3,11 @@ import { send } from "./messages";
 import { type PullRef, pullKey } from "./pull-ref";
 import { diffAnchor, matchPath, stateFromCheckbox, type ViewedState } from "./viewed";
 
-const TREE = '[role="tree"]';
+const TREE = '[role="tree"][aria-label*="file" i]';
 const ITEM = '[role="treeitem"]';
 const TOGGLE = "flohub-viewed";
 const ANCHOR_ID = /diff-[0-9a-f]{64}/;
+const VIEWED_NAME = /^(mark as )?viewed$/i;
 const USER_CONTENT = ".markdown-body, .comment-body, .js-comment-body";
 const STATE_LABEL: Record<ViewedState, string> = {
   VIEWED: "Viewed",
@@ -58,11 +59,12 @@ interface Loaded {
   states: Map<string, ViewedState>;
   anchors: Map<string, string>;
   pathAnchors: Map<string, string>;
+  byName: Map<string, string[]>;
 }
 
 /**
  * Shows the viewer's Viewed mark on every file in the Files changed tree, with a checkbox to change it.
- * The page's own checkbox wins whenever it is rendered, so both stay in step.
+ * When the page's own Viewed control changes, the tree follows it.
  */
 export class ViewedTree {
   private loaded: Loaded | null = null;
@@ -70,6 +72,10 @@ export class ViewedTree {
   private failedKey: string | null = null;
   private generation = 0;
   private readonly busy = new Set<string>();
+  /** When the tree last changed each path through the API, so an older refetch cannot undo it. */
+  private readonly changedAt = new Map<string, number>();
+  /** The last state seen on each page control. Only a change counts, since React may render from a stale cache. */
+  private seen = new WeakMap<HTMLElement, boolean>();
 
   constructor(private readonly notify: (message: string) => void) {}
 
@@ -78,14 +84,15 @@ export class ViewedTree {
    * @param ref The pull request on screen, or null to drop the states.
    */
   sync(ref: PullRef | null): void {
-    const tree = ref && document.querySelector(TREE);
-    if (!ref || !tree) {
-      if (!ref) this.reset();
+    if (!ref) {
+      this.reset();
       return;
     }
+    const tree = findTree();
+    if (!tree) return;
     const key = pullKey(ref);
     if (this.loaded?.key !== key && this.loadingKey !== key && this.failedKey !== key) void this.load(ref);
-    if (this.loaded?.key === pullKey(ref)) this.decorate(tree, this.loaded);
+    if (this.loaded?.key === key) this.decorate(tree, this.loaded);
   }
 
   /** @param ref The pull request to fetch the viewed states again for, if they were requested before. */
@@ -95,60 +102,85 @@ export class ViewedTree {
   }
 
   private reset(): void {
+    if (!this.loaded && !this.loadingKey && !this.failedKey) return;
     this.loaded = null;
     this.loadingKey = null;
     this.failedKey = null;
     this.generation++;
     this.busy.clear();
+    this.changedAt.clear();
+    this.seen = new WeakMap();
+    for (const element of document.querySelectorAll(TOGGLE)) element.remove();
+    for (const element of document.querySelectorAll("[data-flohub-file], [data-flohub-viewed], [data-flohub-row]")) {
+      clearDecoration(element);
+    }
   }
 
   private async load(ref: PullRef): Promise<void> {
     const key = pullKey(ref);
     const run = ++this.generation;
+    const startedAt = performance.now();
     this.loadingKey = key;
     const reply = await send({ type: "viewed-files", ref });
     if (run !== this.generation) return;
-    this.loadingKey = null;
     if (!reply.ok) {
-      if (this.loaded?.key !== key) {
-        this.failedKey = key;
-        this.notify(reply.message);
-      }
+      this.loadingKey = null;
+      if (this.loaded?.key !== key && this.failedKey !== key) this.notify(reply.message);
+      if (this.loaded?.key !== key) this.failedKey = key;
       return;
     }
-    this.failedKey = null;
     const states = new Map(reply.value.files.map((file) => [file.path, file.viewerViewedState]));
-    for (const path of this.busy) {
-      const pending = this.loaded?.states.get(path);
-      if (pending) states.set(path, pending);
+    const previous = this.loaded?.key === key ? this.loaded.states : null;
+    for (const [path, at] of this.changedAt) {
+      const local = previous?.get(path);
+      if (local && (this.busy.has(path) || at >= startedAt)) states.set(path, local);
     }
     const paths = [...states.keys()];
     const anchors = await Promise.all(paths.map(diffAnchor));
     if (run !== this.generation) return;
+    this.loadingKey = null;
+    this.failedKey = null;
+    const byName = new Map<string, string[]>();
+    for (const path of paths) {
+      const name = path.slice(path.lastIndexOf("/") + 1);
+      byName.set(name, [...(byName.get(name) ?? []), path]);
+    }
     this.loaded = {
       key,
       pullRequestId: reply.value.pullRequestId,
       states,
       anchors: new Map(anchors.map((anchor, index) => [anchor, paths[index] as string])),
       pathAnchors: new Map(paths.map((path, index) => [path, anchors[index] as string])),
+      byName,
     };
-    const tree = document.querySelector(TREE);
-    if (tree) this.decorate(tree, this.loaded);
+    this.redecorate();
   }
 
   private decorate(tree: Element, loaded: Loaded): void {
     ensureStyles();
+    const headers = new Map<string, Element>();
+    for (const header of document.querySelectorAll(".file-header[data-path]")) {
+      headers.set(header.getAttribute("data-path") ?? "", header);
+    }
+
     const files = new Map<Element, string>();
     for (const item of tree.querySelectorAll(ITEM)) {
       if (isFolder(item)) continue;
       const path = resolvePath(item, loaded);
       if (path) files.set(item, path);
+      else clearDecoration(item);
     }
 
     for (const [item, path] of files) {
-      const checkbox = pageCheckbox(path, loaded);
-      if (checkbox && !this.busy.has(path)) {
-        loaded.states.set(path, stateFromCheckbox(isChecked(checkbox), loaded.states.get(path)));
+      const control = pageControl(path, loaded, headers);
+      if (control) {
+        const checked = isChecked(control);
+        const before = this.seen.get(control);
+        this.seen.set(control, checked);
+        if (before !== undefined && before !== checked && !this.busy.has(path)) {
+          loaded.states.set(path, stateFromCheckbox(checked, loaded.states.get(path)));
+          this.changedAt.delete(path);
+        }
       }
       this.decorateFile(item, path, loaded.states.get(path) ?? "UNVIEWED");
     }
@@ -186,45 +218,64 @@ export class ViewedTree {
       item.append(toggle);
     }
     const name = path.split("/").at(-1) ?? path;
+    const changed = state === "DISMISSED" ? ", changed since you viewed it" : "";
     setAttribute(toggle, "data-path", path);
     setAttribute(toggle, "data-state", state);
     setAttribute(toggle, "aria-checked", String(state === "VIEWED"));
     setAttribute(toggle, "aria-busy", this.busy.has(path) ? "true" : null);
-    setAttribute(toggle, "aria-label", `Viewed: ${name}`);
+    setAttribute(toggle, "aria-label", `Viewed: ${name}${changed}`);
     setAttribute(toggle, "title", `${STATE_LABEL[state]}. Click to mark as ${state === "VIEWED" ? "not viewed" : "viewed"}.`);
   }
 
   private async toggle(path: string): Promise<void> {
     const loaded = this.loaded;
-    if (!loaded || this.busy.has(path)) return;
+    if (!loaded || this.busy.has(path) || !loaded.states.has(path)) return;
     const viewed = loaded.states.get(path) !== "VIEWED";
 
-    const checkbox = pageCheckbox(path, loaded);
-    if (checkbox) {
-      if (isChecked(checkbox) !== viewed) checkbox.click();
+    const control = pageControl(path, loaded);
+    if (control) {
+      this.seen.set(control, isChecked(control));
+      if (isChecked(control) !== viewed) control.click();
       this.redecorate();
       return;
     }
 
-    const previous = loaded.states.get(path);
+    const previous = loaded.states.get(path) as ViewedState;
     loaded.states.set(path, viewed ? "VIEWED" : "UNVIEWED");
     this.busy.add(path);
+    this.changedAt.set(path, performance.now());
     this.redecorate();
     const reply = await send({ type: "set-viewed", pullRequestId: loaded.pullRequestId, path, viewed });
+    const current = this.loaded?.key === loaded.key ? this.loaded : null;
+    if (!current) return;
     this.busy.delete(path);
-    if (this.loaded !== loaded) return;
     if (!reply.ok) {
-      if (previous) loaded.states.set(path, previous);
-      else loaded.states.delete(path);
+      current.states.set(path, previous);
+      this.changedAt.delete(path);
       this.notify(`Could not mark ${path} as ${viewed ? "viewed" : "not viewed"}: ${reply.message}`);
+    } else {
+      this.changedAt.set(path, performance.now());
     }
     this.redecorate();
   }
 
   private redecorate(): void {
-    const tree = document.querySelector(TREE);
+    const tree = findTree();
     if (tree && this.loaded) this.decorate(tree, this.loaded);
   }
+}
+
+/** The Files changed tree; other trees on the page are left alone. */
+function findTree(): Element | null {
+  return document.querySelector(TREE);
+}
+
+function clearDecoration(element: Element): void {
+  element.querySelector(`:scope > ${TOGGLE}`)?.remove();
+  element.removeAttribute("data-flohub-file");
+  element.removeAttribute("data-flohub-viewed");
+  rowOf(element)?.removeAttribute("data-flohub-row");
+  element.removeAttribute("data-flohub-row");
 }
 
 function ensureStyles(): void {
@@ -279,7 +330,7 @@ function resolvePath(item: Element, loaded: Loaded): string | null {
     if (!label) return null;
     labels.unshift(label);
   }
-  return matchPath(labels.join("/"), loaded.states.keys());
+  return matchPath(labels.join("/"), loaded.byName.get(labels.at(-1) ?? "") ?? []);
 }
 
 function labelOf(item: Element): string {
@@ -296,24 +347,23 @@ function labelOf(item: Element): string {
  * Finds the page's own Viewed control for a file, when its diff is rendered.
  * @returns A checkbox, a toggle button or a checkbox role element, or null.
  */
-function pageCheckbox(path: string, loaded: Loaded): HTMLElement | null {
+function pageControl(path: string, loaded: Loaded, headers?: Map<string, Element>): HTMLElement | null {
   const anchor = loaded.pathAnchors.get(path);
-  const container =
-    (anchor && document.getElementById(anchor)) ||
-    document.querySelector(`.file-header[data-path="${CSS.escape(path)}"]`)?.closest(".file");
+  const header = headers ? headers.get(path) : document.querySelector(`.file-header[data-path="${CSS.escape(path)}"]`);
+  const container = (anchor && document.getElementById(anchor)) || header?.closest(".file");
   if (!container) return null;
   const classic = container.querySelector<HTMLElement>("input.js-reviewed-checkbox");
   if (classic) return classic;
   const candidates = container.querySelectorAll<HTMLElement>('input[type="checkbox"], button[aria-pressed], [role="checkbox"]');
   return (
     [...candidates].find(
-      (candidate) => candidate.localName !== TOGGLE && !candidate.closest(USER_CONTENT) && /\bviewed\b/i.test(accessibleText(candidate)),
+      (candidate) => candidate.localName !== TOGGLE && !candidate.closest(USER_CONTENT) && VIEWED_NAME.test(accessibleText(candidate)),
     ) ?? null
   );
 }
 
 function accessibleText(element: HTMLElement): string {
-  return element.getAttribute("aria-label") ?? element.closest("label")?.textContent ?? element.textContent ?? "";
+  return (element.getAttribute("aria-label") ?? element.closest("label")?.textContent ?? element.textContent ?? "").trim();
 }
 
 function isChecked(control: HTMLElement): boolean {

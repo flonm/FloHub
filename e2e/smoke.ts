@@ -325,6 +325,22 @@ check(
   `tree checkboxes mark and unmark files through the API: ${fixture.viewedMarks.join()}`,
 );
 check(page.url() === urlBeforeToggle, "clicking a tree checkbox does not jump to the file");
+await page.evaluate(() => {
+  const header = document.querySelector('.file-header[data-path="cmd/sync.go"]');
+  const label = document.createElement("label");
+  label.innerHTML = '<input type="checkbox" class="js-reviewed-checkbox"> Viewed';
+  header?.append(label);
+});
+await viewedToggle("cmd/sync.go").click();
+await tree.locator('flohub-viewed[data-path="cmd/sync.go"][aria-checked="true"]').waitFor();
+check(
+  (await page.locator('.file-header[data-path="cmd/sync.go"] .js-reviewed-checkbox').isChecked()) &&
+    fixture.viewedMarks.length === 2,
+  "a tree checkbox clicks the file's own Viewed checkbox when it is on the page",
+);
+await page.locator('.file-header[data-path="cmd/sync.go"] .js-reviewed-checkbox').click();
+await tree.locator('flohub-viewed[data-path="cmd/sync.go"][aria-checked="false"]').waitFor();
+check(true, "unchecking the file's own Viewed checkbox updates the tree");
 await page.locator('nav[aria-label="File Tree Navigation"]').screenshot({ path: `${SCREENSHOTS}/file-tree-light.png` });
 
 await inlineBar(page).getByRole("button", { name: "Stack" }).click();

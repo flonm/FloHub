@@ -50,7 +50,11 @@ new IntersectionObserver(updateVisibility, { rootMargin: `-${STICKY_HEADER_HEIGH
   inline.host,
 );
 
-new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+new MutationObserver(schedule).observe(document.documentElement, {
+  childList: true,
+  subtree: true,
+  attributeFilter: ["aria-pressed", "aria-checked"],
+});
 document.addEventListener("change", schedule, true);
 document.addEventListener("click", schedule, true);
 addEventListener("popstate", schedule);

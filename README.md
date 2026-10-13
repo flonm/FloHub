@@ -18,7 +18,7 @@ A Chrome extension that adds a Graphite-style overview to every GitHub pull requ
 - **One chip per reviewer.** States are *Changes requested*, *Re-requested* (with the earlier verdict), *Review pending*, *Dismissed*, *Commented* and *Approved*, most actionable first. Requested teams get a chip too.
 - **Which review counts:** a reviewer's verdict is their latest approval, change request or dismissed review. A later plain comment doesn't override it.
 - **What's left out:** the PR author's own replies, unsubmitted drafts, and bots that only commented.
-- **Viewed files in the tree:** on the Files changed tab, every file in the file tree gets a checkbox showing your Viewed mark, and clicking it marks or unmarks the file. Viewed files are dimmed, and so is a folder once every file in it is viewed. A file that changed after you viewed it shows an amber dot. When the file's own Viewed checkbox is on the page, the tree clicks that one, so GitHub collapses the diff as usual. Otherwise the change goes through the API.
+- **Viewed files in the tree:** on the Files changed tab, every file in the file tree gets a checkbox showing your Viewed mark, and clicking it marks or unmarks the file. Viewed files are dimmed, and so is an expanded folder once every file in it is viewed. A file that changed after you viewed it shows an amber dot. When the file's own Viewed checkbox is on the page, the tree clicks that one, so GitHub collapses the diff as usual. Otherwise the change goes through the API.
 - **Placement:** the overview sits inline under the PR title. Once the header scrolls away, a compact pill appears at the bottom left with the stack strip, layer position and reviewer faces. It expands to the full overview (Escape closes it).
 
 ## Install
