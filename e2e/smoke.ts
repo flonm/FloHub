@@ -604,6 +604,25 @@ await page.screenshot({ path: `${SCREENSHOTS}/floating-expanded-light.png` });
 await page.keyboard.press("Escape");
 check(await floatingBar(page).locator(".panel").isHidden(), "Escape collapses the floating panel");
 
+await floatingBar(page).getByRole("button", { name: "Minimize FloHub to the window edge" }).click();
+const restoreTab = floatingBar(page).getByRole("button", { name: "Show FloHub" });
+await restoreTab.waitFor();
+check(await floatingBar(page).locator(".pill").isHidden(), "minimizing the floating bar leaves only the edge tab");
+check((await restoreTab.boundingBox())?.x === 0, "the minimized tab sits flush with the window's left edge");
+check(
+  await restoreTab.evaluate((node) => (node.getRootNode() as ShadowRoot).activeElement === node),
+  "focus moves to the edge tab after minimizing",
+);
+await page.screenshot({ path: `${SCREENSHOTS}/floating-minimized-light.png` });
+await page.reload();
+await inlineBar(page).getByText("Changes requested").first().waitFor();
+await page.mouse.wheel(0, 2400);
+await restoreTab.waitFor();
+check(await floatingBar(page).locator(".pill").isHidden(), "the floating bar stays minimized after a reload");
+await restoreTab.click();
+await floatingBar(page).locator(".pill").waitFor({ state: "visible" });
+check(await restoreTab.isHidden(), "the edge tab restores the floating pill");
+
 await page.mouse.wheel(0, -5000);
 await inlineBar(page).getByRole("button", { name: "Re-request review from defunkt" }).click();
 await inlineBar(page).locator(".chips > li", { hasText: "defunkt" }).getByText("Re-requested").waitFor();

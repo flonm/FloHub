@@ -32,6 +32,7 @@ export interface BarActions {
   openOptions(): void;
   toggleStack(): void;
   toggleMerged(): void;
+  toggleMinimized(): void;
   compareVersions(): void;
 }
 
@@ -64,6 +65,7 @@ export class ReviewBar {
   private state: BarState = { kind: "loading" };
   private expanded = false;
   private entering = false;
+  private minimized = false;
 
   constructor(
     private readonly mode: "inline" | "floating",
@@ -101,6 +103,20 @@ export class ReviewBar {
   setHidden(hidden: boolean): void {
     this.host.hidden = hidden;
     if (hidden && this.expanded) this.toggle(false);
+  }
+
+  /**
+   * Shrinks the floating bar to a tab at the window's left edge, so it stops covering the page beneath it.
+   * @param minimized Whether to show only the tab.
+   */
+  setMinimized(minimized: boolean): void {
+    if (minimized === this.minimized) return;
+    const hadFocus = this.shadow.activeElement !== null;
+    this.minimized = minimized;
+    this.expanded = false;
+    this.host.toggleAttribute("data-minimized", minimized);
+    this.render(this.state);
+    if (hadFocus) this.shadow.querySelector<HTMLElement>(`[data-focus-key="${minimized ? "restore" : "pill"}"]`)?.focus();
   }
 
   private toggle(expanded: boolean): void {
@@ -231,7 +247,13 @@ export class ReviewBar {
   }
 
   private renderFloating(): HTMLElement {
-    const wrapper = el("div");
+    if (this.minimized) {
+      const tab = iconButton("chevron", "Show FloHub", () => this.actions.toggleMinimized(), "restore");
+      tab.className = "tab";
+      return tab;
+    }
+
+    const wrapper = el("div", { class: "dock" });
     const pill = el("button", {
       type: "button",
       class: "pill",
@@ -240,7 +262,9 @@ export class ReviewBar {
     });
     pill.addEventListener("click", () => this.toggle(!this.expanded));
     pill.append(...this.renderPillContent(), icon("chevron", "chevron"));
-    wrapper.append(pill);
+    const minimize = iconButton("chevron", "Minimize FloHub to the window edge", () => this.actions.toggleMinimized(), "minimize");
+    minimize.classList.add("minimize");
+    wrapper.append(pill, minimize);
 
     if (this.expanded) {
       const panel = el("div", { class: this.entering ? "panel entering" : "panel" });
