@@ -540,7 +540,7 @@ for (const scheme of ["light", "dark"] as const) {
   );
   const popupId = new URL(inboxContext.serviceWorkers()[0]?.url() ?? "").host;
   const popup = await inboxContext.newPage();
-  await popup.setViewportSize({ width: 420, height: 600 });
+  await popup.setViewportSize({ width: 504, height: 600 });
   await popup.goto(`chrome-extension://${popupId}/popup.html`);
   await popup.getByText("feat(ui): render the stack").waitFor();
   if (scheme === "light") {
@@ -660,7 +660,7 @@ for (const scheme of ["light", "dark"] as const) {
   const emptyContext = await launch(scheme, (route) => createFixture({ inbox: EMPTY_INBOX, inboxGate: gate }).handle(route));
   const popupId = new URL(emptyContext.serviceWorkers()[0]?.url() ?? "").host;
   const popup = await emptyContext.newPage();
-  await popup.setViewportSize({ width: 420, height: 600 });
+  await popup.setViewportSize({ width: 504, height: 600 });
   await popup.goto(`chrome-extension://${popupId}/popup.html`);
   await popup.locator(".skeleton").waitFor();
   check((await popup.locator("main").getAttribute("aria-busy")) === "true", `the first open shows a busy skeleton (${scheme})`);
