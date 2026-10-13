@@ -24,13 +24,14 @@ let lastLoad = 0;
 let generation = 0;
 let scheduled = false;
 let lastAnchorSearch = 0;
-let anchorRetry: ReturnType<typeof setTimeout> | null = null;
+let anchorRetry: ReturnType<typeof setTimeout> | undefined;
 let stackCollapsed = false;
 let showMerged = false;
 let pendingNotice: string | null = null;
 /** Whether a fresh overview arrived for this pull request; until then a ready state comes from the cache. */
 let loadedFresh = false;
 let viewerIsAuthor = false;
+let claimedKey: string | null = null;
 const busy = new Set<string>();
 const dialog = new ReviewDialog();
 const toast = new Toast();
@@ -79,8 +80,11 @@ document.addEventListener("visibilitychange", () => {
 });
 addEventListener("focus", () => void load(false));
 addEventListener("keydown", onKeydown, true);
+addEventListener("keypress", swallowClaimedKey, true);
+addEventListener("keyup", swallowClaimedKey, true);
 
-sync();
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", sync, { once: true });
+else sync();
 
 function schedule(): void {
   if (scheduled) return;
@@ -92,6 +96,7 @@ function schedule(): void {
 }
 
 function sync(): void {
+  if (!document.body) return;
   const ref = parsePullRef(location.href);
   if (!ref) {
     current = null;
@@ -115,21 +120,21 @@ function sync(): void {
   }
 
   if (!floating.host.isConnected) document.body.append(floating.host);
-  if (!inline.host.isConnected) attachInline(ref);
+  if (!inline.host.isConnected) mountInline(ref);
   viewedTree.sync(ref);
   updateVisibility();
 }
 
 /**
- * Puts the inline bar under the PR header. Only failed searches are throttled, so when GitHub re-renders
- * the header and takes the bar with it, the bar is back on the next frame. A throttled search retries on a timer,
- * since a page that has settled sends no more mutations to retry on.
+ * Looks for the header to mount the inline bar in. Only failed searches wait {@link ANCHOR_RETRY_MS} for the next
+ * one, so when GitHub re-renders the header and takes the bar with it, the bar is back on the next frame. A search
+ * that is skipped runs once the wait is over, so the last change to a page that is still loading always gets a search.
  */
-function attachInline(ref: PullRef): void {
-  const wait = lastAnchorSearch + ANCHOR_RETRY_MS - Date.now();
+function mountInline(ref: PullRef): void {
+  const wait = ANCHOR_RETRY_MS - (Date.now() - lastAnchorSearch);
   if (wait > 0) {
     anchorRetry ??= setTimeout(() => {
-      anchorRetry = null;
+      anchorRetry = undefined;
       schedule();
     }, wait);
     return;
@@ -298,11 +303,20 @@ function onKeydown(event: KeyboardEvent): void {
     time: event.timeStamp,
   });
   if (!action) return;
+  claimedKey = event.code;
   event.preventDefault();
   event.stopImmediatePropagation();
   if (action.type === "navigate") navigateStack(action.direction);
   else if (action.withComment) openReview(action.event);
   else void approveNow();
+}
+
+/** Hides the rest of a key FloHub claimed from the page, whose own shortcuts may listen for keypress or keyup. */
+function swallowClaimedKey(event: KeyboardEvent): void {
+  if (event.code !== claimedKey) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (event.type === "keyup") claimedKey = null;
 }
 
 function isTextField(event: KeyboardEvent): boolean {
