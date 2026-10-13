@@ -385,7 +385,7 @@ function floatingBar(page: Page) {
 function visibleText(text: string): string {
   return text
     .split("\n")
-    .filter((line) => !line.endsWith("conversations resolved"))
+    .filter((line) => !line.endsWith("conversations resolved") && !line.endsWith("between the versions"))
     .join(" ")
     .replace(/\s+/g, " ")
     .trim();

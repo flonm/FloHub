@@ -14,7 +14,7 @@ export interface VersionFile {
   filename: string;
   previousFilename?: string;
   status: string;
-  /** Missing for binary files and diffs too large for GitHub to show. */
+  /** Missing for binary files and diffs too large for GitHub to show; empty for pure renames and empty files. */
   patch?: string;
   sha: string;
 }
@@ -24,7 +24,8 @@ export interface VersionFile {
  * - `unchanged`: both versions make the same change.
  * - `added`: only the newer version touches the file.
  * - `dropped`: only the older version touched the file.
- * - `opaque`: the change differs, but GitHub shows no diff for at least one side.
+ * - `opaque`: GitHub shows no diff for at least one side, and the file's content differs between the versions, which
+ *   may only be because the base changed it, so the change can't be compared.
  */
 export type FileChange = "changed" | "unchanged" | "added" | "dropped" | "opaque";
 
