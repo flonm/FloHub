@@ -1,6 +1,8 @@
 import {
   fetchOverview,
   fetchPendingComments,
+  fetchVersionPatch,
+  fetchVersions,
   fetchViewedFiles,
   GitHubError,
   pokeReviewer,
@@ -50,6 +52,10 @@ async function handle(message: Message): Promise<Reply<ReplyByType[Message["type
       case "submit-review":
         await submitReview(message.ref, message.event, message.body);
         return { ok: true, value: null };
+      case "versions":
+        return { ok: true, value: await fetchVersions(message.ref) };
+      case "version-patch":
+        return { ok: true, value: await fetchVersionPatch(message.ref, message.head, message.bases) };
       case "open-options":
         await chrome.runtime.openOptionsPage();
         return { ok: true, value: null };

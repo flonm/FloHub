@@ -4,6 +4,8 @@ import type { ReviewEvent } from "./shortcuts";
 import type { RawPullRequest } from "./reviewers";
 import type { RawStack, RawStackPull } from "./stack";
 import type { ViewedFile, ViewedFiles } from "./viewed";
+import type { VersionFile } from "./interdiff";
+import { baseBranches, deriveVersions, type RawBasePull, type RawVersionPull, type VersionHistory } from "./versions";
 
 const API = "https://api.github.com";
 
@@ -43,6 +45,10 @@ query ($owner: String!, $name: String!, $number: Int!) {
       baseRefName
       author { login }
       viewerCanUpdate
+      forcePushes: timelineItems(last: 1, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
+        totalCount
+        nodes { ... on HeadRefForcePushedEvent { createdAt } }
+      }
       reviewRequests(first: 50) {
         nodes {
           requestedReviewer {
@@ -106,6 +112,46 @@ query ($owner: String!, $name: String!, $number: Int!, $after: String) {
   }
 }`;
 
+const VERSIONS_QUERY = `
+query ($owner: String!, $name: String!, $number: Int!) {
+  viewer { login }
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      baseRefName
+      baseRefOid
+      headRefOid
+      createdAt
+      commits(last: 1) { nodes { commit { oid committedDate } } }
+      timelineItems(last: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, BASE_REF_CHANGED_EVENT]) {
+        nodes {
+          __typename
+          ... on HeadRefForcePushedEvent {
+            createdAt
+            actor { login }
+            beforeCommit { oid committedDate }
+            afterCommit { oid committedDate }
+          }
+          ... on BaseRefChangedEvent { previousRefName }
+        }
+      }
+      reviews(last: 100) { nodes { author { login } commit { oid committedDate } } }
+    }
+  }
+}`;
+
+const BASE_PULL_FIELDS = `
+nodes {
+  headRefOid
+  commits(last: 1) { nodes { commit { oid committedDate } } }
+  timelineItems(last: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
+    nodes {
+      __typename
+      ... on HeadRefForcePushedEvent { createdAt beforeCommit { oid committedDate } afterCommit { oid committedDate } }
+    }
+  }
+}`;
+
+const MAX_BASE_BRANCHES = 5;
 const MAX_FILE_PAGES = 30;
 
 interface RawViewedFiles {
@@ -120,8 +166,24 @@ interface RawViewedFiles {
 export interface RawOverview {
   viewer: { login: string };
   repository: {
-    pullRequest: (RawPullRequest & RawStackPull & { baseRefName: string; stack: RawStack | null }) | null;
+    pullRequest:
+      | (RawPullRequest &
+          RawStackPull & {
+            baseRefName: string;
+            stack: RawStack | null;
+            forcePushes: { totalCount: number; nodes: ({ createdAt?: string } | null)[] } | null;
+          })
+      | null;
   } | null;
+}
+
+/** What one version of a pull request changes, against the base it was made on. */
+export interface VersionPatch {
+  /** The commit the files are diffed against: the merge base of the version and its base. */
+  mergeBase: string;
+  /** Whether the version descends from the chosen base; if not, the diff may include the base's own changes. */
+  onBase: boolean;
+  files: VersionFile[];
 }
 
 export type Overview = RawOverview & {
@@ -135,6 +197,8 @@ export class GitHubError extends Error {
   constructor(
     readonly code: FailureCode,
     message: string,
+    /** The HTTP status GitHub answered with, if it answered. */
+    readonly status?: number,
   ) {
     super(message);
   }
@@ -168,6 +232,96 @@ export async function fetchOverview(ref: PullRef): Promise<Overview> {
     throw new GitHubError("failed", `The token cannot see ${ref.owner}/${ref.repo}#${ref.number}${reason}.`);
   }
   return { ...data, unreadable };
+}
+
+/**
+ * Fetches every known version of a pull request, and the history of the branch it is based on, for stacks.
+ * @param ref The pull request.
+ * @returns The versions, oldest first.
+ */
+export async function fetchVersions(ref: PullRef): Promise<VersionHistory> {
+  const { data } = await graphql<{ viewer: { login: string }; repository: { pullRequest: RawVersionPull | null } | null }>(
+    VERSIONS_QUERY,
+    { owner: ref.owner, name: ref.repo, number: ref.number },
+  );
+  const pull = data.repository?.pullRequest;
+  if (!pull) throw new GitHubError("failed", `The token cannot see ${ref.owner}/${ref.repo}#${ref.number}.`);
+  return deriveVersions(pull, await fetchBasePulls(ref, baseBranches(pull).slice(0, MAX_BASE_BRANCHES)), data.viewer.login);
+}
+
+async function fetchBasePulls(ref: PullRef, branches: string[]): Promise<RawBasePull[]> {
+  const fields = branches.map(
+    (_, index) =>
+      `b${index}: pullRequests(headRefName: $b${index}, first: 3, states: [OPEN, CLOSED, MERGED], orderBy: { field: UPDATED_AT, direction: DESC }) { ${BASE_PULL_FIELDS} }`,
+  );
+  const parameters = branches.map((_, index) => `$b${index}: String!`).join(", ");
+  const query = `query ($owner: String!, $name: String!, ${parameters}) { repository(owner: $owner, name: $name) { ${fields.join("\n")} } }`;
+  const variables = Object.fromEntries(branches.map((branch, index) => [`b${index}`, branch]));
+  try {
+    const { data } = await graphql<{ repository: Record<string, { nodes: RawBasePull[] }> | null }>(query, {
+      owner: ref.owner,
+      name: ref.repo,
+      ...variables,
+    });
+    return Object.values(data.repository ?? {}).flatMap((connection) => connection?.nodes ?? []);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetches what a version changes. It is diffed against the first candidate base it descends from, so an old version
+ * in a stack is diffed against the base branch's head from back then. If it descends from none, it is diffed against
+ * its merge base with the first candidate, as GitHub's own Files changed tab does.
+ * @param ref The pull request.
+ * @param head The version's commit.
+ * @param bases Candidate bases, best first; see `baseCandidates`.
+ * @returns The changed files.
+ */
+export async function fetchVersionPatch(ref: PullRef, head: string, bases: string[]): Promise<VersionPatch> {
+  let fallback: VersionPatch | null = null;
+  for (const base of bases) {
+    const key = `${ref.owner}/${ref.repo}:${base}...${head}`;
+    let compare = compareCache.get(key);
+    if (!compare) {
+      try {
+        compare = (await request(`/repos/${ref.owner}/${ref.repo}/compare/${base}...${head}?per_page=1`, {})) as RawCompare;
+      } catch (error) {
+        const missing = error instanceof GitHubError && error.status === 404;
+        // An earlier head of the base branch may be gone; the version itself being gone fails every try.
+        if (missing && base !== bases[0]) continue;
+        throw missing ? new GitHubError("failed", `GitHub no longer has commit ${head.slice(0, 7)}.`) : error;
+      }
+      compareCache.set(key, compare);
+      if (compareCache.size > MAX_CACHED_COMPARES) compareCache.delete(compareCache.keys().next().value!);
+    }
+    const onBase = compare.status === "ahead" || compare.status === "identical";
+    const files = (compare.files ?? []).map(toVersionFile);
+    const patch: VersionPatch = { mergeBase: compare.merge_base_commit.sha, onBase, files };
+    if (onBase) return patch;
+    fallback ??= patch;
+  }
+  if (!fallback) throw new GitHubError("failed", `Could not compare ${head.slice(0, 7)} with its base.`);
+  return fallback;
+}
+
+interface RawCompare {
+  status: "ahead" | "behind" | "identical" | "diverged";
+  merge_base_commit: { sha: string };
+  files?: { filename: string; previous_filename?: string; status: string; patch?: string; sha: string }[];
+}
+
+const MAX_CACHED_COMPARES = 40;
+const compareCache = new Map<string, RawCompare>();
+
+function toVersionFile(file: NonNullable<RawCompare["files"]>[number]): VersionFile {
+  return {
+    filename: file.filename,
+    ...(file.previous_filename ? { previousFilename: file.previous_filename } : {}),
+    status: file.status,
+    ...(file.patch !== undefined ? { patch: file.patch } : {}),
+    sha: file.sha,
+  };
 }
 
 /**
@@ -345,7 +499,7 @@ async function request(path: string, init: RequestInit, explicitToken?: string):
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const message = (body as { message?: string } | null)?.message ?? response.statusText;
-    throw new GitHubError("failed", `GitHub answered ${response.status}: ${message}`);
+    throw new GitHubError("failed", `GitHub answered ${response.status}: ${message}`, response.status);
   }
   return body;
 }
