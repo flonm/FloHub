@@ -1,0 +1,285 @@
+import { BAR_STYLES } from "./bar-styles";
+import { button, el, icon, iconButton, type IconName } from "./dom";
+import type { Reviewer, ReviewerStatus, Verdict } from "./reviewers";
+import type { StackView } from "./stack";
+import { describePosition, renderStackSection, renderStrip } from "./stack-view";
+
+export type BarState =
+  | { kind: "loading" }
+  | { kind: "setup"; message: string }
+  | { kind: "error"; message: string }
+  | {
+      kind: "ready";
+      reviewers: Reviewer[];
+      stack: StackView;
+      stackCollapsed: boolean;
+      showMerged: boolean;
+      now: number;
+      refreshing: boolean;
+      busy: ReadonlySet<string>;
+      notice: string | null;
+    };
+
+export interface BarActions {
+  refresh(): void;
+  rerequest(reviewer: Reviewer): void;
+  openOptions(): void;
+  toggleStack(): void;
+  toggleMerged(): void;
+}
+
+type Tone = "success" | "danger" | "attention" | "muted";
+
+const STATUS: Record<ReviewerStatus, { label: string; tone: Tone; icon: IconName }> = {
+  approved: { label: "Approved", tone: "success", icon: "check" },
+  changes_requested: { label: "Changes requested", tone: "danger", icon: "cross" },
+  dismissed: { label: "Dismissed", tone: "muted", icon: "slash" },
+  commented: { label: "Commented", tone: "muted", icon: "comment" },
+  pending: { label: "Review pending", tone: "attention", icon: "dot" },
+  rerequested: { label: "Re-requested", tone: "attention", icon: "sync" },
+};
+
+const PREVIOUS: Record<Verdict, string> = {
+  approved: "was approved",
+  changes_requested: "had requested changes",
+  dismissed: "was dismissed",
+  commented: "had commented",
+};
+
+const MAX_FACES = 6;
+
+/** A reviewer summary rendered into its own shadow root, either inline in the header or floating. */
+export class ReviewBar {
+  readonly host: HTMLElement;
+  private readonly shadow: ShadowRoot;
+  private readonly root: HTMLElement;
+  private state: BarState = { kind: "loading" };
+  private expanded = false;
+  private entering = false;
+
+  constructor(
+    private readonly mode: "inline" | "floating",
+    private readonly actions: BarActions,
+  ) {
+    this.host = document.createElement("flohub-bar");
+    this.host.dataset.mode = mode;
+    this.shadow = this.host.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = BAR_STYLES;
+    this.root = document.createElement("div");
+    this.root.setAttribute("role", "region");
+    this.root.setAttribute("aria-label", "Reviewers");
+    this.shadow.append(style, this.root);
+    if (mode === "floating") {
+      this.shadow.addEventListener("keydown", (event) => {
+        if ((event as KeyboardEvent).key === "Escape" && this.expanded) this.toggle(false);
+      });
+      document.addEventListener("pointerdown", (event) => {
+        if (this.expanded && !event.composedPath().includes(this.host)) this.toggle(false);
+      });
+    }
+  }
+
+  /** @param state What to show. */
+  render(state: BarState): void {
+    this.state = state;
+    const focusKey = (this.shadow.activeElement as HTMLElement | null)?.dataset.focusKey;
+    this.root.replaceChildren(this.mode === "inline" ? this.renderFull() : this.renderFloating());
+    this.entering = false;
+    if (focusKey) this.shadow.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus();
+  }
+
+  /** @param hidden Whether to take the bar out of the page. */
+  setHidden(hidden: boolean): void {
+    this.host.hidden = hidden;
+    if (hidden && this.expanded) this.toggle(false);
+  }
+
+  private toggle(expanded: boolean): void {
+    this.expanded = expanded;
+    this.entering = expanded;
+    this.render(this.state);
+  }
+
+  private renderFull(): HTMLElement {
+    const overview = el("div", { class: "overview" });
+    const state = this.state;
+    if (state.kind === "ready") {
+      overview.append(
+        renderStackSection(state.stack, {
+          collapsed: this.mode === "inline" && state.stackCollapsed,
+          showMerged: state.showMerged,
+          now: state.now,
+          toggleCollapsed: () => this.actions.toggleStack(),
+          toggleMerged: () => this.actions.toggleMerged(),
+        }),
+      );
+    }
+    overview.append(this.renderReviewers());
+    return overview;
+  }
+
+  private renderReviewers(): HTMLElement {
+    const bar = el("div", { class: "bar" });
+    bar.append(el("span", { class: "label" }, "Reviewers"));
+    const state = this.state;
+    if (state.kind === "ready") {
+      const refresh = iconButton("refresh", "Refresh reviewers", () => this.actions.refresh(), "refresh");
+      refresh.classList.add("refresh");
+      if (state.refreshing) {
+        refresh.classList.add("spinning");
+        refresh.setAttribute("aria-busy", "true");
+      }
+      bar.append(refresh);
+    }
+
+    if (state.kind === "loading") {
+      bar.append(el("span", { class: "message", role: "status" }, "Loading reviewers…"));
+      return bar;
+    }
+    if (state.kind === "setup" || state.kind === "error") {
+      const action =
+        state.kind === "setup"
+          ? button("text-button", "Set up token", () => this.actions.openOptions(), "setup")
+          : button("text-button", "Retry", () => this.actions.refresh(), "retry");
+      bar.append(el("span", { class: "message", role: "status" }, state.message), action);
+      return bar;
+    }
+
+    if (state.reviewers.length === 0) {
+      bar.append(el("span", { class: "message" }, "No reviews or review requests yet."));
+    } else {
+      const list = el("ul", { class: "chips" });
+      for (const reviewer of state.reviewers) list.append(this.renderChip(reviewer, state.busy.has(reviewer.key)));
+      bar.append(list);
+    }
+
+    bar.append(el("p", { class: "notice", role: "alert" }, state.notice ?? ""));
+    return bar;
+  }
+
+  private renderChip(reviewer: Reviewer, busy: boolean): HTMLElement {
+    const status = STATUS[reviewer.status];
+    const chip = el("li", { class: "chip" });
+    chip.append(
+      avatar(reviewer),
+      el(
+        "a",
+        { class: "name", href: reviewer.url, target: "_top", "data-focus-key": `reviewer:${reviewer.key}` },
+        reviewer.name,
+      ),
+    );
+    const label = el("span", { class: "status", "data-tone": status.tone });
+    label.append(icon(status.icon), status.label);
+    chip.append(label);
+    if (reviewer.previous) chip.append(el("span", { class: "previous" }, `· ${PREVIOUS[reviewer.previous]}`));
+    if (reviewer.canRerequest) {
+      const rerequest = iconButton(
+        "sync",
+        `Re-request review from ${reviewer.name}`,
+        () => this.actions.rerequest(reviewer),
+        `rerequest:${reviewer.key}`,
+      );
+      if (busy) {
+        rerequest.disabled = true;
+        rerequest.classList.add("spinning");
+        rerequest.setAttribute("aria-busy", "true");
+      }
+      chip.append(rerequest);
+    }
+    return chip;
+  }
+
+  private renderFloating(): HTMLElement {
+    const wrapper = el("div");
+    const pill = el("button", {
+      type: "button",
+      class: "pill",
+      "aria-expanded": String(this.expanded),
+      "data-focus-key": "pill",
+    });
+    pill.addEventListener("click", () => this.toggle(!this.expanded));
+    pill.append(...this.renderPillContent(), icon("chevron", "chevron"));
+    wrapper.append(pill);
+
+    if (this.expanded) {
+      const panel = el("div", { class: this.entering ? "panel entering" : "panel" });
+      panel.append(this.renderFull());
+      wrapper.append(panel);
+    }
+    return wrapper;
+  }
+
+  private renderPillContent(): Node[] {
+    const state = this.state;
+    if (state.kind !== "ready") {
+      const text = state.kind === "loading" ? "Reviewers…" : "Reviewers";
+      return [icon("people"), el("span", { class: "summary" }, text)];
+    }
+    const stack = this.renderPillStack(state.stack);
+    if (state.reviewers.length === 0) {
+      return [...stack, icon("people"), el("span", { class: "summary" }, "No reviewers")];
+    }
+
+    const faces = el("span", { class: "faces", "aria-hidden": "true" });
+    for (const reviewer of state.reviewers.slice(0, MAX_FACES)) {
+      const status = STATUS[reviewer.status];
+      const face = el("span", { class: "face" });
+      const badge = el("span", { class: "badge", "data-tone": status.tone });
+      badge.append(icon(status.icon));
+      face.append(avatar(reviewer), badge);
+      faces.append(face);
+    }
+    const hidden = state.reviewers.length - MAX_FACES;
+    if (hidden > 0) faces.append(el("span", { class: "more" }, `+${hidden}`));
+
+    const description = state.reviewers
+      .map((reviewer) => `${reviewer.name}: ${STATUS[reviewer.status].label.toLowerCase()}`)
+      .join(", ");
+    return [
+      ...stack,
+      faces,
+      el("span", { class: "summary" }, summarize(state.reviewers)),
+      el("span", { class: "visually-hidden" }, `. ${description}`),
+    ];
+  }
+
+  private renderPillStack(view: StackView): Node[] {
+    const current = view.entries.find((entry) => entry.current);
+    const position = view.number === null ? (current?.label ?? "") : `${view.currentPosition}/${view.size}`;
+    const spoken = `${describePosition(view)}${current ? `, ${current.label}` : ""}. `;
+    return [
+      renderStrip(view),
+      el("span", { class: "summary", "aria-hidden": "true" }, position),
+      el("span", { class: "visually-hidden" }, spoken),
+      el("span", { class: "divider", "aria-hidden": "true" }),
+    ];
+  }
+}
+
+function summarize(reviewers: Reviewer[]): string {
+  const count = (status: ReviewerStatus) => reviewers.filter((reviewer) => reviewer.status === status).length;
+  const parts = [
+    [count("changes_requested"), "requested changes"],
+    [count("pending") + count("rerequested"), "waiting"],
+    [count("approved"), "approved"],
+  ] as const;
+  const text = parts.filter(([n]) => n > 0).map(([n, label]) => `${n} ${label}`);
+  return text.length > 0 ? text.join(" · ") : "Reviewers";
+}
+
+function avatar(reviewer: Reviewer): HTMLElement {
+  const className = reviewer.kind === "team" ? "avatar team" : "avatar";
+  if (!reviewer.avatarUrl) {
+    const placeholder = el("span", { class: `${className} placeholder` });
+    placeholder.append(icon("people"));
+    return placeholder;
+  }
+  return el("img", { class: className, src: avatarUrl(reviewer.avatarUrl), alt: "", width: "20", height: "20" });
+}
+
+function avatarUrl(url: string): string {
+  const sized = new URL(url);
+  sized.searchParams.set("s", "48");
+  return sized.toString();
+}

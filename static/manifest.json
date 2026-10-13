@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "FloHub",
+  "version": "0.1.0",
+  "description": "Pure AI slop: Graphite-style stack status and reviewer verdicts on every GitHub pull request tab.",
+  "minimum_chrome_version": "121",
+  "permissions": ["storage"],
+  "host_permissions": ["https://api.github.com/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://github.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "action": { "default_title": "FloHub settings" }
+}
