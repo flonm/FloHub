@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { diffAnchor, matchPath, stateFromCheckbox } from "./viewed";
+import { diffAnchor, formatDiffStat, matchPath, stateFromCheckbox } from "./viewed";
 
 describe("diffAnchor", () => {
   test("matches the anchor GitHub renders for README.md", async () => {
@@ -38,5 +38,24 @@ describe("stateFromCheckbox", () => {
     [false, undefined, "UNVIEWED"],
   ] as const)("checked %p over %p → %p", (checked, known, expected) => {
     expect(stateFromCheckbox(checked, known)).toBe(expected);
+  });
+});
+
+describe("formatDiffStat", () => {
+  test("shows both counts with a plus and a minus sign", () => {
+    expect(formatDiffStat(12, 3)).toEqual({ added: "+12", deleted: "\u22123", label: "12 additions, 3 deletions", width: 6 });
+  });
+
+  test("leaves out a side without lines and uses singular nouns", () => {
+    expect(formatDiffStat(1, 0)).toEqual({ added: "+1", deleted: null, label: "1 addition, 0 deletions", width: 2 });
+    expect(formatDiffStat(0, 1)).toEqual({ added: null, deleted: "\u22121", label: "0 additions, 1 deletion", width: 2 });
+  });
+
+  test("groups thousands", () => {
+    expect(formatDiffStat(1234, 56789)).toMatchObject({ added: "+1,234", deleted: "\u221256,789", width: 14 });
+  });
+
+  test("shows nothing for a binary file or a pure rename", () => {
+    expect(formatDiffStat(0, 0)).toBeNull();
   });
 });

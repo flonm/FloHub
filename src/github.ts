@@ -77,7 +77,7 @@ query ($owner: String!, $name: String!, $number: Int!, $after: String) {
       id
       files(first: 100, after: $after) {
         pageInfo { hasNextPage endCursor }
-        nodes { path viewerViewedState }
+        nodes { path viewerViewedState additions deletions }
       }
     }
   }

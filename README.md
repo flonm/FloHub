@@ -19,6 +19,7 @@ A Chrome extension that adds a Graphite-style overview to every GitHub pull requ
 - **Which review counts:** a reviewer's verdict is their latest approval, change request or dismissed review. A later plain comment doesn't override it.
 - **What's left out:** the PR author's own replies, unsubmitted drafts, and bots that only commented.
 - **Viewed files in the tree:** on the Files changed tab, every file in the file tree gets a checkbox showing your Viewed mark, and clicking it marks or unmarks the file. Viewed files are dimmed, and so is an expanded folder once every file in it is viewed. A file that changed after you viewed it shows an amber dot. When the file's own Viewed checkbox is on the page, the tree clicks that one, so GitHub collapses the diff as usual. Otherwise the change goes through the API.
+- **Line counts in the tree:** every file in the Files changed tree shows its added and deleted lines (`+12 −3`), right-aligned next to its Viewed checkbox, including files whose diff isn't rendered. A side with no lines is left out, and a binary file or a pure rename shows none. Hovering the counts spells them out.
 - **Placement:** the overview sits inline under the PR title. Once the header scrolls away, a compact pill appears at the bottom left with the stack strip, layer position and reviewer faces. It expands to the full overview (Escape closes it).
 
 ## Shortcuts
@@ -54,7 +55,7 @@ After `bun run build`, click the reload icon on the extension's card in `chrome:
 
 | Command | What it does |
 |---|---|
-| `bun run test` | Unit tests: reviewer states, stack status precedence, last activity, ages, URL parsing, file tree path matching |
+| `bun run test` | Unit tests: reviewer states, stack status precedence, last activity, ages, URL parsing, file tree path matching, line counts |
 | `bun run typecheck` | `tsc --noEmit` |
 | `bun run e2e` | Builds, loads `dist/` into Playwright's Chromium, mocks `api.github.com`, and drives a public PR (`PULL_URL` overrides it). Screenshots go to `e2e/screenshots/`. |
 
@@ -63,7 +64,7 @@ The smoke test runs logged out, so it exercises GitHub's classic PR markup. The 
 ## Layout
 
 - `src/background.ts`: the service worker. It holds the token and makes every API call: one GraphQL query for reviewers and the stack (`PullRequest.stack.entries`), and REST `POST …/requested_reviewers` to re-request, which adds to the existing requests.
-- `src/file-tree.ts`, `src/viewed.ts`: the Viewed checkboxes in the file tree. A tree item is matched to its file by the `#diff-<sha256(path)>` anchor or, failing that, by its labels from the root down. Viewed marks come from `PullRequest.files.viewerViewedState` and change through `markFileAsViewed`/`unmarkFileAsViewed`.
+- `src/file-tree.ts`, `src/viewed.ts`: the Viewed checkboxes in the file tree. A tree item is matched to its file by the `#diff-<sha256(path)>` anchor or, failing that, by its labels from the root down. Viewed marks and line counts come from `PullRequest.files` (`viewerViewedState`, `additions`, `deletions`), and marks change through `markFileAsViewed`/`unmarkFileAsViewed`.
 - `src/content.ts`: follows GitHub's in-page navigation, mounts the bars, and refreshes on focus and on visibility changes.
 - `src/reviewers.ts`, `src/stack.ts`, `src/age.ts`: pure derivation of reviewer states, layer statuses and ages from the raw query.
 - `src/bar.ts`, `src/stack-view.ts`, `src/dom.ts`, `src/bar-styles.ts`: the Shadow DOM UI, themed through GitHub's Primer CSS variables.

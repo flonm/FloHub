@@ -89,6 +89,13 @@ const CHANGED_FILES: Record<string, string> = {
   "skills/gh-stack/SKILL.md": "UNVIEWED",
 };
 
+const CHANGE_STATS: Record<string, { additions: number; deletions: number }> = {
+  "README.md": { additions: 2, deletions: 1 },
+  "cmd/rebase.go": { additions: 120, deletions: 34 },
+  "cmd/rebase_test.go": { additions: 1234, deletions: 0 },
+  "skills/gh-stack/SKILL.md": { additions: 0, deletions: 0 },
+};
+
 function createFixture(options: { partial?: boolean } = {}) {
   const requested: (object | null)[] = [
     actor("mojombo"),
@@ -119,7 +126,11 @@ function createFixture(options: { partial?: boolean } = {}) {
         return;
       }
       if (graphql?.query.includes("viewerViewedState")) {
-        const nodes = Object.entries(viewed).map(([path, viewerViewedState]) => ({ path, viewerViewedState }));
+        const nodes = Object.entries(viewed).map(([path, viewerViewedState]) => ({
+          path,
+          viewerViewedState,
+          ...(CHANGE_STATS[path] ?? { additions: 3, deletions: 3 }),
+        }));
         await route.fulfill({
           json: {
             data: {
@@ -315,6 +326,24 @@ check(
   (await tree.locator("flohub-viewed").count()) === Object.keys(CHANGED_FILES).length,
   "every file in the tree gets a Viewed checkbox",
 );
+const diffStat = (path: string) => tree.locator(`[role="treeitem"]:has(> flohub-viewed[data-path="${path}"]) > flohub-diffstat`);
+check(
+  (await tree.locator("flohub-diffstat").count()) === Object.keys(CHANGED_FILES).length - 1 &&
+    (await diffStat("skills/gh-stack/SKILL.md").count()) === 0,
+  "every file with changed lines shows its counts, a pure rename shows none",
+);
+check(
+  (await diffStat("README.md").innerText()).replace(/\s+/g, " ") === "+2 \u22121" &&
+    (await diffStat("cmd/rebase_test.go").innerText()) === "+1,234" &&
+    (await diffStat("cmd/rebase.go").getAttribute("title")) === "120 additions, 34 deletions",
+  "line counts read +added −deleted, leave out an empty side and spell out both in the tooltip",
+);
+const overlap = await tree.locator('[role="treeitem"]:has(> flohub-viewed[data-path="cmd/rebase_test.go"])').evaluate((item) => {
+  const label = item.querySelector(".ActionList-item-label") ?? item.firstElementChild;
+  const stat = item.querySelector(":scope > flohub-diffstat");
+  return (label?.getBoundingClientRect().right ?? 0) - (stat?.getBoundingClientRect().left ?? 0);
+});
+check(overlap <= 0, `the longest line count leaves the file name readable (overlap ${overlap.toFixed(1)}px)`);
 check(
   (await viewedToggle("README.md").getAttribute("aria-checked")) === "true" &&
     (await viewedToggle("cmd/rebase_test.go").getAttribute("aria-checked")) === "false",

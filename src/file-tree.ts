@@ -1,11 +1,13 @@
 import { icon } from "./dom";
 import { send } from "./messages";
 import { type PullRef, pullKey } from "./pull-ref";
-import { diffAnchor, matchPath, stateFromCheckbox, type ViewedState } from "./viewed";
+import { type DiffStat, diffAnchor, formatDiffStat, matchPath, stateFromCheckbox, type ViewedState } from "./viewed";
 
 const TREE = '[role="tree"][aria-label*="file" i]';
 const ITEM = '[role="treeitem"]';
 const TOGGLE = "flohub-viewed";
+const DIFFSTAT = "flohub-diffstat";
+const STAT_CHARS = "--flohub-stat-chars";
 const ANCHOR_ID = /diff-[0-9a-f]{64}/;
 const VIEWED_NAME = /^(not |mark as |unmark as )?viewed$/i;
 const USER_CONTENT = ".markdown-body, .comment-body, .js-comment-body";
@@ -17,8 +19,23 @@ const STATE_LABEL: Record<ViewedState, string> = {
 
 const STYLES = `
 li[data-flohub-file] { position: relative; }
-li[data-flohub-file] > [data-flohub-row] { padding-right: 32px !important; }
-[data-flohub-viewed="VIEWED"] > [data-flohub-row] { opacity: 0.55; }
+li[data-flohub-file] > [data-flohub-row] { padding-right: calc(var(${STAT_CHARS}, 0) * 1ch + 40px) !important; }
+[data-flohub-viewed="VIEWED"] > [data-flohub-row],
+[data-flohub-viewed="VIEWED"] > ${DIFFSTAT} { opacity: 0.55; }
+${DIFFSTAT} {
+  position: absolute;
+  top: 50%;
+  right: 32px;
+  display: flex;
+  gap: 4px;
+  transform: translateY(-50%);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+${DIFFSTAT} .added { color: var(--fgColor-success, #1a7f37); }
+${DIFFSTAT} .deleted { color: var(--fgColor-danger, #d1242f); }
 ${TOGGLE} {
   position: absolute;
   top: 50%;
@@ -57,6 +74,7 @@ interface Loaded {
   key: string;
   pullRequestId: string;
   states: Map<string, ViewedState>;
+  stats: Map<string, DiffStat | null>;
   anchors: Map<string, string>;
   pathAnchors: Map<string, string>;
   byName: Map<string, string[]>;
@@ -110,7 +128,9 @@ export class ViewedTree {
     this.busy.clear();
     this.changedAt.clear();
     this.seen.clear();
-    for (const element of document.querySelectorAll(TOGGLE)) element.remove();
+    for (const element of document.querySelectorAll(`${TOGGLE}, ${DIFFSTAT}`)) element.remove();
+    const tree = findTree();
+    if (tree instanceof HTMLElement) tree.style.removeProperty(STAT_CHARS);
     for (const element of document.querySelectorAll("[data-flohub-file], [data-flohub-viewed], [data-flohub-row]")) {
       clearDecoration(element);
     }
@@ -149,6 +169,7 @@ export class ViewedTree {
       key,
       pullRequestId: reply.value.pullRequestId,
       states,
+      stats: new Map(reply.value.files.map((file) => [file.path, formatDiffStat(file.additions, file.deletions)])),
       anchors: new Map(anchors.map((anchor, index) => [anchor, paths[index] as string])),
       pathAnchors: new Map(paths.map((path, index) => [path, anchors[index] as string])),
       byName,
@@ -158,6 +179,10 @@ export class ViewedTree {
 
   private decorate(tree: Element, loaded: Loaded): void {
     ensureStyles();
+    const widest = Math.max(0, ...[...loaded.stats.values()].map((stat) => stat?.width ?? 0));
+    if (tree instanceof HTMLElement && tree.style.getPropertyValue(STAT_CHARS) !== String(widest)) {
+      tree.style.setProperty(STAT_CHARS, String(widest));
+    }
     const headers = new Map<string, Element>();
     for (const header of document.querySelectorAll(".file-header[data-path]")) {
       headers.set(header.getAttribute("data-path") ?? "", header);
@@ -175,6 +200,7 @@ export class ViewedTree {
       const control = pageControl(path, loaded, headers);
       if (control && !this.busy.has(path)) this.followControl(control, path, loaded);
       this.decorateFile(item, path, loaded.states.get(path) ?? "UNVIEWED");
+      decorateDiffStat(item, loaded.stats.get(path) ?? null);
     }
 
     for (const folder of tree.querySelectorAll(ITEM)) {
@@ -282,8 +308,31 @@ function findTree(): Element | null {
   return document.querySelector(TREE);
 }
 
+/** Shows a file's added and deleted line counts left of its Viewed checkbox, right-aligned in a column as wide as the widest count. */
+function decorateDiffStat(item: Element, stat: DiffStat | null): void {
+  let element = item.querySelector<HTMLElement>(`:scope > ${DIFFSTAT}`);
+  if (!stat) {
+    element?.remove();
+    return;
+  }
+  if (!element) {
+    element = document.createElement(DIFFSTAT);
+    element.setAttribute("aria-hidden", "true");
+    item.append(element);
+  }
+  const text = `${stat.added ?? ""} ${stat.deleted ?? ""}`;
+  if (element.dataset.text !== text) {
+    element.dataset.text = text;
+    element.replaceChildren();
+    if (stat.added) element.append(Object.assign(document.createElement("span"), { className: "added", textContent: stat.added }));
+    if (stat.deleted) element.append(Object.assign(document.createElement("span"), { className: "deleted", textContent: stat.deleted }));
+  }
+  setAttribute(element, "title", stat.label);
+}
+
 function clearDecoration(element: Element): void {
   element.querySelector(`:scope > ${TOGGLE}`)?.remove();
+  element.querySelector(`:scope > ${DIFFSTAT}`)?.remove();
   element.removeAttribute("data-flohub-file");
   element.removeAttribute("data-flohub-viewed");
   rowOf(element)?.removeAttribute("data-flohub-row");
@@ -313,7 +362,7 @@ function isFolder(item: Element): boolean {
 /** @returns The tree item's visible row: its first child that is neither hidden, a nested group nor ours. */
 function rowOf(item: Element): HTMLElement | null {
   for (const child of item.children) {
-    if (child instanceof HTMLElement && !child.hidden && child.getAttribute("role") !== "group" && child.localName !== TOGGLE) {
+    if (child instanceof HTMLElement && !child.hidden && child.getAttribute("role") !== "group" && child.localName !== TOGGLE && child.localName !== DIFFSTAT) {
       return child;
     }
   }
