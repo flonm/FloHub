@@ -1,6 +1,7 @@
 import type { PullRef } from "./pull-ref";
 import type { RawPullRequest } from "./reviewers";
 import type { RawStack, RawStackPull } from "./stack";
+import type { ViewedFile, ViewedFiles } from "./viewed";
 
 const API = "https://api.github.com";
 
@@ -68,6 +69,30 @@ query ($owner: String!, $name: String!, $number: Int!) {
   }
 }`;
 
+const VIEWED_FILES_QUERY = `
+query ($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id
+      files(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes { path viewerViewedState }
+      }
+    }
+  }
+}`;
+
+const MAX_FILE_PAGES = 30;
+
+interface RawViewedFiles {
+  repository: {
+    pullRequest: {
+      id: string;
+      files: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: ViewedFile[] } | null;
+    } | null;
+  } | null;
+}
+
 export interface RawOverview {
   viewer: { login: string };
   repository: {
@@ -131,6 +156,41 @@ export async function rerequestReview(ref: PullRef, login: string): Promise<void
     method: "POST",
     body: JSON.stringify({ reviewers: [login] }),
   });
+}
+
+/**
+ * Fetches the viewer's Viewed mark on every changed file, 100 per request.
+ * @param ref The pull request.
+ * @returns The pull request's node id and each file's state.
+ */
+export async function fetchViewedFiles(ref: PullRef): Promise<ViewedFiles> {
+  const files: ViewedFile[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < MAX_FILE_PAGES; page++) {
+    const variables = { owner: ref.owner, name: ref.repo, number: ref.number, after };
+    const result: { data: RawViewedFiles } = await graphql<RawViewedFiles>(VIEWED_FILES_QUERY, variables);
+    const pullRequest: NonNullable<RawViewedFiles["repository"]>["pullRequest"] = result.data.repository?.pullRequest ?? null;
+    if (!pullRequest?.files) throw new GitHubError("failed", "This token cannot read which files you viewed.");
+    files.push(...pullRequest.files.nodes);
+    if (!pullRequest.files.pageInfo.hasNextPage) return { pullRequestId: pullRequest.id, files };
+    after = pullRequest.files.pageInfo.endCursor;
+  }
+  throw new GitHubError("failed", "The pull request has too many files to track which ones you viewed.");
+}
+
+/**
+ * Marks a changed file as viewed or unviewed for the token's user.
+ * @param pullRequestId The pull request's node id.
+ * @param path The file.
+ * @param viewed The mark to set.
+ */
+export async function setFileViewed(pullRequestId: string, path: string, viewed: boolean): Promise<void> {
+  const field = viewed ? "markFileAsViewed" : "unmarkFileAsViewed";
+  const { data } = await graphql<Record<string, unknown>>(
+    `mutation ($pullRequestId: ID!, $path: String!) { ${field}(input: { pullRequestId: $pullRequestId, path: $path }) { clientMutationId } }`,
+    { pullRequestId, path },
+  );
+  if (!data[field]) throw new GitHubError("failed", "GitHub did not save the change. Check the token's permissions.");
 }
 
 /**

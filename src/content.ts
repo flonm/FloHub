@@ -1,5 +1,6 @@
 import { type BarState, ReviewBar } from "./bar";
 import { findInlineAnchor } from "./anchor";
+import { ViewedTree } from "./file-tree";
 import { send } from "./messages";
 import { type PullRef, parsePullRef, pullKey } from "./pull-ref";
 import { deriveReviewers, type Reviewer } from "./reviewers";
@@ -18,6 +19,7 @@ let scheduled = false;
 let lastAnchorSearch = 0;
 let stackCollapsed = false;
 let showMerged = false;
+let pendingNotice: string | null = null;
 const busy = new Set<string>();
 
 const actions = {
@@ -36,6 +38,7 @@ const actions = {
 };
 const inline = new ReviewBar("inline", actions);
 const floating = new ReviewBar("floating", actions);
+const viewedTree = new ViewedTree(notify);
 
 void chrome.storage.local.get("stackCollapsed").then((stored) => {
   stackCollapsed = stored.stackCollapsed === true;
@@ -48,6 +51,8 @@ new IntersectionObserver(updateVisibility, { rootMargin: `-${STICKY_HEADER_HEIGH
 );
 
 new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+document.addEventListener("change", schedule, true);
+document.addEventListener("click", schedule, true);
 addEventListener("popstate", schedule);
 document.addEventListener("turbo:load", schedule);
 (window as { navigation?: EventTarget }).navigation?.addEventListener("currententrychange", schedule);
@@ -71,6 +76,7 @@ function sync(): void {
   const ref = parsePullRef(location.href);
   if (!ref) {
     current = null;
+    viewedTree.sync(null);
     inline.host.remove();
     updateVisibility();
     return;
@@ -81,6 +87,8 @@ function sync(): void {
     state = { kind: "loading" };
     busy.clear();
     showMerged = false;
+    pendingNotice = null;
+    viewedTree.sync(null);
     lastAnchorSearch = 0;
     render();
     void load(true);
@@ -91,6 +99,7 @@ function sync(): void {
     lastAnchorSearch = Date.now();
     findInlineAnchor(document, ref.number)?.after(inline.host);
   }
+  viewedTree.sync(ref);
   updateVisibility();
 }
 
@@ -111,6 +120,16 @@ function render(): void {
   floating.render(state);
 }
 
+/** @param message A notice to show in the bar, kept until the bar has loaded. */
+function notify(message: string): void {
+  if (state.kind !== "ready") {
+    pendingNotice = message;
+    return;
+  }
+  state = { ...state, notice: message };
+  render();
+}
+
 function update(changes: Partial<Extract<BarState, { kind: "ready" }>>): void {
   if (state.kind !== "ready") return;
   state = { ...state, ...changes };
@@ -122,6 +141,7 @@ async function load(force: boolean): Promise<void> {
   if (!ref || (!force && Date.now() - lastLoad < AUTO_REFRESH_GAP_MS)) return;
   lastLoad = Date.now();
   const run = ++generation;
+  viewedTree.refresh(ref);
 
   if (state.kind === "ready") {
     state = { ...state, refreshing: true };
@@ -148,7 +168,7 @@ async function load(force: boolean): Promise<void> {
               ? `This token cannot read ${reply.value.unreadable.join(", ")}, so parts may be missing. Check its permissions.`
               : state.kind === "ready"
                 ? state.notice
-                : null,
+                : pendingNotice,
         }
       : { kind: "error", message: "Pull request not found." };
   } else if (reply.code !== "failed") {
