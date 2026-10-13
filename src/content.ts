@@ -8,6 +8,8 @@ import { deriveReviewers, type Reviewer } from "./reviewers";
 import { createShortcutMatcher, type ReviewEvent } from "./shortcuts";
 import { deriveStack } from "./stack";
 import { Toast } from "./toast";
+import { baseCandidates } from "./versions";
+import { VersionsDialog } from "./versions-dialog";
 
 const AUTO_REFRESH_GAP_MS = 15_000;
 const STICKY_HEADER_HEIGHT = 96;
@@ -31,6 +33,7 @@ let claimedKey: string | null = null;
 let pokes: Record<string, number> = {};
 const busy = new Set<string>();
 const dialog = new ReviewDialog();
+const versionsDialog = new VersionsDialog();
 const toast = new Toast();
 const matchShortcut = createShortcutMatcher();
 
@@ -48,6 +51,7 @@ const actions = {
     showMerged = !showMerged;
     update({ showMerged });
   },
+  compareVersions: () => compareVersions(),
 };
 const inline = new ReviewBar("inline", actions);
 const floating = new ReviewBar("floating", actions);
@@ -202,6 +206,10 @@ async function load(force: boolean): Promise<void> {
           refreshing: false,
           busy,
           pokedAt: pokedAtFor(ref),
+          forcePushes: {
+            count: pullRequest.forcePushes?.totalCount ?? 0,
+            lastAt: pullRequest.forcePushes?.nodes.at(-1)?.createdAt ?? null,
+          },
           notice:
             reply.value.unreadable.length > 0
               ? `This token cannot read ${reply.value.unreadable.join(", ")}, so parts may be missing. Check its permissions.`
@@ -237,7 +245,7 @@ async function rerequest(reviewer: Reviewer): Promise<void> {
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  if (!current || dialog.isOpen) return;
+  if (!current || dialog.isOpen || versionsDialog.isOpen) return;
   const action = matchShortcut({
     key: event.key,
     metaKey: event.metaKey,
@@ -313,6 +321,25 @@ async function submitReview(ref: PullRef, event: ReviewEvent, body: string): Pro
   if (!reply.ok) return `Could not submit the review: ${reply.message}`;
   void load(true);
   return null;
+}
+
+function compareVersions(): void {
+  const ref = current;
+  if (!ref) return;
+  versionsDialog.open({
+    number: ref.number,
+    repoUrl: `https://github.com/${ref.owner}/${ref.repo}`,
+    versions: async () => {
+      const reply = await send({ type: "versions", ref });
+      if (!reply.ok) throw new Error(reply.message);
+      return reply.value;
+    },
+    patch: async (history, version) => {
+      const reply = await send({ type: "version-patch", ref, head: version.oid, bases: baseCandidates(history, version) });
+      if (!reply.ok) throw new Error(reply.message);
+      return reply.value;
+    },
+  });
 }
 
 function isOwnPull(): boolean {

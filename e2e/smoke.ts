@@ -139,6 +139,19 @@ const CHANGE_STATS: Record<string, { additions: number; deletions: number }> = {
 
 const EMPTY_INBOX = { viewer: { login: "octocat" }, review: { nodes: [] }, mine: { nodes: [] } };
 
+const VERSION_FILES: Record<string, { filename: string; status: string; patch: string; sha: string }[]> = {
+  aaaaaaa1: [
+    { filename: "cmd/rebase.go", status: "modified", sha: "r1", patch: "@@ -10,3 +10,4 @@ func Rebase() {\n \tsync()\n+\tadopt(branch)\n \treturn nil" },
+    { filename: "README.md", status: "modified", sha: "m1", patch: "@@ -1,2 +1,3 @@\n # gh-stack\n+Adopts server rebases.\n " },
+    { filename: "cmd/legacy.go", status: "modified", sha: "l1", patch: "@@ -4,2 +4,2 @@\n-old()\n+older()" },
+  ],
+  ccccccc3: [
+    { filename: "cmd/rebase.go", status: "modified", sha: "r3", patch: "@@ -42,3 +42,5 @@ func Rebase() {\n \tsync()\n+\tadopt(branch, equivalent)\n+\tlog(branch)\n \treturn nil" },
+    { filename: "README.md", status: "modified", sha: "m3", patch: "@@ -8,2 +8,3 @@\n # gh-stack\n+Adopts server rebases.\n " },
+    { filename: "cmd/adopt_test.go", status: "added", sha: "t3", patch: "@@ -0,0 +1,2 @@\n+package cmd\n+func TestAdopt(t *testing.T) {}" },
+  ],
+};
+
 function createFixture(options: { partial?: boolean; failReadd?: boolean; inbox?: object; inboxGate?: Promise<unknown> } = {}) {
   const requested: (object | null)[] = [
     actor("mojombo"),
@@ -195,6 +208,37 @@ function createFixture(options: { partial?: boolean; failReadd?: boolean; inbox?
         await route.fulfill({ json: { data: options.inbox ?? INBOX } });
         return;
       }
+      if (graphql?.query.includes("BaseRefChangedEvent")) {
+        const commit = (oid: string, hours: number) => ({ oid, committedDate: ago(hours) });
+        await route.fulfill({
+          json: {
+            data: {
+              viewer: { login: "octocat" },
+              repository: {
+                pullRequest: {
+                  baseRefName: "main",
+                  baseRefOid: "basebase",
+                  headRefOid: "ccccccc3",
+                  createdAt: ago(72),
+                  commits: { nodes: [{ commit: commit("ccccccc3", 3) }] },
+                  timelineItems: {
+                    nodes: [
+                      { __typename: "HeadRefForcePushedEvent", createdAt: ago(20), actor: { login: "hubot" }, beforeCommit: commit("aaaaaaa1", 48), afterCommit: commit("bbbbbbb2", 20) },
+                      { __typename: "HeadRefForcePushedEvent", createdAt: ago(3), actor: { login: "hubot" }, beforeCommit: commit("bbbbbbb2", 20), afterCommit: commit("ccccccc3", 3) },
+                    ],
+                  },
+                  reviews: { nodes: [{ author: { login: "octocat" }, commit: commit("aaaaaaa1", 48) }] },
+                },
+              },
+            },
+          },
+        });
+        return;
+      }
+      if (graphql?.query.includes("headRefName")) {
+        await route.fulfill({ json: { data: { repository: { b0: { nodes: [] } } } } });
+        return;
+      }
       if (graphql) {
         await route.fulfill({
           json: {
@@ -215,6 +259,7 @@ function createFixture(options: { partial?: boolean; failReadd?: boolean; inbox?
                   },
                   author: { login: "hubot" },
                   viewerCanUpdate: true,
+                  forcePushes: { totalCount: 2, nodes: [{ createdAt: ago(3) }] },
                   reviewRequests: { nodes: requested.map((requestedReviewer) => ({ requestedReviewer })) },
                   reviews: {
                     nodes: [
@@ -281,6 +326,15 @@ function createFixture(options: { partial?: boolean; failReadd?: boolean; inbox?
         } else {
           await route.fulfill({ json: reviewState.pendingComments === null ? [] : [{ id: 9, state: "PENDING" }] });
         }
+        return;
+      }
+      const compare = /\/compare\/(\w+)\.\.\.(\w+)/.exec(request.url());
+      if (compare) {
+        const [, base, head] = compare as unknown as [string, string, string];
+        const files = VERSION_FILES[head] ?? VERSION_FILES.ccccccc3!;
+        await route.fulfill({
+          json: { status: head === "ccccccc3" ? "ahead" : "diverged", merge_base_commit: { sha: head === "ccccccc3" ? base : "oldbase" }, files },
+        });
         return;
       }
       await route.fulfill({ status: 404, json: { message: "Not mocked" } });
@@ -398,6 +452,35 @@ await inlineBar(page).getByRole("button", { name: "2 merged" }).click();
 await inlineBar(page).getByText("#338").waitFor();
 check((await inlineBar(page).getByText("Merged", { exact: true }).count()) === 2, "merged layers expand on demand");
 await inlineBar(page).screenshot({ path: `${SCREENSHOTS}/inline-light.png` });
+
+check(
+  visibleText(await inlineBar(page).getByText(/^Force-pushed/).innerText()) === "Force-pushed 2 times, last 3 hours ago",
+  "versions row counts the force pushes",
+);
+await inlineBar(page).getByRole("button", { name: "Compare versions" }).click();
+const versions = page.locator("flohub-versions dialog");
+await versions.locator("details.file").first().waitFor();
+check(
+  (await versions.getByLabel("From").inputValue()) === "1" && (await versions.getByLabel("To").inputValue()) === "3",
+  "versions default to the viewer's last reviewed version → current",
+);
+const fileRows = (await versions.locator("details.file > summary").allInnerTexts()).map(visibleText);
+check(
+  JSON.stringify(fileRows) ===
+    JSON.stringify(["cmd/adopt_test.go Newly changed +4", "cmd/legacy.go No longer changed −3", "cmd/rebase.go Changed +2 −1"]),
+  `interdiff lists files whose change differs, ignoring moved hunks: ${JSON.stringify(fileRows)}`,
+);
+check(
+  (await versions.locator("details.unchanged > summary").innerText()).startsWith("1 file makes the same change"),
+  "README.md, whose hunk only moved, counts as unchanged",
+);
+await page.waitForTimeout(250);
+await page.screenshot({ path: `${SCREENSHOTS}/versions-light.png` });
+await versions.getByLabel("From").selectOption("3");
+await versions.getByText("No differences.").waitFor();
+check(true, "picking the same version on both sides shows no differences");
+await page.keyboard.press("Escape");
+check(await versions.isHidden(), "Escape closes the versions dialog");
 
 const tree = page.getByRole("tree", { name: "File Tree" });
 const viewedToggle = (path: string) => tree.locator(`flohub-viewed[data-path="${path}"]`);
@@ -686,6 +769,11 @@ const darkPage = await dark.newPage();
 await darkPage.goto(`${PULL_URL}/files`);
 await inlineBar(darkPage).getByText("Approved").first().waitFor();
 await inlineBar(darkPage).screenshot({ path: `${SCREENSHOTS}/inline-dark.png` });
+await inlineBar(darkPage).getByRole("button", { name: "Compare versions" }).click();
+await darkPage.locator("flohub-versions details.file").first().waitFor();
+await darkPage.waitForTimeout(250);
+await darkPage.screenshot({ path: `${SCREENSHOTS}/versions-dark.png` });
+await darkPage.keyboard.press("Escape");
 await darkPage.mouse.wheel(0, 2400);
 await floatingBar(darkPage).locator(".pill").click();
 await floatingBar(darkPage).locator(".panel").waitFor();

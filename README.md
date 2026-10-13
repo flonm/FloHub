@@ -21,6 +21,9 @@ A Chrome and Firefox extension that adds a Graphite-style overview to every GitH
 - **What's left out:** the PR author's own replies, unsubmitted drafts, and bots that only commented.
 - **Viewed files in the tree:** on the Files changed tab, every file in the file tree gets a checkbox showing your Viewed mark, and clicking it marks or unmarks the file. Viewed files are dimmed, and so is an expanded folder once every file in it is viewed. A file that changed after you viewed it shows an amber dot. When the file's own Viewed checkbox is on the page, the tree clicks that one, so GitHub collapses the diff as usual. Otherwise the change goes through the API.
 - **Line counts in the tree:** every file in the Files changed tree shows its added and deleted lines (`+12 −3`), right-aligned next to its Viewed checkbox, including files whose diff isn't rendered. A side with no lines is left out, and a binary file or a pure rename shows none. Hovering the counts spells them out.
+- **Compare versions after a rebase:** when the branch was force-pushed, a "Versions" row shows how often and offers **Compare versions**. It opens a range-diff of the whole pull request between any two of its versions: what the pull request itself changes in each version is diffed against the other, so what the base branch gained in between doesn't show up. Each line on the left shows whether a line of the patch was added (+) or removed (−) between the versions. Files are marked *Changed*, *Newly changed* or *No longer changed*, and files whose change is the same in both versions are listed collapsed. It ignores hunks that only moved, but conflict resolutions show up. By default it compares the version you last reviewed, or else the previous one, with the current one.
+
+  Versions are the heads before and after every force push, plus every commit someone reviewed. Plain pushes in between aren't recorded anywhere, so they only show up if someone reviewed them. In a stack, an old version is diffed against the head the base branch had back then (the latest earlier head it descends from), so the parent's old commits don't leak into it.
 - **Placement:** the overview sits inline under the PR title. Once the header scrolls away, a compact pill appears at the bottom left with the stack strip, layer position and reviewer faces. It expands to the full overview (Escape closes it).
 
 ## Shortcuts
@@ -58,7 +61,7 @@ After `bun run build`, click the reload icon on the extension's card in `chrome:
 
 | Command | What it does |
 |---|---|
-| `bun run test` | Unit tests: reviewer states, stack status precedence, last activity, ages, URL parsing, file tree path matching, line counts |
+| `bun run test` | Unit tests: reviewer states, stack status precedence, last activity, ages, URL parsing, file tree path matching, line counts, versions and their bases, the line diff and interdiff |
 | `bun run typecheck` | `tsc --noEmit` |
 | `bun run lint:firefox` | Builds `dist-firefox/` and runs Mozilla's `web-ext lint` on it |
 | `bun run sign:firefox` | Builds `dist-firefox/` and has addons.mozilla.org sign it as an unlisted add-on. The signed `.xpi` lands in `web-ext-artifacts/`. Needs `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` from [your AMO API keys](https://addons.mozilla.org/developers/addon/api/key/). |
@@ -82,6 +85,7 @@ Firefox updates FloHub on its own, starting with the first release that includes
 
 - `build.ts`: bundles `src/` and copies `static/` into `dist/` (Chrome) or, with `firefox`, into `dist-firefox/`. The Firefox manifest runs the background script as an event page and adds the add-on ID under `browser_specific_settings.gecko`. Both browsers run the same `chrome.*` code.
 - `src/background.ts`: the service worker (an event page in Firefox). It holds the token and makes every API call: one GraphQL query for reviewers and the stack (`PullRequest.stack.entries`), and REST `POST …/requested_reviewers` to re-request, which adds to the existing requests.
+- `src/versions.ts`, `src/interdiff.ts`, `src/versions-dialog.ts`: Compare versions. The versions come from `HeadRefForcePushedEvent`s and reviews' commits, and the base branch's earlier heads from the pull requests whose head it is, or was (`BaseRefChangedEvent`). Each version's patch is a REST compare (`GET …/compare/<base>...<head>`) against the first candidate base it descends from. `interdiff.ts` pairs the files, strips line numbers from hunk headers, and runs a Myers diff over the two patches.
 - `src/file-tree.ts`, `src/viewed.ts`: the Viewed checkboxes in the file tree. A tree item is matched to its file by the `#diff-<sha256(path)>` anchor or, failing that, by its labels from the root down. Viewed marks and line counts come from `PullRequest.files` (`viewerViewedState`, `additions`, `deletions`), and marks change through `markFileAsViewed`/`unmarkFileAsViewed`.
 - `src/content.ts`: follows GitHub's in-page navigation, mounts the bars, and refreshes on focus and on visibility changes.
 - `src/reviewers.ts`, `src/stack.ts`, `src/age.ts`: pure derivation of reviewer states, layer statuses and ages from the raw query.

@@ -21,6 +21,8 @@ export type BarState =
       /** When the viewer last poked each reviewer of this pull request, by reviewer key. */
       pokedAt: ReadonlyMap<string, number>;
       notice: string | null;
+      /** How often the head branch was force-pushed, and when last. */
+      forcePushes: { count: number; lastAt: string | null };
     };
 
 export interface BarActions {
@@ -30,6 +32,7 @@ export interface BarActions {
   openOptions(): void;
   toggleStack(): void;
   toggleMerged(): void;
+  compareVersions(): void;
 }
 
 type Tone = "success" | "danger" | "attention" | "muted";
@@ -121,7 +124,21 @@ export class ReviewBar {
       );
     }
     overview.append(this.renderReviewers());
+    if (state.kind === "ready" && state.forcePushes.count > 0) overview.append(this.renderVersions(state));
     return overview;
+  }
+
+  private renderVersions(state: Extract<BarState, { kind: "ready" }>): HTMLElement {
+    const { count, lastAt } = state.forcePushes;
+    const times = count === 1 ? "once" : `${count} times`;
+    const last = lastAt && count > 1 ? `, last ${formatAge(lastAt, state.now).spoken}` : lastAt ? ` ${formatAge(lastAt, state.now).spoken}` : "";
+    const bar = el("div", { class: "bar" });
+    bar.append(
+      el("span", { class: "label" }, "Versions"),
+      el("span", { class: "message" }, `Force-pushed ${times}${last}`),
+      button("text-button", "Compare versions", () => this.actions.compareVersions(), "compare-versions"),
+    );
+    return bar;
   }
 
   private renderReviewers(): HTMLElement {
