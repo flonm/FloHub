@@ -71,6 +71,47 @@ const STACK_PULLS = [
   stackPull(348, "docs(stack): document server rebases", { isDraft: true }, [0, 0], 190),
 ];
 
+function inboxPull(number: number, title: string, overrides: Record<string, unknown> = {}, repo = "github/gh-stack") {
+  return {
+    ...stackPull(number, title),
+    url: `https://github.com/${repo}/pull/${number}`,
+    repository: { nameWithOwner: repo },
+    author: { login: "hubot", avatarUrl: "https://avatars.githubusercontent.com/hubot?v=4" },
+    latestReviews: { nodes: [] },
+    stack: null,
+    ...overrides,
+  };
+}
+
+const INBOX_STACK = {
+  number: 900,
+  size: 3,
+  entries: { nodes: [901, 902, 903].map((number, index) => ({ position: index + 1, pullRequest: { number } })) },
+};
+
+const INBOX = {
+  viewer: { login: "octocat" },
+  review: {
+    nodes: [
+      inboxPull(901, "feat(api): add the stack endpoint", { stack: INBOX_STACK }),
+      inboxPull(903, "feat(ui): render the stack", { stack: INBOX_STACK, timelineItems: { nodes: [{ __typename: "HeadRefForcePushedEvent", createdAt: ago(1) }] } }),
+      inboxPull(
+        77,
+        "fix(auth): refresh tokens before they expire and retry the failed request once",
+        { latestReviews: { nodes: [{ author: { login: "octocat" } }] }, timelineItems: { nodes: [{ __typename: "HeadRefForcePushedEvent", createdAt: ago(48) }] } },
+        "octo-org/api",
+      ),
+    ],
+  },
+  mine: {
+    nodes: [
+      inboxPull(120, "docs: explain the stack badge", { reviewDecision: "APPROVED" }),
+      inboxPull(121, "feat(stack): show failing checks", { statusCheckRollup: { state: "FAILURE" } }, "octo-org/api"),
+      {},
+    ],
+  },
+};
+
 const UNREADABLE = "Resource not accessible by personal access token";
 
 const CHANGED_FILES: Record<string, string> = {
@@ -96,19 +137,36 @@ const CHANGE_STATS: Record<string, { additions: number; deletions: number }> = {
   "skills/gh-stack/SKILL.md": { additions: 0, deletions: 0 },
 };
 
-function createFixture(options: { partial?: boolean } = {}) {
+const EMPTY_INBOX = { viewer: { login: "octocat" }, review: { nodes: [] }, mine: { nodes: [] } };
+
+const VERSION_FILES: Record<string, { filename: string; status: string; patch: string; sha: string }[]> = {
+  aaaaaaa1: [
+    { filename: "cmd/rebase.go", status: "modified", sha: "r1", patch: "@@ -10,3 +10,4 @@ func Rebase() {\n \tsync()\n+\tadopt(branch)\n \treturn nil" },
+    { filename: "README.md", status: "modified", sha: "m1", patch: "@@ -1,2 +1,3 @@\n # gh-stack\n+Adopts server rebases.\n " },
+    { filename: "cmd/legacy.go", status: "modified", sha: "l1", patch: "@@ -4,2 +4,2 @@\n-old()\n+older()" },
+  ],
+  ccccccc3: [
+    { filename: "cmd/rebase.go", status: "modified", sha: "r3", patch: "@@ -42,3 +42,5 @@ func Rebase() {\n \tsync()\n+\tadopt(branch, equivalent)\n+\tlog(branch)\n \treturn nil" },
+    { filename: "README.md", status: "modified", sha: "m3", patch: "@@ -8,2 +8,3 @@\n # gh-stack\n+Adopts server rebases.\n " },
+    { filename: "cmd/adopt_test.go", status: "added", sha: "t3", patch: "@@ -0,0 +1,2 @@\n+package cmd\n+func TestAdopt(t *testing.T) {}" },
+  ],
+};
+
+function createFixture(options: { partial?: boolean; failReadd?: boolean; inbox?: object; inboxGate?: Promise<unknown> } = {}) {
   const requested: (object | null)[] = [
     actor("mojombo"),
     { __typename: "Team", name: "backend", combinedSlug: "github/backend", avatarUrl: null, url: "https://github.com/orgs/github/teams/backend" },
   ];
   if (options.partial) requested.push(null);
   const rerequests: string[] = [];
+  const requestLog: string[] = [];
   const viewedMarks: string[] = [];
   const viewed = { ...CHANGED_FILES };
   const submissions: { path: string; body: unknown }[] = [];
   const reviewState = { pendingComments: null as number | null };
   return {
     rerequests,
+    requestLog,
     viewedMarks,
     submissions,
     reviewState,
@@ -149,6 +207,42 @@ function createFixture(options: { partial?: boolean } = {}) {
         });
         return;
       }
+      if (graphql?.query.includes("review: search(")) {
+        await options.inboxGate;
+        await route.fulfill({ json: { data: options.inbox ?? INBOX } });
+        return;
+      }
+      if (graphql?.query.includes("BaseRefChangedEvent")) {
+        const commit = (oid: string, hours: number) => ({ oid, committedDate: ago(hours) });
+        await route.fulfill({
+          json: {
+            data: {
+              viewer: { login: "octocat" },
+              repository: {
+                pullRequest: {
+                  baseRefName: "main",
+                  baseRefOid: "basebase",
+                  headRefOid: "ccccccc3",
+                  createdAt: ago(72),
+                  commits: { nodes: [{ commit: commit("ccccccc3", 3) }] },
+                  timelineItems: {
+                    nodes: [
+                      { __typename: "HeadRefForcePushedEvent", createdAt: ago(20), actor: { login: "hubot" }, beforeCommit: commit("aaaaaaa1", 48), afterCommit: commit("bbbbbbb2", 20) },
+                      { __typename: "HeadRefForcePushedEvent", createdAt: ago(3), actor: { login: "hubot" }, beforeCommit: commit("bbbbbbb2", 20), afterCommit: commit("ccccccc3", 3) },
+                    ],
+                  },
+                  reviews: { nodes: [{ author: { login: "octocat" }, commit: commit("aaaaaaa1", 48) }] },
+                },
+              },
+            },
+          },
+        });
+        return;
+      }
+      if (graphql?.query.includes("headRefName")) {
+        await route.fulfill({ json: { data: { repository: { b0: { nodes: [] } } } } });
+        return;
+      }
       if (graphql) {
         if (this.overviewDelay > 0) await new Promise((resolve) => setTimeout(resolve, this.overviewDelay));
         if (this.overviewFailure > 0) {
@@ -174,6 +268,7 @@ function createFixture(options: { partial?: boolean } = {}) {
                   },
                   author: { login: "hubot" },
                   viewerCanUpdate: true,
+                  forcePushes: { totalCount: 2, nodes: [{ createdAt: ago(3) }] },
                   reviewRequests: { nodes: requested.map((requestedReviewer) => ({ requestedReviewer })) },
                   reviews: {
                     nodes: [
@@ -200,10 +295,32 @@ function createFixture(options: { partial?: boolean } = {}) {
         });
         return;
       }
-      if (request.method() === "POST" && request.url().endsWith("/requested_reviewers")) {
-        const { reviewers } = request.postDataJSON() as { reviewers: string[] };
+      if (request.url().endsWith("/requested_reviewers")) {
+        const { reviewers = [], team_reviewers: teams = [] } = request.postDataJSON() as {
+          reviewers?: string[];
+          team_reviewers?: string[];
+        };
+        const names = [...reviewers, ...teams.map((slug) => `team:${slug}`)];
+        if (request.method() === "DELETE") {
+          requestLog.push(...names.map((name) => `remove:${name}`));
+          for (let index = requested.length - 1; index >= 0; index--) {
+            const entry = requested[index] as { login?: string; combinedSlug?: string } | null;
+            const slug = entry?.combinedSlug?.split("/").at(-1);
+            if ((entry?.login && reviewers.includes(entry.login)) || (slug && teams.includes(slug))) requested.splice(index, 1);
+          }
+          await route.fulfill({ status: 200, json: {} });
+          return;
+        }
+        requestLog.push(...names.map((name) => `add:${name}`));
+        if (options.failReadd) {
+          await route.fulfill({ status: 500, json: { message: "Server Error" } });
+          return;
+        }
         rerequests.push(...reviewers);
         for (const login of reviewers) requested.push(actor(login));
+        for (const slug of teams) {
+          requested.push({ __typename: "Team", name: slug, combinedSlug: `github/${slug}`, avatarUrl: null, url: `https://github.com/orgs/github/teams/${slug}` });
+        }
         await route.fulfill({ status: 201, json: {} });
         return;
       }
@@ -220,12 +337,28 @@ function createFixture(options: { partial?: boolean } = {}) {
         }
         return;
       }
+      const compare = /\/compare\/(\w+)\.\.\.(\w+)/.exec(request.url());
+      if (compare) {
+        const [, base, head] = compare as unknown as [string, string, string];
+        const files = VERSION_FILES[head] ?? VERSION_FILES.ccccccc3!;
+        await route.fulfill({
+          json: { status: head === "ccccccc3" ? "ahead" : "diverged", merge_base_commit: { sha: head === "ccccccc3" ? base : "oldbase" }, files },
+        });
+        return;
+      }
       await route.fulfill({ status: 404, json: { message: "Not mocked" } });
     },
   };
 }
 
-async function launch(colorScheme: "light" | "dark"): Promise<BrowserContext> {
+function badgeText(context: BrowserContext): Promise<string | undefined> {
+  return context.serviceWorkers()[0]?.evaluate(() => chrome.action.getBadgeText({})) ?? Promise.resolve(undefined);
+}
+
+/**
+ * @param api Answers GitHub's API from the start, so the refresh the stored token starts never reaches the real one.
+ */
+async function launch(colorScheme: "light" | "dark", api?: (route: Route) => Promise<void>): Promise<BrowserContext> {
   const context = await chromium.launchPersistentContext(await mkdtemp(join(tmpdir(), "flohub-")), {
     channel: "chromium",
     headless: true,
@@ -233,6 +366,7 @@ async function launch(colorScheme: "light" | "dark"): Promise<BrowserContext> {
     viewport: { width: 1280, height: 860 },
     args: [`--disable-extensions-except=${EXTENSION}`, `--load-extension=${EXTENSION}`],
   });
+  if (api) await context.route("https://api.github.com/**", api);
   const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
   await worker.evaluate(() => chrome.storage.local.set({ token: "test-token" }));
   return context;
@@ -327,6 +461,35 @@ await inlineBar(page).getByRole("button", { name: "2 merged" }).click();
 await inlineBar(page).getByText("#338").waitFor();
 check((await inlineBar(page).getByText("Merged", { exact: true }).count()) === 2, "merged layers expand on demand");
 await inlineBar(page).screenshot({ path: `${SCREENSHOTS}/inline-light.png` });
+
+check(
+  visibleText(await inlineBar(page).getByText(/^Force-pushed/).innerText()) === "Force-pushed 2 times, last 3 hours ago",
+  "versions row counts the force pushes",
+);
+await inlineBar(page).getByRole("button", { name: "Compare versions" }).click();
+const versions = page.locator("flohub-versions dialog");
+await versions.locator("details.file").first().waitFor();
+check(
+  (await versions.getByLabel("From").inputValue()) === "1" && (await versions.getByLabel("To").inputValue()) === "3",
+  "versions default to the viewer's last reviewed version → current",
+);
+const fileRows = (await versions.locator("details.file > summary").allInnerTexts()).map(visibleText);
+check(
+  JSON.stringify(fileRows) ===
+    JSON.stringify(["cmd/adopt_test.go Newly changed +4", "cmd/legacy.go No longer changed −3", "cmd/rebase.go Changed +2 −1"]),
+  `interdiff lists files whose change differs, ignoring moved hunks: ${JSON.stringify(fileRows)}`,
+);
+check(
+  (await versions.locator("details.unchanged > summary").innerText()).startsWith("1 file makes the same change"),
+  "README.md, whose hunk only moved, counts as unchanged",
+);
+await page.waitForTimeout(250);
+await page.screenshot({ path: `${SCREENSHOTS}/versions-light.png` });
+await versions.getByLabel("From").selectOption("3");
+await versions.getByText("No differences.").waitFor();
+check(true, "picking the same version on both sides shows no differences");
+await page.keyboard.press("Escape");
+check(await versions.isHidden(), "Escape closes the versions dialog");
 
 const tree = page.getByRole("tree", { name: "File Tree" });
 const viewedToggle = (path: string) => tree.locator(`flohub-viewed[data-path="${path}"]`);
@@ -538,12 +701,165 @@ check(
 );
 await cached.close();
 
+for (const scheme of ["light", "dark"] as const) {
+  const inboxContext = await launch(scheme, (route) => createFixture().handle(route));
+  // Tabs the extension opens skip the route, so their rows point at pull requests that do not exist and do not redirect.
+  await inboxContext.route("https://github.com/octo-org/api/pull/77/files", (route) =>
+    route.fulfill({ contentType: "text/html", body: "<title>Pull request</title>" }),
+  );
+  const popupId = new URL(inboxContext.serviceWorkers()[0]?.url() ?? "").host;
+  const popup = await inboxContext.newPage();
+  await popup.setViewportSize({ width: 504, height: 600 });
+  await popup.goto(`chrome-extension://${popupId}/popup.html`);
+  await popup.getByText("feat(ui): render the stack").waitFor();
+  if (scheme === "light") {
+    const sections = await popup.locator("section").evaluateAll((elements) =>
+      elements.map((section) => ({
+        heading: section.querySelector("h2")?.textContent,
+        rows: [...section.querySelectorAll(".pull")].map((row) => row.querySelector(".title")?.textContent),
+      })),
+    );
+    check(
+      JSON.stringify(sections) ===
+        JSON.stringify([
+          {
+            heading: "Waiting for your review3",
+            rows: [
+              "#903 feat(ui): render the stack",
+              "#901 feat(api): add the stack endpoint",
+              "#77 fix(auth): refresh tokens before they expire and retry the failed request once",
+            ],
+          },
+          { heading: "Your pull requests2", rows: ["#121 feat(stack): show failing checks", "#120 docs: explain the stack badge"] },
+        ]),
+      `popup groups review requests by stack, top layer first, and puts failing own PRs first: ${JSON.stringify(sections)}`,
+    );
+    check(
+      (await popup.locator(".pull", { hasText: "#77" }).getByText("Re-requested").count()) === 1,
+      "a review request the viewer answered before is marked as re-requested",
+    );
+    const positions = await popup.locator(".pull").evaluateAll((rows) =>
+      rows.map((row) => row.querySelector(".position [aria-hidden]")?.textContent ?? null),
+    );
+    check(
+      JSON.stringify(positions) === JSON.stringify(["3/3", "1/3", null, null, null]) &&
+        (await popup.locator(".group-label").count()) === 0,
+      `stacked rows show their layer inline, with no group heading: ${JSON.stringify(positions)}`,
+    );
+    const badge = await inboxContext.serviceWorkers()[0]?.evaluate(() => chrome.action.getBadgeText({}));
+    check(badge === "3", `the toolbar badge counts the review requests: "${badge}"`);
+    const longTitle = await popup.locator(".pull", { hasText: "#77" }).locator(".title").evaluate((title) => ({
+      truncated: title.scrollWidth > title.clientWidth,
+      tooltip: title.getAttribute("title"),
+    }));
+    check(
+      longTitle.truncated && longTitle.tooltip === "#77 fix(auth): refresh tokens before they expire and retry the failed request once",
+      `a long title truncates and keeps the full title as a tooltip: ${JSON.stringify(longTitle)}`,
+    );
+
+    const focusedRow = () => popup.evaluate(() => document.activeElement?.querySelector(".number")?.textContent?.trim() ?? null);
+    check((await focusedRow()) === "#903", `the popup opens with focus on the first row: ${await focusedRow()}`);
+    const visited: (string | null)[] = [];
+    for (const key of ["ArrowDown", "j", "j", "k", "End", "ArrowUp", "Home", "ArrowUp"]) {
+      await popup.keyboard.press(key);
+      visited.push(await focusedRow());
+    }
+    check(
+      visited.join() === "#901,#77,#121,#77,#120,#121,#903,#903",
+      `arrow keys and j/k move through both sections, Home and End jump to the ends: ${visited.join()}`,
+    );
+    const tabStops = await popup.locator('.pull[tabindex="0"]').count();
+    check(tabStops === 1, `the list holds a single tab stop: ${tabStops}`);
+    await popup.keyboard.press("Shift+Tab");
+    await popup.keyboard.press("ArrowDown");
+    check((await focusedRow()) === "#903", "the arrow down steps from the header back into the list");
+
+    const [opened] = await Promise.all([
+      inboxContext.waitForEvent("page"),
+      popup.locator(".pull", { hasText: "#77" }).click({ modifiers: ["ControlOrMeta"] }),
+    ]);
+    check(opened.url() === "https://github.com/octo-org/api/pull/77", `a row opens its pull request in a tab: ${opened.url()}`);
+    await opened.close();
+    await popup.keyboard.press("End");
+    await popup.keyboard.press("k");
+    const [background] = await Promise.all([inboxContext.waitForEvent("page"), popup.keyboard.press("ControlOrMeta+Enter")]);
+    check(
+      background.url() === "https://github.com/octo-org/api/pull/121" && !popup.isClosed(),
+      `Cmd/Ctrl+Enter opens the focused row in a background tab and keeps the popup open: ${background.url()}`,
+    );
+    await background.close();
+    const [middle] = await Promise.all([
+      inboxContext.waitForEvent("page"),
+      popup.locator(".pull", { hasText: "#121" }).click({ button: "middle" }),
+    ]);
+    check(middle.url() === "https://github.com/octo-org/api/pull/121" && !popup.isClosed(), `a middle click opens a background tab: ${middle.url()}`);
+    await middle.close();
+
+    const existing = await inboxContext.newPage();
+    await existing.goto("https://github.com/octo-org/api/pull/77/files");
+    const launcher = await inboxContext.newPage();
+    await launcher.goto(`chrome-extension://${popupId}/popup.html`);
+    await launcher.locator(".pull", { hasText: "#77" }).waitFor();
+    const pagesBefore = inboxContext.pages().length;
+    await launcher.locator(".pull", { hasText: "#77" }).focus();
+    await Promise.all([launcher.waitForEvent("close"), launcher.keyboard.press("Enter").catch(() => undefined)]);
+    check(
+      inboxContext.pages().length === pagesBefore - 1 && inboxContext.pages().filter((tab) => tab.url().includes("/pull/77")).length === 1,
+      "Enter switches to a tab that already shows the pull request and closes the popup",
+    );
+    await existing.close();
+    await popup.mouse.move(0, 0);
+    await popup.keyboard.press("Home");
+  }
+  await popup.waitForFunction(() => [...document.images].every((image) => image.complete));
+  await popup.screenshot({ path: `${SCREENSHOTS}/popup-${scheme}.png`, fullPage: true });
+  await inboxContext.serviceWorkers()[0]?.evaluate(() => chrome.storage.local.remove("token"));
+  await popup.reload();
+  await popup.getByRole("button", { name: "Set up token" }).waitFor();
+  check(
+    (await badgeText(inboxContext)) === "" && (await popup.evaluate(() => document.activeElement?.textContent)) === "Set up token",
+    `without a token the popup asks for one, focuses the button and the badge clears (${scheme})`,
+  );
+  await inboxContext.close();
+}
+
+for (const scheme of ["light", "dark"] as const) {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const emptyContext = await launch(scheme, (route) => createFixture({ inbox: EMPTY_INBOX, inboxGate: gate }).handle(route));
+  const popupId = new URL(emptyContext.serviceWorkers()[0]?.url() ?? "").host;
+  const popup = await emptyContext.newPage();
+  await popup.setViewportSize({ width: 504, height: 600 });
+  await popup.goto(`chrome-extension://${popupId}/popup.html`);
+  await popup.locator(".skeleton").waitFor();
+  check((await popup.locator("main").getAttribute("aria-busy")) === "true", `the first open shows a busy skeleton (${scheme})`);
+  if (scheme === "light") await popup.screenshot({ path: `${SCREENSHOTS}/popup-loading-light.png`, fullPage: true });
+  release();
+  await popup.getByText("Nothing to review").waitFor();
+  check(
+    (await popup.locator("section").count()) === 0 && (await popup.locator("main").getAttribute("aria-busy")) === "false",
+    `an empty inbox shows one combined empty state (${scheme})`,
+  );
+  await popup.screenshot({ path: `${SCREENSHOTS}/popup-empty-${scheme}.png`, fullPage: true });
+  if (scheme === "light") {
+    // The popup closes while the key is still being pressed.
+    await Promise.all([popup.waitForEvent("close"), popup.keyboard.press("Escape").catch(() => undefined)]);
+    check(true, "Escape closes the popup");
+  }
+  await emptyContext.close();
+}
+
 const dark = await launch("dark");
 await dark.route("https://api.github.com/**", (route) => createFixture().handle(route));
 const darkPage = await dark.newPage();
 await darkPage.goto(`${PULL_URL}/files`);
 await inlineBar(darkPage).getByText("Approved").first().waitFor();
 await inlineBar(darkPage).screenshot({ path: `${SCREENSHOTS}/inline-dark.png` });
+await inlineBar(darkPage).getByRole("button", { name: "Compare versions" }).click();
+await darkPage.locator("flohub-versions details.file").first().waitFor();
+await darkPage.waitForTimeout(250);
+await darkPage.screenshot({ path: `${SCREENSHOTS}/versions-dark.png` });
+await darkPage.keyboard.press("Escape");
 await darkPage.mouse.wheel(0, 2400);
 await floatingBar(darkPage).locator(".pill").click();
 await floatingBar(darkPage).locator(".panel").waitFor();
@@ -662,6 +978,51 @@ await darkKeyPage.locator("flohub-dialog dialog").getByText("No pending review c
 await darkKeyPage.keyboard.type("Please split the rebase planner out of this change.");
 await darkKeyPage.screenshot({ path: `${SCREENSHOTS}/review-dialog-dark.png` });
 await darkKeys.close();
+
+const pokes = await launch("light");
+const pokeFixture = createFixture();
+await pokes.route("https://api.github.com/**", (route) => pokeFixture.handle(route));
+const pokePage = await pokes.newPage();
+await pokePage.goto(`${PULL_URL}/files`);
+await inlineBar(pokePage).locator(".stack-list").waitFor();
+const pokeButtons = await inlineBar(pokePage).getByRole("button", { name: /^Poke / }).evaluateAll((buttons) =>
+  buttons.map((button) => button.getAttribute("aria-label")?.split(":")[0]),
+);
+check(
+  JSON.stringify(pokeButtons) === JSON.stringify(["Poke mojombo", "Poke github/backend"]),
+  `only currently requested reviewers can be poked: ${JSON.stringify(pokeButtons)}`,
+);
+await inlineBar(pokePage).getByRole("button", { name: /^Poke mojombo/ }).click();
+await pokePage.locator("flohub-toast").getByText("Poked mojombo. GitHub notifies them within a minute.").waitFor();
+await inlineBar(pokePage).locator(".chips > li", { hasText: "mojombo" }).getByText("· poked just now").waitFor();
+await inlineBar(pokePage).getByRole("button", { name: /^Poke github\/backend/ }).click();
+await inlineBar(pokePage).locator(".chips > li", { hasText: "github/backend" }).getByText("· poked just now").waitFor();
+check(
+  pokeFixture.requestLog.join() === "remove:mojombo,add:mojombo,remove:team:backend,add:team:backend",
+  `a poke removes and re-adds the request, for users and teams: ${pokeFixture.requestLog.join()}`,
+);
+await inlineBar(pokePage).screenshot({ path: `${SCREENSHOTS}/poke-light.png` });
+await pokePage.reload();
+await inlineBar(pokePage).locator(".chips > li", { hasText: "mojombo" }).getByText("· poked just now").waitFor();
+check(
+  (await inlineBar(pokePage).getByRole("button", { name: /^Poke / }).count()) === 0,
+  "a poked reviewer can't be poked again within the hour, across reloads",
+);
+await pokes.close();
+
+const failedPoke = await launch("light");
+const failedFixture = createFixture({ failReadd: true });
+await failedPoke.route("https://api.github.com/**", (route) => failedFixture.handle(route));
+const failedPage = await failedPoke.newPage();
+await failedPage.goto(`${PULL_URL}/files`);
+await inlineBar(failedPage).locator(".stack-list").waitFor();
+await inlineBar(failedPage).getByRole("button", { name: /^Poke mojombo/ }).click();
+await failedPage.locator("flohub-toast").getByText(/Re-request mojombo by hand\./).waitFor();
+check(
+  failedFixture.requestLog.join() === "remove:mojombo,add:mojombo,add:mojombo",
+  `a failed re-add is retried once and then tells you to re-request by hand: ${failedFixture.requestLog.join()}`,
+);
+await failedPoke.close();
 
 const partial = await launch("light");
 await partial.route("https://api.github.com/**", (route) => createFixture({ partial: true }).handle(route));

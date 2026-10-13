@@ -43,6 +43,8 @@ export interface Reviewer {
   /** The verdict a re-requested reviewer gave before the new request. */
   previous: Verdict | null;
   canRerequest: boolean;
+  /** Whether the viewer can remind a currently requested reviewer by removing and re-adding the request. */
+  canPoke: boolean;
 }
 
 const VERDICT_BY_STATE: Partial<Record<RawReviewState, Verdict>> = {
@@ -126,6 +128,11 @@ export function deriveReviewers(pullRequest: RawPullRequest, viewerLogin: string
             pullRequest.viewerCanUpdate &&
             candidate.kind === "user" &&
             !candidate.requested &&
+            candidate.name !== viewerLogin,
+          canPoke:
+            pullRequest.viewerCanUpdate &&
+            candidate.requested &&
+            candidate.kind !== "bot" &&
             candidate.name !== viewerLogin,
         },
       ];

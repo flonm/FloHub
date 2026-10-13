@@ -1,0 +1,72 @@
+name: Sign Firefox add-on
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    environment: amo
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run test
+      - name: Take the version from the tag
+        if: github.ref_type == 'tag'
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if ! [[ "$version" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME is not v followed by one to four dot-separated numbers, like v1.2.3."
+            exit 1
+          fi
+          latest="$(gh release list --exclude-drafts --exclude-pre-releases --limit 100 --json tagName --jq '.[].tagName' \
+            | grep -vxF "$GITHUB_REF_NAME" | sed -n 's/^v\([0-9][0-9.]*\)$/\1/p' | sort -V | tail -n 1)"
+          if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$latest" "$version" | sort -V | tail -n 1)" != "$version" -o "$latest" = "$version" ]; then
+            echo "::error::Version $version must be higher than the latest release, $latest."
+            exit 1
+          fi
+          echo "FLOHUB_VERSION=$version" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+      - run: bun run sign:firefox
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+      - name: Write the Firefox update manifest
+        if: github.ref_type == 'tag'
+        run: |
+          xpi="flohub-$FLOHUB_VERSION.xpi"
+          cp web-ext-artifacts/*.xpi "$xpi"
+          jq -n \
+            --arg id "$(jq -r .browser_specific_settings.gecko.id dist-firefox/manifest.json)" \
+            --arg version "$FLOHUB_VERSION" \
+            --arg link "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$xpi" \
+            --arg hash "sha256:$(sha256sum "$xpi" | cut -d ' ' -f 1)" \
+            '{addons: {($id): {updates: [{version: $version, update_link: $link, update_hash: $hash}]}}}' > updates.json
+          cat updates.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flohub-firefox
+          path: |
+            flohub-*.xpi
+            updates.json
+      - name: Attach the signed add-on and the update manifest to the release
+        if: github.ref_type == 'tag'
+        run: |
+          xpi="flohub-$FLOHUB_VERSION.xpi"
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$xpi" updates.json --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$xpi" updates.json --generate-notes
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}

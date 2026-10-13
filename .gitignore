@@ -3,3 +3,4 @@ dist/
 .playwright-mcp/
 e2e/screenshots/
 dist-firefox/
+web-ext-artifacts/

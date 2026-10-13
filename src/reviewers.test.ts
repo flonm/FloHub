@@ -157,4 +157,25 @@ describe("deriveReviewers", () => {
 
     expect(deriveReviewers(pullRequest, "octocat").some((reviewer) => reviewer.canRerequest)).toBe(false);
   });
+  test("offers a poke for every currently requested user and team, but not bots or the viewer", () => {
+    const pullRequest = buildPullRequest({
+      requested: [user("mojombo"), user("wycats"), team("octo-org/reviewers"), bot("copilot-pull-request-reviewer"), user("octocat")],
+      reviews: [
+        [user("mojombo"), "CHANGES_REQUESTED"],
+        [user("defunkt"), "APPROVED"],
+      ],
+    });
+
+    const pokeable = deriveReviewers(pullRequest, "octocat")
+      .filter((reviewer) => reviewer.canPoke)
+      .map((reviewer) => reviewer.name);
+
+    expect(pokeable).toEqual(["mojombo", "octo-org/reviewers", "wycats"]);
+  });
+
+  test("offers no poke when the viewer cannot update the pull request", () => {
+    const pullRequest = buildPullRequest({ viewerCanUpdate: false, requested: [user("mojombo")] });
+
+    expect(deriveReviewers(pullRequest, "octocat").some((reviewer) => reviewer.canPoke)).toBe(false);
+  });
 });

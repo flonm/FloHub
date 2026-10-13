@@ -8,9 +8,11 @@ export type IconName =
   | "refresh"
   | "chevron"
   | "people"
-  | "branch";
+  | "branch"
+  | "pointer"
+  | "gear";
 
-type Shape = ["path", { d: string }] | ["circle", { cx: string; cy: string; r: string; class?: string }];
+type Shape = ["path", { d: string; class?: string }] | ["circle", { cx: string; cy: string; r: string; class?: string }];
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -29,6 +31,24 @@ const ICONS: Record<IconName, Shape[]> = {
   people: [
     ["circle", { cx: "6", cy: "5.5", r: "2.25" }],
     ["path", { d: "M2 13c0-2.2 1.8-4 4-4s4 1.8 4 4M10.5 3.5a2.25 2.25 0 0 1 0 4.25M12 9.25c1.2.6 2 1.9 2 3.75" }],
+  ],
+  pointer: [
+    [
+      "path",
+      {
+        class: "fill",
+        d: "M2.45 6.25H8.25L7.95 4.45C7.85 3.75 8.4 3.15 9.05 3.3C9.55 3.42 9.85 3.9 9.95 4.5L10.1 5.25C12.6 5.2 14.35 6.55 14.35 8.75C14.35 11.2 12.85 12.9 10.6 12.9H9.6C8 12.9 6.9 11.8 6.9 10.4V8.35H2.45A1.05 1.05 0 0 1 2.45 6.25Z",
+      },
+    ],
+  ],
+  gear: [
+    ["circle", { cx: "8", cy: "8", r: "1.9" }],
+    [
+      "path",
+      {
+        d: "M12.39 6.64L14.31 6.92V9.08L12.39 9.36L12.07 10.15L13.23 11.69L11.69 13.23L10.15 12.07L9.36 12.39L9.08 14.31H6.92L6.64 12.39L5.85 12.07L4.31 13.23L2.77 11.69L3.93 10.15L3.61 9.36L1.69 9.08V6.92L3.61 6.64L3.93 5.85L2.77 4.31L4.31 2.77L5.85 3.93L6.64 3.61L6.92 1.69H9.08L9.36 3.61L10.15 3.93L11.69 2.77L13.23 4.31L12.07 5.85Z",
+      },
+    ],
   ],
   branch: [
     ["circle", { cx: "5", cy: "3.75", r: "1.75" }],

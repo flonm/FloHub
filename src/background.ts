@@ -1,13 +1,17 @@
 import {
   fetchOverview,
   fetchPendingComments,
+  fetchVersionPatch,
+  fetchVersions,
   fetchViewedFiles,
   GitHubError,
+  pokeReviewer,
   readToken,
   rerequestReview,
   setFileViewed,
   submitReview,
 } from "./github";
+import { clearInbox, INBOX_ALARM, INBOX_PERIOD_MINUTES, refreshInbox } from "./inbox-sync";
 import type { Message, Reply, ReplyByType } from "./messages";
 import { clearOverviewCache, queueCacheWrite, writeCachedOverview } from "./overview-cache";
 
@@ -16,17 +20,23 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
   return true;
 });
 
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && "token" in changes) void queueCacheWrite(clearOverviewCache);
+chrome.alarms.create(INBOX_ALARM, { periodInMinutes: INBOX_PERIOD_MINUTES });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === INBOX_ALARM) void refreshInbox().catch(() => undefined);
 });
-
-chrome.action.onClicked.addListener(() => {
-  chrome.runtime.openOptionsPage();
+chrome.runtime.onStartup.addListener(() => void refreshInbox().catch(() => undefined));
+chrome.runtime.onInstalled.addListener(() => void refreshInbox().catch(() => undefined));
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !("token" in changes)) return;
+  void queueCacheWrite(clearOverviewCache);
+  void clearInbox().then(() => refreshInbox()).catch(() => undefined);
 });
 
 async function handle(message: Message): Promise<Reply<ReplyByType[Message["type"]]>> {
   try {
     switch (message.type) {
+      case "inbox":
+        return { ok: true, value: await refreshInbox() };
       case "overview": {
         const token = await readToken();
         const overview = await fetchOverview(message.ref);
@@ -35,6 +45,9 @@ async function handle(message: Message): Promise<Reply<ReplyByType[Message["type
         });
         return { ok: true, value: overview };
       }
+      case "poke":
+        await pokeReviewer(message.ref, message.reviewer);
+        return { ok: true, value: null };
       case "rerequest":
         await rerequestReview(message.ref, message.login);
         return { ok: true, value: null };
@@ -48,6 +61,10 @@ async function handle(message: Message): Promise<Reply<ReplyByType[Message["type
       case "submit-review":
         await submitReview(message.ref, message.event, message.body);
         return { ok: true, value: null };
+      case "versions":
+        return { ok: true, value: await fetchVersions(message.ref) };
+      case "version-patch":
+        return { ok: true, value: await fetchVersionPatch(message.ref, message.head, message.bases) };
       case "open-options":
         await chrome.runtime.openOptionsPage();
         return { ok: true, value: null };

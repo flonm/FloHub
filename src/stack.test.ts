@@ -42,7 +42,26 @@ describe("deriveStatus", () => {
     ["approved while checks run", { reviewDecision: "APPROVED", statusCheckRollup: { state: "PENDING" } }, "success", "Approved"],
     ["review required", { reviewDecision: "REVIEW_REQUIRED" }, "accent", "Needs review"],
   ] as const)("%s", (_name, overrides, tone, label) => {
-    expect(deriveStatus(buildPull(overrides as Partial<RawStackPull>))).toEqual({ tone, label });
+    expect(deriveStatus(buildPull(overrides as Partial<RawStackPull>))).toEqual({ tone, label, detail: null });
+  });
+
+  test("counts an approval while branch rules still require more reviews, and says so", () => {
+    const pull = buildPull({ reviewDecision: "REVIEW_REQUIRED", latestOpinionatedReviews: { nodes: [{ state: "APPROVED" }] } });
+
+    expect(deriveStatus(pull)).toEqual({
+      tone: "success",
+      label: "Approved",
+      detail: "Approved, but GitHub's branch rules still require more reviews before this can merge.",
+    });
+  });
+
+  test("an open change request outweighs an approval", () => {
+    const pull = buildPull({
+      reviewDecision: "REVIEW_REQUIRED",
+      latestOpinionatedReviews: { nodes: [{ state: "APPROVED" }, { state: "CHANGES_REQUESTED" }] },
+    });
+
+    expect(deriveStatus(pull)).toMatchObject({ tone: "attention", label: "Changes requested" });
   });
 
   test("falls back to the latest reviews when branch protection gives no decision", () => {

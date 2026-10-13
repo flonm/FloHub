@@ -1,3 +1,4 @@
+import { formatAge } from "./age";
 import { BAR_STYLES } from "./bar-styles";
 import { button, el, icon, iconButton, type IconName } from "./dom";
 import type { Reviewer, ReviewerStatus, Verdict } from "./reviewers";
@@ -18,22 +19,28 @@ export type BarState =
       now: number;
       refreshing: boolean;
       busy: ReadonlySet<string>;
+      /** When the viewer last poked each reviewer of this pull request, by reviewer key. */
+      pokedAt: ReadonlyMap<string, number>;
       notice: string | null;
+      /** How often the head branch was force-pushed, and when last. */
+      forcePushes: { count: number; lastAt: string | null };
     };
 
 export interface BarActions {
   refresh(): void;
   rerequest(reviewer: Reviewer): void;
+  poke(reviewer: Reviewer): void;
   openOptions(): void;
   toggleStack(): void;
   toggleMerged(): void;
+  compareVersions(): void;
 }
 
 type Tone = "success" | "danger" | "attention" | "muted";
 
 const STATUS: Record<ReviewerStatus, { label: string; tone: Tone; icon: IconName }> = {
   approved: { label: "Approved", tone: "success", icon: "check" },
-  changes_requested: { label: "Changes requested", tone: "danger", icon: "cross" },
+  changes_requested: { label: "Changes requested", tone: "attention", icon: "cross" },
   dismissed: { label: "Dismissed", tone: "muted", icon: "slash" },
   commented: { label: "Commented", tone: "muted", icon: "comment" },
   pending: { label: "Review pending", tone: "attention", icon: "dot" },
@@ -48,6 +55,7 @@ const PREVIOUS: Record<Verdict, string> = {
 };
 
 const MAX_FACES = 6;
+const POKE_COOLDOWN_MS = 3_600_000;
 
 /** A reviewer summary rendered into its own shadow root, either inline in the header or floating. */
 export class ReviewBar {
@@ -117,7 +125,21 @@ export class ReviewBar {
       );
     }
     overview.append(this.renderReviewers());
+    if (state.kind === "ready" && state.forcePushes.count > 0) overview.append(this.renderVersions(state));
     return overview;
+  }
+
+  private renderVersions(state: Extract<BarState, { kind: "ready" }>): HTMLElement {
+    const { count, lastAt } = state.forcePushes;
+    const times = count === 1 ? "once" : `${count} times`;
+    const last = lastAt && count > 1 ? `, last ${formatAge(lastAt, state.now).spoken}` : lastAt ? ` ${formatAge(lastAt, state.now).spoken}` : "";
+    const bar = el("div", { class: "bar" });
+    bar.append(
+      el("span", { class: "label" }, "Versions"),
+      el("span", { class: "message" }, `Force-pushed ${times}${last}`),
+      button("text-button", "Compare versions", () => this.actions.compareVersions(), "compare-versions"),
+    );
+    return bar;
   }
 
   private renderReviewers(): HTMLElement {
@@ -152,7 +174,9 @@ export class ReviewBar {
       bar.append(el("span", { class: "message" }, "No reviews or review requests yet."));
     } else {
       const list = el("ul", { class: "chips" });
-      for (const reviewer of reviewers) list.append(this.renderChip(reviewer, state.busy.has(reviewer.key)));
+      for (const reviewer of reviewers) {
+        list.append(this.renderChip(reviewer, state.busy.has(reviewer.key), state.pokedAt.get(reviewer.key), state.now));
+      }
       bar.append(list);
     }
 
@@ -160,7 +184,7 @@ export class ReviewBar {
     return bar;
   }
 
-  private renderChip(reviewer: Reviewer, busy: boolean): HTMLElement {
+  private renderChip(reviewer: Reviewer, busy: boolean, pokedAt: number | undefined, now: number): HTMLElement {
     const status = STATUS[reviewer.status];
     const chip = el("li", { class: "chip" });
     chip.append(
@@ -188,6 +212,22 @@ export class ReviewBar {
         rerequest.setAttribute("aria-busy", "true");
       }
       chip.append(rerequest);
+    }
+    if (reviewer.canPoke && pokedAt !== undefined && now - pokedAt < POKE_COOLDOWN_MS) {
+      const when = formatAge(new Date(pokedAt).toISOString(), now).spoken;
+      chip.append(el("span", { class: "previous" }, `· poked ${when}`));
+    } else if (reviewer.canPoke) {
+      const poke = iconButton(
+        "pointer",
+        `Poke ${reviewer.name}: send them a new review request notification`,
+        () => this.actions.poke(reviewer),
+        `poke:${reviewer.key}`,
+      );
+      if (busy) {
+        poke.disabled = true;
+        poke.setAttribute("aria-busy", "true");
+      }
+      chip.append(poke);
     }
     return chip;
   }

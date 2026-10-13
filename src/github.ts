@@ -1,8 +1,11 @@
+import type { RawInbox } from "./inbox";
 import type { PullRef } from "./pull-ref";
 import type { ReviewEvent } from "./shortcuts";
 import type { RawPullRequest } from "./reviewers";
 import type { RawStack, RawStackPull } from "./stack";
 import type { ViewedFile, ViewedFiles } from "./viewed";
+import type { VersionFile } from "./interdiff";
+import { baseBranches, deriveVersions, type RawBasePull, type RawVersionPull, type VersionHistory } from "./versions";
 
 const API = "https://api.github.com";
 
@@ -42,6 +45,10 @@ query ($owner: String!, $name: String!, $number: Int!) {
       baseRefName
       author { login }
       viewerCanUpdate
+      forcePushes: timelineItems(last: 1, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
+        totalCount
+        nodes { ... on HeadRefForcePushedEvent { createdAt } }
+      }
       reviewRequests(first: 50) {
         nodes {
           requestedReviewer {
@@ -70,6 +77,28 @@ query ($owner: String!, $name: String!, $number: Int!) {
   }
 }`;
 
+const INBOX_QUERY = `
+${STACK_PULL_FRAGMENT}
+fragment InboxPull on PullRequest {
+  ...StackPull
+  repository { nameWithOwner }
+  author { login avatarUrl }
+  latestReviews(first: 20) { nodes { author { login } } }
+  stack {
+    number
+    size
+    entries(first: 50) { nodes { position pullRequest { number } } }
+  }
+}
+query ($review: String!, $mine: String!) {
+  viewer { login }
+  review: search(query: $review, type: ISSUE, first: 50) { nodes { ... on PullRequest { ...InboxPull } } }
+  mine: search(query: $mine, type: ISSUE, first: 50) { nodes { ... on PullRequest { ...InboxPull } } }
+}`;
+
+const REVIEW_SEARCH = "is:pr is:open archived:false review-requested:@me";
+const MINE_SEARCH = "is:pr is:open archived:false author:@me";
+
 const VIEWED_FILES_QUERY = `
 query ($owner: String!, $name: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $name) {
@@ -83,6 +112,46 @@ query ($owner: String!, $name: String!, $number: Int!, $after: String) {
   }
 }`;
 
+const VERSIONS_QUERY = `
+query ($owner: String!, $name: String!, $number: Int!) {
+  viewer { login }
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      baseRefName
+      baseRefOid
+      headRefOid
+      createdAt
+      commits(last: 1) { nodes { commit { oid committedDate } } }
+      timelineItems(last: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, BASE_REF_CHANGED_EVENT]) {
+        nodes {
+          __typename
+          ... on HeadRefForcePushedEvent {
+            createdAt
+            actor { login }
+            beforeCommit { oid committedDate }
+            afterCommit { oid committedDate }
+          }
+          ... on BaseRefChangedEvent { previousRefName }
+        }
+      }
+      reviews(last: 100) { nodes { author { login } commit { oid committedDate } } }
+    }
+  }
+}`;
+
+const BASE_PULL_FIELDS = `
+nodes {
+  headRefOid
+  commits(last: 1) { nodes { commit { oid committedDate } } }
+  timelineItems(last: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
+    nodes {
+      __typename
+      ... on HeadRefForcePushedEvent { createdAt beforeCommit { oid committedDate } afterCommit { oid committedDate } }
+    }
+  }
+}`;
+
+const MAX_BASE_BRANCHES = 5;
 const MAX_FILE_PAGES = 30;
 
 interface RawViewedFiles {
@@ -97,8 +166,24 @@ interface RawViewedFiles {
 export interface RawOverview {
   viewer: { login: string };
   repository: {
-    pullRequest: (RawPullRequest & RawStackPull & { baseRefName: string; stack: RawStack | null }) | null;
+    pullRequest:
+      | (RawPullRequest &
+          RawStackPull & {
+            baseRefName: string;
+            stack: RawStack | null;
+            forcePushes: { totalCount: number; nodes: ({ createdAt?: string } | null)[] } | null;
+          })
+      | null;
   } | null;
+}
+
+/** What one version of a pull request changes, against the base it was made on. */
+export interface VersionPatch {
+  /** The commit the files are diffed against: the merge base of the version and its base. */
+  mergeBase: string;
+  /** Whether the version descends from the chosen base; if not, the diff may include the base's own changes. */
+  onBase: boolean;
+  files: VersionFile[];
 }
 
 export type Overview = RawOverview & {
@@ -106,12 +191,14 @@ export type Overview = RawOverview & {
   unreadable: string[];
 };
 
-export type FailureCode = "no-token" | "unauthorized" | "failed";
+export type FailureCode = "no-token" | "unauthorized" | "scopes" | "failed";
 
 export class GitHubError extends Error {
   constructor(
     readonly code: FailureCode,
     message: string,
+    /** The HTTP status GitHub answered with, if it answered. */
+    readonly status?: number,
   ) {
     super(message);
   }
@@ -145,6 +232,96 @@ export async function fetchOverview(ref: PullRef): Promise<Overview> {
     throw new GitHubError("failed", `The token cannot see ${ref.owner}/${ref.repo}#${ref.number}${reason}.`);
   }
   return { ...data, unreadable };
+}
+
+/**
+ * Fetches every known version of a pull request, and the history of the branch it is based on, for stacks.
+ * @param ref The pull request.
+ * @returns The versions, oldest first.
+ */
+export async function fetchVersions(ref: PullRef): Promise<VersionHistory> {
+  const { data } = await graphql<{ viewer: { login: string }; repository: { pullRequest: RawVersionPull | null } | null }>(
+    VERSIONS_QUERY,
+    { owner: ref.owner, name: ref.repo, number: ref.number },
+  );
+  const pull = data.repository?.pullRequest;
+  if (!pull) throw new GitHubError("failed", `The token cannot see ${ref.owner}/${ref.repo}#${ref.number}.`);
+  return deriveVersions(pull, await fetchBasePulls(ref, baseBranches(pull).slice(0, MAX_BASE_BRANCHES)), data.viewer.login);
+}
+
+async function fetchBasePulls(ref: PullRef, branches: string[]): Promise<RawBasePull[]> {
+  const fields = branches.map(
+    (_, index) =>
+      `b${index}: pullRequests(headRefName: $b${index}, first: 3, states: [OPEN, CLOSED, MERGED], orderBy: { field: UPDATED_AT, direction: DESC }) { ${BASE_PULL_FIELDS} }`,
+  );
+  const parameters = branches.map((_, index) => `$b${index}: String!`).join(", ");
+  const query = `query ($owner: String!, $name: String!, ${parameters}) { repository(owner: $owner, name: $name) { ${fields.join("\n")} } }`;
+  const variables = Object.fromEntries(branches.map((branch, index) => [`b${index}`, branch]));
+  try {
+    const { data } = await graphql<{ repository: Record<string, { nodes: RawBasePull[] }> | null }>(query, {
+      owner: ref.owner,
+      name: ref.repo,
+      ...variables,
+    });
+    return Object.values(data.repository ?? {}).flatMap((connection) => connection?.nodes ?? []);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetches what a version changes. It is diffed against the first candidate base it descends from, so an old version
+ * in a stack is diffed against the base branch's head from back then. If it descends from none, it is diffed against
+ * its merge base with the first candidate, as GitHub's own Files changed tab does.
+ * @param ref The pull request.
+ * @param head The version's commit.
+ * @param bases Candidate bases, best first; see `baseCandidates`.
+ * @returns The changed files.
+ */
+export async function fetchVersionPatch(ref: PullRef, head: string, bases: string[]): Promise<VersionPatch> {
+  let fallback: VersionPatch | null = null;
+  for (const base of bases) {
+    const key = `${ref.owner}/${ref.repo}:${base}...${head}`;
+    let compare = compareCache.get(key);
+    if (!compare) {
+      try {
+        compare = (await request(`/repos/${ref.owner}/${ref.repo}/compare/${base}...${head}?per_page=1`, {})) as RawCompare;
+      } catch (error) {
+        const missing = error instanceof GitHubError && error.status === 404;
+        // An earlier head of the base branch may be gone; the version itself being gone fails every try.
+        if (missing && base !== bases[0]) continue;
+        throw missing ? new GitHubError("failed", `GitHub no longer has commit ${head.slice(0, 7)}.`) : error;
+      }
+      compareCache.set(key, compare);
+      if (compareCache.size > MAX_CACHED_COMPARES) compareCache.delete(compareCache.keys().next().value!);
+    }
+    const onBase = compare.status === "ahead" || compare.status === "identical";
+    const files = (compare.files ?? []).map(toVersionFile);
+    const patch: VersionPatch = { mergeBase: compare.merge_base_commit.sha, onBase, files };
+    if (onBase) return patch;
+    fallback ??= patch;
+  }
+  if (!fallback) throw new GitHubError("failed", `Could not compare ${head.slice(0, 7)} with its base.`);
+  return fallback;
+}
+
+interface RawCompare {
+  status: "ahead" | "behind" | "identical" | "diverged";
+  merge_base_commit: { sha: string };
+  files?: { filename: string; previous_filename?: string; status: string; patch?: string; sha: string }[];
+}
+
+const MAX_CACHED_COMPARES = 40;
+const compareCache = new Map<string, RawCompare>();
+
+function toVersionFile(file: NonNullable<RawCompare["files"]>[number]): VersionFile {
+  return {
+    filename: file.filename,
+    ...(file.previous_filename ? { previousFilename: file.previous_filename } : {}),
+    status: file.status,
+    ...(file.patch !== undefined ? { patch: file.patch } : {}),
+    sha: file.sha,
+  };
 }
 
 /**
@@ -195,6 +372,34 @@ export async function setFileViewed(pullRequestId: string, path: string, viewed:
 }
 
 /**
+ * Reminds a requested reviewer: removing and re-adding the review request makes GitHub send a new notification,
+ * while asking again for a pending reviewer does nothing. Re-adding is retried once, and a failure says so,
+ * because the request is gone at that point.
+ * @param ref The pull request.
+ * @param reviewer A requested user, or a team by its `org/slug`.
+ */
+export async function pokeReviewer(ref: PullRef, reviewer: { kind: "user" | "team"; name: string }): Promise<void> {
+  const path = `${pullPath(ref)}/requested_reviewers`;
+  const body = JSON.stringify(
+    reviewer.kind === "team" ? { team_reviewers: [reviewer.name.split("/").at(-1)] } : { reviewers: [reviewer.name] },
+  );
+  await request(path, { method: "DELETE", body });
+  try {
+    await request(path, { method: "POST", body });
+  } catch {
+    try {
+      await request(path, { method: "POST", body });
+    } catch (error) {
+      const reason = error instanceof GitHubError ? error.message : "GitHub did not answer.";
+      throw new GitHubError(
+        "failed",
+        `Removed the review request for ${reviewer.name} but could not add it back (${reason}). Re-request ${reviewer.name} by hand.`,
+      );
+    }
+  }
+}
+
+/**
  * @param ref The pull request.
  * @returns How many draft comments the viewer's unsubmitted review holds, or null when there is none.
  */
@@ -229,6 +434,15 @@ function pullPath(ref: PullRef): string {
 }
 
 /**
+ * Searches the open pull requests that wait for the viewer's review, directly or through a team, and the viewer's own.
+ * @returns The raw search results, 50 of each at most.
+ */
+export async function fetchInbox(): Promise<RawInbox> {
+  const { data } = await graphql<RawInbox>(INBOX_QUERY, { review: REVIEW_SEARCH, mine: MINE_SEARCH });
+  return data;
+}
+
+/**
  * @param token A token to check instead of the stored one.
  * @returns The login the token belongs to.
  */
@@ -244,16 +458,29 @@ async function graphql<T>(
 ): Promise<{ data: T; unreadable: string[] }> {
   const body = (await request("/graphql", { method: "POST", body: JSON.stringify({ query, variables }) }, token)) as {
     data?: T | null;
-    errors?: { message: string; path?: (string | number)[] }[];
+    errors?: { type?: string; message: string; path?: (string | number)[] }[];
   };
   const errors = body.errors ?? [];
   if (!body.data) {
+    const scopes = missingScopes(errors);
+    if (scopes !== null) throw new GitHubError("scopes", scopes);
     throw new GitHubError("failed", errors.map((error) => error.message).join(" ") || "GitHub returned no data.");
   }
   const unreadable = errors.map(
     (error) => error.path?.filter((segment): segment is string => typeof segment === "string").at(-1) ?? error.message,
   );
   return { data: body.data, unreadable: [...new Set(unreadable)] };
+}
+
+/**
+ * @param errors The errors of a GraphQL response that returned no data.
+ * @returns What the token lacks, when that is why GitHub refused the query, or null.
+ */
+export function missingScopes(errors: { type?: string; message: string }[]): string | null {
+  const refused = errors.find((error) => error.type === "INSUFFICIENT_SCOPES");
+  if (!refused) return null;
+  const scopes = /following scopes: \[([^\]]*)\]/.exec(refused.message)?.[1]?.replaceAll("'", "").trim();
+  return scopes ? `The token lacks the ${scopes} scope.` : "The token lacks a scope FloHub needs.";
 }
 
 async function request(path: string, init: RequestInit, explicitToken?: string): Promise<unknown> {
@@ -272,7 +499,7 @@ async function request(path: string, init: RequestInit, explicitToken?: string):
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const message = (body as { message?: string } | null)?.message ?? response.statusText;
-    throw new GitHubError("failed", `GitHub answered ${response.status}: ${message}`);
+    throw new GitHubError("failed", `GitHub answered ${response.status}: ${message}`, response.status);
   }
   return body;
 }

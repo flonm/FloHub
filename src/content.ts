@@ -10,12 +10,15 @@ import type { Overview } from "./github";
 import { readCachedOverview } from "./overview-cache";
 import { deriveStack } from "./stack";
 import { Toast } from "./toast";
+import { baseCandidates } from "./versions";
+import { VersionsDialog } from "./versions-dialog";
 
 const AUTO_REFRESH_GAP_MS = 15_000;
 const STICKY_HEADER_HEIGHT = 96;
 const ANCHOR_RETRY_MS = 1_000;
 const AGE_TICK_MS = 60_000;
 const CACHE_WAIT_MS = 300;
+const POKE_MEMORY_MS = 86_400_000;
 const TEXT_FIELDS = "input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox'], [role='combobox'], [role='searchbox']";
 
 let current: PullRef | null = null;
@@ -32,14 +35,17 @@ let pendingNotice: string | null = null;
 let loadedFresh = false;
 let viewerIsAuthor = false;
 let claimedKey: string | null = null;
+let pokes: Record<string, number> = {};
 const busy = new Set<string>();
 const dialog = new ReviewDialog();
+const versionsDialog = new VersionsDialog();
 const toast = new Toast();
 const matchShortcut = createShortcutMatcher();
 
 const actions = {
   refresh: () => void load(true),
   rerequest: (reviewer: Reviewer) => void rerequest(reviewer),
+  poke: (reviewer: Reviewer) => void poke(reviewer),
   openOptions: () => void send({ type: "open-options" }),
   toggleStack: () => {
     stackCollapsed = !stackCollapsed;
@@ -50,14 +56,16 @@ const actions = {
     showMerged = !showMerged;
     update({ showMerged });
   },
+  compareVersions: () => compareVersions(),
 };
 const inline = new ReviewBar("inline", actions);
 const floating = new ReviewBar("floating", actions);
 const viewedTree = new ViewedTree(notify);
 
-void chrome.storage.local.get("stackCollapsed").then((stored) => {
+void chrome.storage.local.get(["stackCollapsed", "pokes"]).then((stored) => {
   stackCollapsed = stored.stackCollapsed === true;
-  update({ stackCollapsed });
+  pokes = (stored.pokes as Record<string, number> | undefined) ?? {};
+  update({ stackCollapsed, ...(current ? { pokedAt: pokedAtFor(current) } : {}) });
 });
 setInterval(() => update({ now: Date.now() }), AGE_TICK_MS);
 
@@ -226,6 +234,11 @@ function readyState(overview: Overview, ref: PullRef, exact: boolean): Extract<B
     now: Date.now(),
     refreshing: false,
     busy,
+    pokedAt: pokedAtFor(ref),
+    forcePushes: {
+      count: (exact && pullRequest.forcePushes?.totalCount) || 0,
+      lastAt: (exact && pullRequest.forcePushes?.nodes.at(-1)?.createdAt) || null,
+    },
     notice: null,
   };
 }
@@ -291,7 +304,7 @@ async function rerequest(reviewer: Reviewer): Promise<void> {
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  if (!current || dialog.isOpen) return;
+  if (!current || dialog.isOpen || versionsDialog.isOpen) return;
   const action = matchShortcut({
     key: event.key,
     metaKey: event.metaKey,
@@ -369,8 +382,60 @@ async function submitReview(ref: PullRef, event: ReviewEvent, body: string): Pro
   return null;
 }
 
+function compareVersions(): void {
+  const ref = current;
+  if (!ref) return;
+  versionsDialog.open({
+    number: ref.number,
+    repoUrl: `https://github.com/${ref.owner}/${ref.repo}`,
+    versions: async () => {
+      const reply = await send({ type: "versions", ref });
+      if (!reply.ok) throw new Error(reply.message);
+      return reply.value;
+    },
+    patch: async (history, version) => {
+      const reply = await send({ type: "version-patch", ref, head: version.oid, bases: baseCandidates(history, version) });
+      if (!reply.ok) throw new Error(reply.message);
+      return reply.value;
+    },
+  });
+}
+
 function isOwnPull(): boolean {
   if (!viewerIsAuthor) return false;
   toast.show("GitHub doesn't let you review your own pull request.", "info");
   return true;
+}
+
+/** @returns When the viewer last poked each reviewer of a pull request, by reviewer key. */
+function pokedAtFor(ref: PullRef): Map<string, number> {
+  const prefix = `${pullKey(ref)}|`;
+  return new Map(
+    Object.entries(pokes)
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([key, at]) => [key.slice(prefix.length), at]),
+  );
+}
+
+async function poke(reviewer: Reviewer): Promise<void> {
+  const ref = current;
+  if (!ref || state.kind !== "ready" || reviewer.kind === "bot" || busy.has(reviewer.key)) return;
+  busy.add(reviewer.key);
+  render();
+
+  const reply = await send({ type: "poke", ref, reviewer: { kind: reviewer.kind, name: reviewer.name } });
+  busy.delete(reviewer.key);
+  if (reply.ok) {
+    const now = Date.now();
+    pokes = Object.fromEntries([
+      ...Object.entries(pokes).filter(([, at]) => now - at < POKE_MEMORY_MS),
+      [`${pullKey(ref)}|${reviewer.key}`, now],
+    ]);
+    void chrome.storage.local.set({ pokes });
+    toast.show(`Poked ${reviewer.name}. GitHub notifies them within a minute.`, "success");
+  } else {
+    toast.show(reply.message, "danger");
+  }
+  if (current && pullKey(current) === pullKey(ref)) update({ pokedAt: pokedAtFor(ref) });
+  await load(true);
 }

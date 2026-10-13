@@ -135,5 +135,10 @@ function renderThreads(entry: StackEntry): HTMLElement {
 }
 
 function badge(entry: StackEntry): HTMLElement {
-  return el("span", { class: "state", "data-stack-tone": entry.tone }, entry.label);
+  const element = el("span", { class: "state", "data-stack-tone": entry.tone }, entry.label);
+  if (entry.detail) {
+    element.title = entry.detail;
+    element.append(el("span", { class: "visually-hidden" }, `. ${entry.detail}`));
+  }
+  return element;
 }

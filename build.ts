@@ -9,7 +9,10 @@ const GECKO = {
   id: "flohub@flonm.github.io",
   strict_min_version: "128.0",
   data_collection_permissions: { required: ["none"] },
+  update_url: "https://github.com/flonm/FloHub/releases/latest/download/updates.json",
 };
+
+const VERSION_FORMAT = /^\d+(\.\d+){0,3}$/;
 
 const requested = process.argv[2] ?? "chrome";
 if (!(requested in TARGETS)) {
@@ -22,7 +25,7 @@ const OUT = TARGETS[target];
 await Bun.$`rm -rf ${OUT}`;
 
 const result = await Bun.build({
-  entrypoints: ["src/background.ts", "src/content.ts", "src/options.ts"],
+  entrypoints: ["src/background.ts", "src/content.ts", "src/options.ts", "src/popup.ts"],
   outdir: OUT,
   target: "browser",
   format: "iife",
@@ -40,6 +43,12 @@ for (const file of new Bun.Glob("*").scanSync("static")) {
 }
 
 const manifest = await Bun.file("static/manifest.json").json();
+const version = process.env.FLOHUB_VERSION ?? manifest.version;
+if (!VERSION_FORMAT.test(version)) {
+  console.error(`Version "${version}" must be one to four dot-separated numbers, like 1.2.3.`);
+  process.exit(1);
+}
+manifest.version = version;
 await Bun.write(`${OUT}/manifest.json`, `${JSON.stringify(target === "firefox" ? toFirefox(manifest) : manifest, null, 2)}\n`);
 
 console.log(
@@ -50,6 +59,7 @@ console.log(
 
 /**
  * Firefox runs Manifest V3 background code as an event page, not a service worker, and needs an add-on ID.
+ * Installed copies keep checking the `update_url` they shipped with, so it must stay valid for good.
  * @param manifest The Chrome manifest.
  * @returns The same manifest for Firefox.
  */
