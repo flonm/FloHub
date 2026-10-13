@@ -8,6 +8,7 @@ import {
   setFileViewed,
   submitReview,
 } from "./github";
+import { clearInbox, INBOX_ALARM, INBOX_PERIOD_MINUTES, refreshInbox } from "./inbox-sync";
 import type { Message, Reply, ReplyByType } from "./messages";
 
 chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) => {
@@ -15,13 +16,22 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
   return true;
 });
 
-chrome.action.onClicked.addListener(() => {
-  chrome.runtime.openOptionsPage();
+chrome.alarms.create(INBOX_ALARM, { periodInMinutes: INBOX_PERIOD_MINUTES });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === INBOX_ALARM) void refreshInbox().catch(() => undefined);
+});
+chrome.runtime.onStartup.addListener(() => void refreshInbox().catch(() => undefined));
+chrome.runtime.onInstalled.addListener(() => void refreshInbox().catch(() => undefined));
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !("token" in changes)) return;
+  void clearInbox().then(() => refreshInbox()).catch(() => undefined);
 });
 
 async function handle(message: Message): Promise<Reply<ReplyByType[Message["type"]]>> {
   try {
     switch (message.type) {
+      case "inbox":
+        return { ok: true, value: await refreshInbox() };
       case "overview":
         return { ok: true, value: await fetchOverview(message.ref) };
       case "poke":

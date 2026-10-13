@@ -9,7 +9,8 @@ export type IconName =
   | "chevron"
   | "people"
   | "branch"
-  | "pointer";
+  | "pointer"
+  | "gear";
 
 type Shape = ["path", { d: string; class?: string }] | ["circle", { cx: string; cy: string; r: string; class?: string }];
 
@@ -37,6 +38,15 @@ const ICONS: Record<IconName, Shape[]> = {
       {
         class: "fill",
         d: "M2.45 6.25H8.25L7.95 4.45C7.85 3.75 8.4 3.15 9.05 3.3C9.55 3.42 9.85 3.9 9.95 4.5L10.1 5.25C12.6 5.2 14.35 6.55 14.35 8.75C14.35 11.2 12.85 12.9 10.6 12.9H9.6C8 12.9 6.9 11.8 6.9 10.4V8.35H2.45A1.05 1.05 0 0 1 2.45 6.25Z",
+      },
+    ],
+  ],
+  gear: [
+    ["circle", { cx: "8", cy: "8", r: "2.25" }],
+    [
+      "path",
+      {
+        d: "M8 1.75v1.5M8 12.75v1.5M14.25 8h-1.5M3.25 8h-1.5M12.42 3.58l-1.06 1.06M4.64 11.36l-1.06 1.06M12.42 12.42l-1.06-1.06M4.64 4.64 3.58 3.58",
       },
     ],
   ],

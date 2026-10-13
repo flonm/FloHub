@@ -1,3 +1,4 @@
+import type { RawInbox } from "./inbox";
 import type { PullRef } from "./pull-ref";
 import type { ReviewEvent } from "./shortcuts";
 import type { RawPullRequest } from "./reviewers";
@@ -69,6 +70,28 @@ query ($owner: String!, $name: String!, $number: Int!) {
     }
   }
 }`;
+
+const INBOX_QUERY = `
+${STACK_PULL_FRAGMENT}
+fragment InboxPull on PullRequest {
+  ...StackPull
+  repository { nameWithOwner }
+  author { login avatarUrl }
+  latestReviews(first: 20) { nodes { author { login } } }
+  stack {
+    number
+    size
+    entries(first: 50) { nodes { position pullRequest { number } } }
+  }
+}
+query ($review: String!, $mine: String!) {
+  viewer { login }
+  review: search(query: $review, type: ISSUE, first: 50) { nodes { ... on PullRequest { ...InboxPull } } }
+  mine: search(query: $mine, type: ISSUE, first: 50) { nodes { ... on PullRequest { ...InboxPull } } }
+}`;
+
+const REVIEW_SEARCH = "is:pr is:open archived:false review-requested:@me";
+const MINE_SEARCH = "is:pr is:open archived:false author:@me";
 
 const VIEWED_FILES_QUERY = `
 query ($owner: String!, $name: String!, $number: Int!, $after: String) {
@@ -254,6 +277,15 @@ async function findPendingReview(ref: PullRef): Promise<{ id: number } | null> {
 
 function pullPath(ref: PullRef): string {
   return `/repos/${ref.owner}/${ref.repo}/pulls/${ref.number}`;
+}
+
+/**
+ * Searches the open pull requests that wait for the viewer's review, directly or through a team, and the viewer's own.
+ * @returns The raw search results, 50 of each at most.
+ */
+export async function fetchInbox(): Promise<RawInbox> {
+  const { data } = await graphql<RawInbox>(INBOX_QUERY, { review: REVIEW_SEARCH, mine: MINE_SEARCH });
+  return data;
 }
 
 /**

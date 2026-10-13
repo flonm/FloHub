@@ -71,6 +71,47 @@ const STACK_PULLS = [
   stackPull(348, "docs(stack): document server rebases", { isDraft: true }, [0, 0], 190),
 ];
 
+function inboxPull(number: number, title: string, overrides: Record<string, unknown> = {}, repo = "github/gh-stack") {
+  return {
+    ...stackPull(number, title),
+    url: `https://github.com/${repo}/pull/${number}`,
+    repository: { nameWithOwner: repo },
+    author: { login: "hubot", avatarUrl: "https://avatars.githubusercontent.com/hubot?v=4" },
+    latestReviews: { nodes: [] },
+    stack: null,
+    ...overrides,
+  };
+}
+
+const INBOX_STACK = {
+  number: 900,
+  size: 3,
+  entries: { nodes: [901, 902, 903].map((number, index) => ({ position: index + 1, pullRequest: { number } })) },
+};
+
+const INBOX = {
+  viewer: { login: "octocat" },
+  review: {
+    nodes: [
+      inboxPull(901, "feat(api): add the stack endpoint", { stack: INBOX_STACK }),
+      inboxPull(903, "feat(ui): render the stack", { stack: INBOX_STACK, timelineItems: { nodes: [{ __typename: "HeadRefForcePushedEvent", createdAt: ago(1) }] } }),
+      inboxPull(
+        77,
+        "fix(auth): refresh tokens before they expire",
+        { latestReviews: { nodes: [{ author: { login: "octocat" } }] }, timelineItems: { nodes: [{ __typename: "HeadRefForcePushedEvent", createdAt: ago(48) }] } },
+        "octo-org/api",
+      ),
+    ],
+  },
+  mine: {
+    nodes: [
+      inboxPull(120, "docs: explain the stack badge", { reviewDecision: "APPROVED" }),
+      inboxPull(121, "feat(stack): show failing checks", { statusCheckRollup: { state: "FAILURE" } }, "octo-org/api"),
+      {},
+    ],
+  },
+};
+
 const UNREADABLE = "Resource not accessible by personal access token";
 
 const CHANGED_FILES: Record<string, string> = {
@@ -145,6 +186,10 @@ function createFixture(options: { partial?: boolean; failReadd?: boolean } = {})
             },
           },
         });
+        return;
+      }
+      if (graphql?.query.includes("review: search(")) {
+        await route.fulfill({ json: { data: INBOX } });
         return;
       }
       if (graphql) {
@@ -475,6 +520,52 @@ await page.waitForURL(/\/pull\/\d+$/);
 await inlineBar(page).getByText("Re-requested").first().waitFor();
 check(await inlineBar(page).isVisible(), "bar survives in-page navigation to the Conversation tab");
 await light.close();
+
+for (const scheme of ["light", "dark"] as const) {
+  const inboxContext = await launch(scheme);
+  await inboxContext.route("https://api.github.com/**", (route) => createFixture().handle(route));
+  const popupId = new URL(inboxContext.serviceWorkers()[0]?.url() ?? "").host;
+  const popup = await inboxContext.newPage();
+  await popup.setViewportSize({ width: 420, height: 600 });
+  await popup.goto(`chrome-extension://${popupId}/popup.html`);
+  await popup.getByText("feat(ui): render the stack").waitFor();
+  if (scheme === "light") {
+    const sections = await popup.locator("section").evaluateAll((elements) =>
+      elements.map((section) => ({
+        heading: section.querySelector("h2")?.textContent,
+        rows: [...section.querySelectorAll(".pull")].map((row) => row.querySelector(".title")?.textContent),
+      })),
+    );
+    check(
+      JSON.stringify(sections) ===
+        JSON.stringify([
+          {
+            heading: "Waiting for your review3",
+            rows: ["#903 feat(ui): render the stack", "#901 feat(api): add the stack endpoint", "#77 fix(auth): refresh tokens before they expire"],
+          },
+          { heading: "Your pull requests2", rows: ["#121 feat(stack): show failing checks", "#120 docs: explain the stack badge"] },
+        ]),
+      `popup groups review requests by stack, top layer first, and puts failing own PRs first: ${JSON.stringify(sections)}`,
+    );
+    check(
+      (await popup.locator(".pull", { hasText: "#77" }).getByText("Re-requested").count()) === 1,
+      "a review request the viewer answered before is marked as re-requested",
+    );
+    const badge = await inboxContext.serviceWorkers()[0]?.evaluate(() => chrome.action.getBadgeText({}));
+    check(badge === "3", `the toolbar badge counts the review requests: "${badge}"`);
+    const [opened] = await Promise.all([
+      inboxContext.waitForEvent("page"),
+      popup.locator(".pull", { hasText: "#77" }).click({ modifiers: ["ControlOrMeta"] }),
+    ]);
+    check(opened.url() === "https://github.com/octo-org/api/pull/77", `a row opens its pull request in a tab: ${opened.url()}`);
+  }
+  await popup.screenshot({ path: `${SCREENSHOTS}/popup-${scheme}.png`, fullPage: true });
+  await inboxContext.serviceWorkers()[0]?.evaluate(() => chrome.storage.local.remove("token"));
+  await popup.reload();
+  await popup.getByRole("button", { name: "Set up token" }).waitFor();
+  check(true, `the popup asks for a token when none is stored (${scheme})`);
+  await inboxContext.close();
+}
 
 const dark = await launch("dark");
 await dark.route("https://api.github.com/**", (route) => createFixture().handle(route));
