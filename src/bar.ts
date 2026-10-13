@@ -39,7 +39,7 @@ type Tone = "success" | "danger" | "attention" | "muted";
 
 const STATUS: Record<ReviewerStatus, { label: string; tone: Tone; icon: IconName }> = {
   approved: { label: "Approved", tone: "success", icon: "check" },
-  changes_requested: { label: "Changes requested", tone: "danger", icon: "cross" },
+  changes_requested: { label: "Changes requested", tone: "attention", icon: "cross" },
   dismissed: { label: "Dismissed", tone: "muted", icon: "slash" },
   commented: { label: "Commented", tone: "muted", icon: "comment" },
   pending: { label: "Review pending", tone: "attention", icon: "dot" },
