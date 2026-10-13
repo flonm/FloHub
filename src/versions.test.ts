@@ -204,10 +204,10 @@ describe("pickBase", () => {
 
 describe("lastReviewedVersion", () => {
   test("is the viewer's last reviewed version, unless that is the current one", () => {
-    const reviewed = (oid: string) =>
-      deriveVersions(pull({ reviews: { nodes: [{ author: { login: "me" }, submittedAt: null, commit: commit(oid, "2026-10-01T08:00:00Z") }] } }), [], "me").versions;
-    expect(lastReviewedVersion(reviewed("v2"))?.number).toBe(2);
-    expect(lastReviewedVersion(reviewed("v3"))).toBeNull();
+    const reviewed = (oid: string, submittedAt: string) =>
+      deriveVersions(pull({ reviews: { nodes: [{ author: { login: "me" }, submittedAt, commit: commit(oid, "2026-10-01T08:00:00Z") }] } }), [], "me").versions;
+    expect(lastReviewedVersion(reviewed("v2", "2026-10-02T12:00:00Z"))?.number).toBe(2);
+    expect(lastReviewedVersion(reviewed("v3", "2026-10-03T12:00:00Z"))).toBeNull();
     expect(lastReviewedVersion(deriveVersions(pull(), [], "me").versions)).toBeNull();
   });
 });
