@@ -20,6 +20,7 @@ function buildPull(number: number, overrides: Partial<RawInboxPull> = {}): RawIn
     repository: { nameWithOwner: "octo-org/octo-repo" },
     author: { login: "hubot", avatarUrl: "https://avatars.githubusercontent.com/hubot" },
     latestReviews: { nodes: [] },
+    reviewRequests: { nodes: [{ requestedReviewer: { login: "octocat" } }] },
     stack: null,
     ...overrides,
   };
@@ -90,6 +91,20 @@ describe("buildInbox", () => {
         [2, false],
       ]),
     );
+  });
+
+  test("leaves out drafts and pull requests the viewer is no longer asked to review by name", () => {
+    const inbox = buildInbox(
+      buildRaw([
+        buildPull(1),
+        buildPull(2, { isDraft: true }),
+        buildPull(3, { reviewRequests: { nodes: [] } }),
+        buildPull(4, { reviewRequests: { nodes: [{ requestedReviewer: {} }, { requestedReviewer: { login: "hubot" } }] } }),
+      ]),
+      0,
+    );
+    expect(inbox.review.flatMap((entry) => entry.pulls.map((pull) => pull.number))).toEqual([1]);
+    expect(inbox.reviewCount).toBe(1);
   });
 
   test("counts review requests for the badge and skips search hits that are not pull requests", () => {

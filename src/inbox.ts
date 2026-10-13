@@ -5,6 +5,8 @@ export type RawInboxPull = RawStackPull & {
   repository: { nameWithOwner: string };
   author: { login: string; avatarUrl: string } | null;
   latestReviews: { nodes: { author: { login: string } | null }[] };
+  /** Teams and other non-users come back as empty objects. */
+  reviewRequests: { nodes: { requestedReviewer: { login?: string } | null }[] };
   stack: {
     number: number;
     size: number;
@@ -59,13 +61,18 @@ const URGENCY: Record<StackTone, number> = { danger: 0, attention: 1, success: 2
 
 /**
  * Turns the two inbox searches into groups: one per stack, or one per pull request outside any stack.
+ * Review requests keep only non-draft pull requests that still ask the viewer by name.
  * Review requests are ordered by their latest activity, the viewer's own pull requests by what needs them first.
  * @param raw The search results.
  * @param fetchedAt When they were fetched.
  * @returns The inbox.
  */
 export function buildInbox(raw: RawInbox, fetchedAt: number): Inbox {
-  const review = group(pullsOf(raw.review.nodes), raw.viewer.login);
+  // The search index lags behind a submitted review, so check the request is still open on the pull request itself.
+  const review = group(
+    pullsOf(raw.review.nodes).filter((pull) => !pull.isDraft && isRequested(pull, raw.viewer.login)),
+    raw.viewer.login,
+  );
   const mine = group(pullsOf(raw.mine.nodes), raw.viewer.login);
   review.sort((a, b) => newest(b) - newest(a));
   mine.sort((a, b) => urgency(a) - urgency(b) || newest(b) - newest(a));
@@ -80,6 +87,16 @@ export function buildInbox(raw: RawInbox, fetchedAt: number): Inbox {
 
 function pullsOf(nodes: (RawInboxPull | Record<string, never>)[]): RawInboxPull[] {
   return nodes.filter((node): node is RawInboxPull => typeof node.number === "number");
+}
+
+/**
+ * GitHub drops a reviewer's request when they submit a review and adds it back when they are re-requested.
+ * @param pull The pull request.
+ * @param viewer The viewer's login.
+ * @returns Whether the viewer is asked for a review by name right now.
+ */
+function isRequested(pull: RawInboxPull, viewer: string): boolean {
+  return pull.reviewRequests.nodes.some((request) => request.requestedReviewer?.login === viewer);
 }
 
 function group(pulls: RawInboxPull[], viewer: string): InboxGroup[] {
