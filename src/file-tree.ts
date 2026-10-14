@@ -8,8 +8,8 @@ const ITEM = '[role="treeitem"]';
 const TOGGLE = "flohub-viewed";
 const DIFFSTAT = "flohub-diffstat";
 const STAT_CHARS = "--flohub-stat-chars";
-const ANCHOR_ID = /diff-[0-9a-f]{64}/;
-const VIEWED_NAME = /^(not |mark as |unmark as )?viewed$/i;
+const ANCHOR_ID = /diff-[0-9a-f]{64}/u;
+const VIEWED_NAME = /^(not |mark as |unmark as )?viewed$/iu;
 const USER_CONTENT = ".markdown-body, .comment-body, .js-comment-body";
 const STATE_LABEL: Record<ViewedState, string> = {
   VIEWED: "Viewed",
@@ -156,7 +156,7 @@ export class ViewedTree {
       if (local && (this.busy.has(path) || at >= startedAt)) states.set(path, local);
     }
     const paths = [...states.keys()];
-    const anchors = await Promise.all(paths.map(diffAnchor));
+    const anchors = await Promise.all(paths.map(async (path) => [path, await diffAnchor(path)] as const));
     if (run !== this.generation) return;
     this.loadingKey = null;
     this.failedKey = null;
@@ -170,8 +170,8 @@ export class ViewedTree {
       pullRequestId: reply.value.pullRequestId,
       states,
       stats: new Map(reply.value.files.map((file) => [file.path, formatDiffStat(file.additions, file.deletions)])),
-      anchors: new Map(anchors.map((anchor, index) => [anchor, paths[index] as string])),
-      pathAnchors: new Map(paths.map((path, index) => [path, anchors[index] as string])),
+      anchors: new Map(anchors.map(([path, anchor]) => [anchor, path])),
+      pathAnchors: new Map(anchors),
       byName,
     };
     this.redecorate();
@@ -184,8 +184,8 @@ export class ViewedTree {
       tree.style.setProperty(STAT_CHARS, String(widest));
     }
     const headers = new Map<string, Element>();
-    for (const header of document.querySelectorAll(".file-header[data-path]")) {
-      headers.set(header.getAttribute("data-path") ?? "", header);
+    for (const header of document.querySelectorAll<HTMLElement>(".file-header[data-path]")) {
+      headers.set(header.dataset.path ?? "", header);
     }
 
     const files = new Map<Element, string>();
@@ -205,9 +205,8 @@ export class ViewedTree {
 
     for (const folder of tree.querySelectorAll(ITEM)) {
       if (!isFolder(folder)) continue;
-      const inside = [...folder.querySelectorAll(ITEM)].filter((item) => files.has(item));
-      const allViewed =
-        inside.length > 0 && inside.every((item) => loaded.states.get(files.get(item) as string) === "VIEWED");
+      const inside = [...folder.querySelectorAll(ITEM)].flatMap((item) => files.get(item) ?? []);
+      const allViewed = inside.length > 0 && inside.every((path) => loaded.states.get(path) === "VIEWED");
       setAttribute(folder, "data-flohub-viewed", allViewed ? "VIEWED" : null);
       const row = rowOf(folder);
       if (row) setAttribute(row, "data-flohub-row", allViewed ? "" : null);
@@ -228,10 +227,9 @@ export class ViewedTree {
       if (checked !== (loaded.states.get(path) === "VIEWED")) control.click();
       return;
     }
-    if (before !== checked) {
-      loaded.states.set(path, stateFromCheckbox(checked, loaded.states.get(path)));
-      this.changedAt.delete(path);
-    }
+    if (before === checked) return;
+    loaded.states.set(path, stateFromCheckbox(checked, loaded.states.get(path)));
+    this.changedAt.delete(path);
   }
 
   private decorateFile(item: Element, path: string, state: ViewedState): void {
@@ -266,7 +264,7 @@ export class ViewedTree {
   }
 
   private async toggle(path: string): Promise<void> {
-    const loaded = this.loaded;
+    const { loaded } = this;
     if (!loaded || this.busy.has(path) || !loaded.states.has(path)) return;
     const viewed = loaded.states.get(path) !== "VIEWED";
 
@@ -278,7 +276,7 @@ export class ViewedTree {
       return;
     }
 
-    const previous = loaded.states.get(path) as ViewedState;
+    const previous = loaded.states.get(path) ?? "UNVIEWED";
     loaded.states.set(path, viewed ? "VIEWED" : "UNVIEWED");
     this.busy.add(path);
     this.changedAt.set(path, performance.now());
@@ -287,12 +285,12 @@ export class ViewedTree {
     const current = this.loaded?.key === loaded.key ? this.loaded : null;
     if (!current) return;
     this.busy.delete(path);
-    if (!reply.ok) {
+    if (reply.ok) {
+      this.changedAt.set(path, performance.now());
+    } else {
       current.states.set(path, previous);
       this.changedAt.delete(path);
       this.notify(`Could not mark ${path} as ${viewed ? "viewed" : "not viewed"}: ${reply.message}`);
-    } else {
-      this.changedAt.set(path, performance.now());
     }
     this.redecorate();
   }
@@ -333,10 +331,11 @@ function decorateDiffStat(item: Element, stat: DiffStat | null): void {
 function clearDecoration(element: Element): void {
   element.querySelector(`:scope > ${TOGGLE}`)?.remove();
   element.querySelector(`:scope > ${DIFFSTAT}`)?.remove();
-  element.removeAttribute("data-flohub-file");
-  element.removeAttribute("data-flohub-viewed");
-  rowOf(element)?.removeAttribute("data-flohub-row");
-  element.removeAttribute("data-flohub-row");
+  setAttribute(element, "data-flohub-file", null);
+  setAttribute(element, "data-flohub-viewed", null);
+  const row = rowOf(element);
+  if (row) setAttribute(row, "data-flohub-row", null);
+  setAttribute(element, "data-flohub-row", null);
 }
 
 function ensureStyles(): void {
@@ -350,6 +349,7 @@ function ensureStyles(): void {
 /** Writes an attribute only when it changes, so decorating never feeds the page's mutation observers. */
 function setAttribute(element: Element, name: string, value: string | null): void {
   if (element.getAttribute(name) === value) return;
+  // eslint-disable-next-line unicorn/prefer-toggle-attribute -- the value is a string, not a flag
   if (value === null) element.removeAttribute(name);
   else element.setAttribute(name, value);
 }
@@ -362,7 +362,7 @@ function isFolder(item: Element): boolean {
 /** @returns The tree item's visible row: its first child that is neither hidden, a nested group nor ours. */
 function rowOf(item: Element): HTMLElement | null {
   for (const child of item.children) {
-    if (child instanceof HTMLElement && !child.hidden && child.getAttribute("role") !== "group" && child.localName !== TOGGLE && child.localName !== DIFFSTAT) {
+    if (child instanceof HTMLElement && child.hidden === false && child.getAttribute("role") !== "group" && child.localName !== TOGGLE && child.localName !== DIFFSTAT) {
       return child;
     }
   }
@@ -375,7 +375,7 @@ function rowOf(item: Element): HTMLElement | null {
  * and last the labels from the root down to the item.
  */
 function resolvePath(item: Element, loaded: Loaded): string | null {
-  const filterText = item.querySelector(":scope > [data-filterable-item-text]")?.textContent?.trim();
+  const filterText = item.querySelector(":scope > [data-filterable-item-text]")?.textContent.trim();
   if (filterText && loaded.states.has(filterText)) return filterText;
 
   const anchorSource = `${item.id} ${item.querySelector(':scope a[href*="#diff-"]')?.getAttribute("href") ?? ""}`;
@@ -395,13 +395,11 @@ function resolvePath(item: Element, loaded: Loaded): string | null {
 }
 
 function labelOf(item: Element): string {
-  const labelledBy = item.getAttribute("aria-labelledby")?.split(" ")[0];
+  const labelledBy = item.getAttribute("aria-labelledby")?.split(" ", 1)[0];
   const row = rowOf(item);
-  const label =
-    (labelledBy && document.getElementById(labelledBy)) ||
-    row?.querySelector('.ActionList-item-label, [class*="TreeView-item-content-text"]') ||
-    row;
-  return label?.textContent?.trim() ?? "";
+  const byId = labelledBy ? document.getElementById(labelledBy) : null;
+  const label = byId ?? row?.querySelector('.ActionList-item-label, [class*="TreeView-item-content-text"]') ?? row;
+  return label?.textContent.trim() ?? "";
 }
 
 /**
@@ -411,7 +409,7 @@ function labelOf(item: Element): string {
 function pageControl(path: string, loaded: Loaded, headers?: Map<string, Element>): HTMLElement | null {
   const anchor = loaded.pathAnchors.get(path);
   const header = headers ? headers.get(path) : document.querySelector(`.file-header[data-path="${CSS.escape(path)}"]`);
-  const container = (anchor && document.getElementById(anchor)) || header?.closest(".file");
+  const container = (anchor ? document.getElementById(anchor) : null) ?? header?.closest(".file");
   if (!container) return null;
   const classic = container.querySelector<HTMLElement>("input.js-reviewed-checkbox");
   if (classic) return classic;
@@ -424,7 +422,7 @@ function pageControl(path: string, loaded: Loaded, headers?: Map<string, Element
 }
 
 function accessibleText(element: HTMLElement): string {
-  return (element.getAttribute("aria-label") ?? element.closest("label")?.textContent ?? element.textContent ?? "").trim();
+  return (element.getAttribute("aria-label") ?? element.closest("label")?.textContent ?? element.textContent).trim();
 }
 
 function isChecked(control: HTMLElement): boolean {

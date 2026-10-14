@@ -27,7 +27,7 @@ const top = el("div", { class: "top" });
 const header = el("header");
 const updated = el("span", { class: "updated" });
 const reload = iconButton("refresh", "Refresh", () => void refresh(), "refresh");
-const settings = iconButton("gear", "Settings", openSettings, "settings");
+const settings = iconButton("gear", "Settings", () => void openSettings(), "settings");
 const notice = el("div", { class: "notice", role: "alert", hidden: "" });
 const live = el("div", { class: "visually-hidden", role: "status" });
 const main = el("main", { "aria-label": "Inbox" });
@@ -42,7 +42,7 @@ if (app) {
     if ("token" in changes) void refresh();
     else if ("inbox" in changes && !refreshing) {
       // The service worker refreshed it on its schedule, or dropped it and is about to fetch it again.
-      const next = changes.inbox?.newValue as Inbox | undefined;
+      const next = changes.inbox.newValue as Inbox | undefined;
       if (!next) {
         void refresh();
         return;
@@ -53,11 +53,15 @@ if (app) {
   });
   setInterval(tick, TICK_MS);
   void refresh();
-  void chrome.storage.local.get("inbox").then((stored) => {
-    inbox ??= (stored.inbox as Inbox | undefined) ?? null;
-    loaded = true;
-    render();
-  });
+  void showStored();
+}
+
+/** Shows the inbox the service worker stored last, until the refresh answers. */
+async function showStored(): Promise<void> {
+  const stored = await chrome.storage.local.get("inbox");
+  inbox ??= (stored.inbox as Inbox | undefined) ?? null;
+  loaded = true;
+  render();
 }
 
 async function refresh(announce = false): Promise<void> {
@@ -71,6 +75,7 @@ async function refresh(announce = false): Promise<void> {
   render();
   const reply = await send({ type: "inbox" });
   refreshing = false;
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- a storage change may set it while `send` runs
   if (again) {
     void refresh(announce);
     return;
@@ -87,8 +92,9 @@ async function refresh(announce = false): Promise<void> {
   render();
 }
 
-function openSettings(): void {
-  void chrome.runtime.openOptionsPage().then(() => window.close());
+async function openSettings(): Promise<void> {
+  await chrome.runtime.openOptionsPage();
+  window.close();
 }
 
 function render(): void {
@@ -105,7 +111,7 @@ function render(): void {
 
   const target =
     (focusKey ? document.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`) : null) ??
-    (focusIndex >= 0 ? (rows()[Math.min(focusIndex, rows().length - 1)] ?? null) : null);
+    (focusIndex === -1 ? null : (rows()[Math.min(focusIndex, rows().length - 1)] ?? null));
   if (target) {
     target.focus({ preventScroll: true });
   } else if (!placedFocus || !document.activeElement || document.activeElement === document.body) {
@@ -149,23 +155,27 @@ function renderBody(): HTMLElement[] {
 
 function renderProblem(current: Problem): HTMLElement {
   switch (current.kind) {
-    case "no-token":
+    case "no-token": {
       return blank("people", "Add a GitHub token", "The inbox needs a token to find your review requests and pull requests.", [
         "Set up token",
-        openSettings,
+        () => void openSettings(),
       ]);
-    case "unauthorized":
+    }
+    case "unauthorized": {
       return blank("cross", "GitHub rejected the token", "It may have expired or been revoked. Add a new one in the settings.", [
         "Open settings",
-        openSettings,
+        () => void openSettings(),
       ]);
-    case "scopes":
+    }
+    case "scopes": {
       return blank("cross", "The token needs more access", `${current.message} Create one with the repo and read:org scopes.`, [
         "Open settings",
-        openSettings,
+        () => void openSettings(),
       ]);
-    case "error":
+    }
+    case "error": {
       return blank("cross", "Could not load the inbox", current.message, ["Try again", () => void refresh(true)]);
+    }
   }
 }
 
@@ -186,10 +196,10 @@ function blank(name: "check" | "cross" | "people", title: string, text: string, 
 function renderSkeleton(): HTMLElement {
   const box = el("div", { class: "skeleton" });
   box.append(el("span", { class: "visually-hidden" }, "Loading pull requests"));
-  for (const rows of [3, 2]) {
+  for (const rowCount of [3, 2]) {
     const section = el("div", { class: "skeleton-section", "aria-hidden": "true" });
     section.append(el("span", { class: "bone heading" }));
-    for (let index = 0; index < rows; index++) {
+    for (let index = 0; index < rowCount; index++) {
       const row = el("div", { class: "skeleton-row" });
       row.append(el("span", { class: "bone dot" }), el("span", { class: "bone line" }), el("span", { class: "bone line short" }));
       section.append(row);
@@ -309,11 +319,14 @@ function renderHideTeams(repo: string, pull: InboxPull): HTMLElement {
   );
   hide.addEventListener("click", () => {
     hide.disabled = true;
-    void writeReviewScope(repo, "direct").then(() => {
-      live.textContent = `Team requests in ${repo} hidden. Undo it in the settings.`;
-    });
+    void hideTeamRequests(repo);
   });
   return hide;
+}
+
+async function hideTeamRequests(repo: string): Promise<void> {
+  await writeReviewScope(repo, "direct");
+  live.textContent = `Team requests in ${repo} hidden. Undo it in the settings.`;
 }
 
 function updateAge(time: HTMLTimeElement, spoken: Element | null, now: number): void {
@@ -360,17 +373,18 @@ function renderDiffStat(pull: InboxPull): HTMLElement | null {
 }
 
 function renderAvatar(pull: InboxPull): HTMLElement {
-  const placeholder = (): HTMLElement => {
-    const span = el("span", { class: "avatar placeholder" });
-    span.append(icon("people"));
-    return span;
-  };
-  if (!pull.avatarUrl) return placeholder();
+  if (!pull.avatarUrl) return avatarPlaceholder();
   const url = new URL(pull.avatarUrl);
   url.searchParams.set("s", "40");
-  const image = el("img", { class: "avatar", src: url.toString(), alt: "", width: "20", height: "20" });
-  image.addEventListener("error", () => image.replaceWith(placeholder()));
+  const image = el("img", { class: "avatar", src: url.href, alt: "", width: "20", height: "20" });
+  image.addEventListener("error", () => image.replaceWith(avatarPlaceholder()));
   return image;
+}
+
+function avatarPlaceholder(): HTMLElement {
+  const span = el("span", { class: "avatar placeholder" });
+  span.append(icon("people"));
+  return span;
 }
 
 function rows(): HTMLAnchorElement[] {
@@ -426,11 +440,11 @@ async function openPull(url: string, background: boolean): Promise<void> {
     return;
   }
   const existing = await findTab(url);
-  if (existing?.id !== undefined) {
+  if (existing?.id === undefined) {
+    await chrome.tabs.create({ url, active: true });
+  } else {
     await chrome.tabs.update(existing.id, { active: true });
     await chrome.windows.update(existing.windowId, { focused: true });
-  } else {
-    await chrome.tabs.create({ url, active: true });
   }
   window.close();
 }
@@ -439,7 +453,7 @@ async function findTab(url: string): Promise<chrome.tabs.Tab | undefined> {
   try {
     // Without the tabs permission, the query only sees tabs on hosts the content script runs on.
     const [tabs, current] = await Promise.all([chrome.tabs.query({ url: `${url}*` }), chrome.windows.getCurrent()]);
-    const matching = tabs.filter((tab) => tab.url && showsPull(tab.url, url));
+    const matching = tabs.filter((tab) => (tab.url ? showsPull(tab.url, url) : false));
     return matching.find((tab) => tab.windowId === current.id) ?? matching[0];
   } catch {
     return undefined;

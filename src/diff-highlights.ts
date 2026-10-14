@@ -203,7 +203,7 @@ export class DiffHighlights {
   }
 
   private report(): void {
-    const loaded = this.loaded;
+    const { loaded } = this;
     if (!loaded) {
       this.onStatus(null);
       return;
@@ -222,7 +222,7 @@ export class DiffHighlights {
   private clear(): void {
     this.decorated.clear();
     for (const element of document.querySelectorAll(`${BADGE}, ${REMOVED}`)) element.remove();
-    for (const element of document.querySelectorAll(`[${CHANGED}], [${HOST}]`)) {
+    for (const element of document.querySelectorAll(`[${CSS.escape(CHANGED)}], [${CSS.escape(HOST)}]`)) {
       element.removeAttribute(CHANGED);
       element.removeAttribute("aria-description");
       element.removeAttribute(HOST);
@@ -260,7 +260,7 @@ async function compute(ref: PullRef, key: string): Promise<Loaded | null> {
   const since = lastReviewedVersion(versions.value.versions);
   const current = versions.value.versions.at(-1);
   if (!since || !current) return null;
-  const patch = (version: Version) =>
+  const patch = async (version: Version) =>
     send({ type: "version-patch", ref, head: version.oid, bases: baseCandidates(versions.value, version) });
   const [before, after] = await Promise.all([patch(since), patch(current)]);
   if (!before.ok || !after.ok) return null;
@@ -269,8 +269,8 @@ async function compute(ref: PullRef, key: string): Promise<Loaded | null> {
   const marks = markChanges(before.value.files, after.value.files).filter(
     (mark) => !truncated || (mark.change !== "added" && mark.change !== "dropped"),
   );
-  const anchors = await Promise.all(marks.map((mark) => diffAnchor(mark.path)));
-  return { key, since, current, truncated, files: marks.map((mark, index) => ({ anchor: anchors[index]!, marks: mark })) };
+  const files = await Promise.all(marks.map(async (mark) => ({ anchor: await diffAnchor(mark.path), marks: mark })));
+  return { key, since, current, truncated, files };
 }
 
 /**
@@ -279,8 +279,8 @@ async function compute(ref: PullRef, key: string): Promise<Loaded | null> {
  */
 function decorateFile(container: Element, anchor: string, marks: FileMarks, since: string): Element[] {
   const elements: Element[] = [];
-  const header = container.querySelector<HTMLElement>(".file-header .file-info, [data-diff-header-wrapper] h3");
-  if (header) elements.push(decorateBadge(header.tagName === "H3" ? header.parentElement! : header, marks, since));
+  const header = container.querySelector<HTMLElement>(":scope .file-header .file-info, :scope [data-diff-header-wrapper] h3");
+  if (header) elements.push(decorateBadge(header.tagName === "H3" ? (header.parentElement ?? header) : header, marks, since));
 
   const cells = indexCodeCells(container, anchor);
   const description = `Changed since your review (${since})`;
@@ -291,23 +291,21 @@ function decorateFile(container: Element, anchor: string, marks: FileMarks, sinc
     if (cell.getAttribute("aria-description") !== description) cell.setAttribute("aria-description", description);
     elements.push(cell);
   }
-  marks.removed.forEach((removed, index) => {
+  for (const [index, removed] of marks.removed.entries()) {
     const cell = removed.after ? cells.get(`${removed.after.side}${removed.after.line}`) : cells.values().next().value;
     if (cell) elements.push(decorateRemoved(cell, removed, `${anchor}:${index}`, since));
-  });
+  }
   return elements;
 }
 
 /** @returns Each rendered line's code cell, keyed like `R12` or `L3`. */
 function indexCodeCells(container: Element, anchor: string): Map<string, HTMLElement> {
   const cells = new Map<string, HTMLElement>();
-  for (const number of container.querySelectorAll(LINE_NUMBERS)) {
-    const side = number.getAttribute("data-diff-side");
+  for (const number of container.querySelectorAll<HTMLElement>(LINE_NUMBERS)) {
+    const side = number.dataset.diffSide;
     const key = side
-      ? `${side === "left" ? "L" : "R"}${number.getAttribute("data-line-number")}`
-      : number.id.startsWith(anchor)
-        ? number.id.slice(anchor.length)
-        : null;
+      ? `${side === "left" ? "L" : "R"}${number.dataset.lineNumber}`
+      : (number.id.startsWith(anchor) ? number.id.slice(anchor.length) : null);
     if (!key || cells.has(key)) continue;
     let cell = number.nextElementSibling;
     while (cell && !cell.classList.contains("blob-code") && !cell.classList.contains("diff-text-cell")) cell = cell.nextElementSibling;
@@ -364,7 +362,7 @@ function decorateRemoved(cell: HTMLElement, removed: RemovedLines, key: string, 
   const pre = document.createElement("pre");
   for (const line of removed.lines) {
     const span = document.createElement("span");
-    span.className = line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "";
+    span.className = line.startsWith("+") ? "add" : (line.startsWith("-") ? "del" : "");
     span.textContent = `${line}\n`;
     pre.append(span);
   }
@@ -374,7 +372,7 @@ function decorateRemoved(cell: HTMLElement, removed: RemovedLines, key: string, 
     panel.togglePopover();
   });
   panel.addEventListener("toggle", (event) => {
-    const open = (event as ToggleEvent).newState === "open";
+    const open = event.newState === "open";
     button.setAttribute("aria-expanded", String(open));
     if (!open) return;
     const anchor = button.getBoundingClientRect();
@@ -390,8 +388,8 @@ function decorateRemoved(cell: HTMLElement, removed: RemovedLines, key: string, 
 
 async function readCache(pull: string): Promise<Loaded | null> {
   try {
-    const { [CACHE]: cache } = await chrome.storage.local.get(CACHE);
-    return (cache as Record<string, { at: number; loaded: Loaded }> | undefined)?.[pull]?.loaded ?? null;
+    const stored = await chrome.storage.local.get(CACHE);
+    return (stored[CACHE] as Record<string, { at: number; loaded: Loaded }> | undefined)?.[pull]?.loaded ?? null;
   } catch {
     return null;
   }
@@ -400,10 +398,10 @@ async function readCache(pull: string): Promise<Loaded | null> {
 /** Keeps the marks of the {@link MAX_CACHED_PULLS} most recently loaded pull requests. */
 async function writeCache(pull: string, loaded: Loaded): Promise<void> {
   try {
-    const { [CACHE]: stored } = await chrome.storage.local.get(CACHE);
-    const cache = { ...(stored as Record<string, { at: number; loaded: Loaded }> | undefined), [pull]: { at: Date.now(), loaded } };
+    const stored = await chrome.storage.local.get(CACHE);
+    const cache = { ...(stored[CACHE] as Record<string, { at: number; loaded: Loaded }> | undefined), [pull]: { at: Date.now(), loaded } };
     const kept = Object.entries(cache)
-      .sort(([, a], [, b]) => b.at - a.at)
+      .toSorted(([, a], [, b]) => b.at - a.at)
       .slice(0, MAX_CACHED_PULLS);
     await chrome.storage.local.set({ [CACHE]: Object.fromEntries(kept) });
   } catch {

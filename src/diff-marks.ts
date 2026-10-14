@@ -21,7 +21,7 @@ export interface FileMarks {
   removed: RemovedLines[];
 }
 
-const HUNK_NUMBERS = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+const HUNK_NUMBERS = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/u;
 
 /**
  * Works out what to highlight in GitHub's own diff of the current version: which of its lines changed since an older
@@ -34,10 +34,10 @@ export function markChanges(before: VersionFile[], after: VersionFile[]): FileMa
   return pairFiles(before, after).map(([old, current]) => {
     const { path, change } = compareFile(old, current);
     const marks: FileMarks = { path, change, changed: [], removed: [] };
-    if (!current || current.patch === undefined || change === "unchanged" || change === "opaque") return marks;
+    if (current?.patch === undefined || change === "unchanged" || change === "opaque") return marks;
 
     const positions = patchPositions(current);
-    if (!old || old.patch === undefined) {
+    if (old?.patch === undefined) {
       marks.changed = positions.filter((position) => position !== null);
       return marks;
     }
@@ -45,7 +45,8 @@ export function markChanges(before: VersionFile[], after: VersionFile[]): FileMa
     let index = 0;
     let previous: LineRef | null = null;
     let removed: RemovedLines | null = null;
-    for (const line of diffLines(patchLines(old), patchLines(current))) {
+    const lines = diffLines(patchLines(old), patchLines(current));
+    for (const line of lines) {
       if (line.mark === "-") {
         if (!removed) marks.removed.push((removed = { after: previous, lines: [] }));
         removed.lines.push(line.text);

@@ -12,10 +12,8 @@ const GECKO = {
   update_url: "https://github.com/flonm/FloHub/releases/latest/download/updates.json",
 };
 
-const VERSION_FORMAT = /^\d+(\.\d+){0,3}$/;
-
 const requested = process.argv[2] ?? "chrome";
-if (!(requested in TARGETS)) {
+if (!Object.hasOwn(TARGETS, requested)) {
   console.error(`Unknown target "${requested}". Use one of: ${Object.keys(TARGETS).join(", ")}.`);
   process.exit(1);
 }
@@ -37,13 +35,15 @@ if (!result.success) {
   process.exit(1);
 }
 
-for (const file of new Bun.Glob("**/*").scanSync("static")) {
+const staticFiles = new Bun.Glob("**/*").scanSync("static");
+for (const file of staticFiles) {
   if (file === "manifest.json") continue;
   await Bun.write(`${OUT}/${file}`, Bun.file(`static/${file}`));
 }
 
-const manifest = await Bun.file("static/manifest.json").json();
+const manifest = (await Bun.file("static/manifest.json").json()) as { version: string } & Record<string, unknown>;
 const version = process.env.FLOHUB_VERSION ?? manifest.version;
+const VERSION_FORMAT = /^\d+(\.\d+){0,3}$/u;
 if (!VERSION_FORMAT.test(version)) {
   console.error(`Version "${version}" must be one to four dot-separated numbers, like 1.2.3.`);
   process.exit(1);
@@ -60,11 +60,11 @@ console.log(
 /**
  * Firefox runs Manifest V3 background code as an event page, not a service worker, and needs an add-on ID.
  * Installed copies keep checking the `update_url` they shipped with, so it must stay valid for good.
- * @param manifest The Chrome manifest.
+ * @param chromeManifest The Chrome manifest.
  * @returns The same manifest for Firefox.
  */
-function toFirefox(manifest: Record<string, unknown>): Record<string, unknown> {
-  const { minimum_chrome_version: _, background: __, ...rest } = manifest;
+function toFirefox(chromeManifest: Record<string, unknown>): Record<string, unknown> {
+  const { minimum_chrome_version: _, background: __, ...rest } = chromeManifest;
   return {
     ...rest,
     background: { scripts: ["background.js"] },

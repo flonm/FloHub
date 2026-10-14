@@ -4,8 +4,8 @@ export interface PullRef {
   number: number;
 }
 
-const PULL_PATH = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/|$)/;
-const PULL_TAB = /^\/[^/]+\/[^/]+\/pull\/\d+\/([^/]+)/;
+const PULL_PATH = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/|$)/u;
+const PULL_TAB = /^\/[^/]+\/[^/]+\/pull\/\d+\/([^/]+)/u;
 const TABS = new Set(["files", "changes", "commits", "checks"]);
 
 /**
@@ -30,7 +30,7 @@ export function pullKey(ref: PullRef): string {
   return `${ref.owner}/${ref.repo}#${ref.number}`;
 }
 
-const WHOLE_FILES_TAB = /^\/[^/]+\/[^/]+\/pull\/\d+\/(files|changes)\/?$/;
+const WHOLE_FILES_TAB = /^\/[^/]+\/[^/]+\/pull\/\d+\/(files|changes)\/?$/u;
 
 /**
  * @param pathname A page's path.

@@ -55,9 +55,9 @@ export const AllStatuses: Story = {
   render: () => {
     const table = el("div");
     table.style.cssText = "display: grid; grid-template-columns: max-content max-content 1fr; gap: 8px 16px; align-items: center;";
-    for (const scenario of Object.keys(SCENARIOS) as Scenario[]) {
+    for (const [scenario, { when }] of Object.entries(SCENARIOS)) {
       const status = statusOf(scenario);
-      table.append(badge(status), el("span", {}, SCENARIOS[scenario]!.when), el("span", { class: "entry-number" }, status.detail ?? ""));
+      table.append(badge(status), el("span", {}, when), el("span", { class: "entry-number" }, status.detail ?? ""));
     }
     return inShadow(table);
   },

@@ -53,17 +53,22 @@ export function moveSelection(key: string, index: number, count: number): number
   if (count === 0) return null;
   switch (key) {
     case "ArrowDown":
-    case "j":
+    case "j": {
       return index < 0 ? 0 : Math.min(index + 1, count - 1);
+    }
     case "ArrowUp":
-    case "k":
+    case "k": {
       return index < 0 ? 0 : Math.max(index - 1, 0);
-    case "Home":
+    }
+    case "Home": {
       return 0;
-    case "End":
+    }
+    case "End": {
       return count - 1;
-    default:
+    }
+    default: {
       return null;
+    }
   }
 }
 
@@ -78,7 +83,7 @@ export function showsPull(tabUrl: string, pullUrl: string): boolean {
     const pull = new URL(pullUrl);
     if (tab.origin !== pull.origin) return false;
     const path = tab.pathname.toLowerCase();
-    const base = pull.pathname.toLowerCase().replace(/\/$/, "");
+    const base = pull.pathname.toLowerCase().replace(/\/$/u, "");
     return path === base || path.startsWith(`${base}/`);
   } catch {
     return false;

@@ -52,13 +52,13 @@ const VERDICTS: Partial<Record<RawReviewState, DiscussionVerdict>> = {
 
 /** Comments stack tools post under the author's own account. */
 const TOOL_TEXTS = [
-  /^Warning\s*This pull request is not mergeable via GitHub because a downstack PR is open/,
-  /This stack of pull requests is managed by Graphite/,
-  /Stack created with GitHub Stacks CLI/,
+  /^Warning\s*This pull request is not mergeable via GitHub because a downstack PR is open/u,
+  /This stack of pull requests is managed by Graphite/u,
+  /Stack created with GitHub Stacks CLI/u,
 ];
 
 /** Whitespace and the zero-width characters an empty change request is sent with. */
-const INVISIBLE = /[\s\u200B\u200C\u200D\u2060\uFEFF]/g;
+const INVISIBLE = /[\s\u{200B}-\u{200D}\u{2060}\u{FEFF}]/gu;
 
 /**
  * Collects the review texts and general comments of a pull request, newest first. Reviews without text,
@@ -74,12 +74,13 @@ export function deriveDiscussion(pull: RawDiscussionSource): DiscussionItem[] {
     if (!verdict || !review.submittedAt || !review.url || !hasText(text)) continue;
     items.push(toItem(review.url, review.author, verdict, text, review.bodyHTML ?? null, review.submittedAt));
   }
-  for (const comment of pull.comments?.nodes ?? []) {
+  const comments = pull.comments?.nodes ?? [];
+  for (const comment of comments) {
     const text = comment.bodyText.trim();
     if (!hasText(text)) continue;
     items.push(toItem(comment.url, comment.author, null, text, comment.bodyHTML ?? null, comment.createdAt));
   }
-  return items.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  return items.toSorted((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 
 /**

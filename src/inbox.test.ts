@@ -37,6 +37,10 @@ function stackOf(number: number, members: number[]): RawInboxPull["stack"] {
   };
 }
 
+function requestedAt(createdAt: string): Partial<RawInboxPull> {
+  return { reviewRequestedEvents: { nodes: [{ createdAt, requestedReviewer: { combinedSlug: "octo-org/core" } }] } };
+}
+
 function buildRaw(review: RawInboxPull[], mine: RawInboxPull[] = []): RawInbox {
   return { viewer: { login: "octocat" }, review: { nodes: review }, mine: { nodes: mine } };
 }
@@ -88,12 +92,11 @@ describe("buildInbox", () => {
       buildRaw([buildPull(1, { latestReviews: { nodes: [{ author: { login: "octocat" }, submittedAt: "2026-10-10T10:00:00Z" }] } }), buildPull(2)]),
       0,
     );
-    expect(inbox.review.flatMap((entry) => entry.pulls.map((pull) => [pull.number, pull.rerequested]))).toEqual(
-      expect.arrayContaining([
-        [1, true],
-        [2, false],
-      ]),
-    );
+    const rerequested = inbox.review.flatMap((entry) => entry.pulls.map((pull) => [pull.number, pull.rerequested] as const));
+    expect(rerequested.toSorted(([a], [b]) => a - b)).toEqual([
+      [1, true],
+      [2, false],
+    ]);
   });
 
   test("leaves out drafts and pull requests that no longer ask the viewer", () => {
@@ -112,9 +115,6 @@ describe("buildInbox", () => {
 
   test("keeps a team request until the viewer reviews, and again once the team is re-requested", () => {
     const team = { reviewRequests: { nodes: [{ requestedReviewer: { combinedSlug: "octo-org/core" } }] } };
-    const requestedAt = (createdAt: string) => ({
-      reviewRequestedEvents: { nodes: [{ createdAt, requestedReviewer: { combinedSlug: "octo-org/core" } }] },
-    });
     const reviewed = { latestReviews: { nodes: [{ author: { login: "octocat" }, submittedAt: "2026-10-11T09:00:00Z" }] } };
     const inbox = buildInbox(
       buildRaw([
@@ -124,7 +124,7 @@ describe("buildInbox", () => {
       ]),
       0,
     );
-    expect(inbox.review.flatMap((entry) => entry.pulls.map((pull) => pull.number)).sort()).toEqual([1, 3]);
+    expect(inbox.review.flatMap((entry) => entry.pulls.map((pull) => pull.number)).toSorted((a, b) => a - b)).toEqual([1, 3]);
   });
 
   test("in a repository set to direct requests only, drops team requests from the list and the badge", () => {
@@ -135,12 +135,11 @@ describe("buildInbox", () => {
       0,
       new Set(["octo-org/octo-repo"]),
     );
-    expect(inbox.review.map((entry) => [entry.repo, entry.pulls[0]?.number, entry.pulls[0]?.viaTeam])).toEqual(
-      expect.arrayContaining([
-        ["octo-org/octo-repo", 2, false],
-        ["octo-org/other", 3, true],
-      ]),
-    );
+    const entries = inbox.review.map((entry) => [entry.repo, entry.pulls[0]?.number, entry.pulls[0]?.viaTeam] as const);
+    expect(entries.toSorted(([a], [b]) => a.localeCompare(b))).toEqual([
+      ["octo-org/octo-repo", 2, false],
+      ["octo-org/other", 3, true],
+    ]);
     expect(inbox.reviewCount).toBe(2);
   });
 

@@ -41,7 +41,7 @@ describe("createShortcutMatcher", () => {
   });
 
   test("pressing R again restarts the chord", () => {
-    expect(run([press("r", 0), press("r", 1_400), press("y", 2_800)])[2]).toMatchObject({ event: "APPROVE" });
+    expect(run([press("r", 0), press("r", 1400), press("y", 2800)])[2]).toMatchObject({ event: "APPROVE" });
   });
 
   test("keys typed into a text field never fire", () => {

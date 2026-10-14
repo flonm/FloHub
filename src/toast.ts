@@ -40,7 +40,7 @@ const TOAST_STYLES = `
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 `;
 
-const DURATION_MS: Record<ToastTone, number> = { info: 4_000, success: 4_000, danger: 8_000 };
+const DURATION_MS: Record<ToastTone, number> = { info: 4000, success: 4000, danger: 8000 };
 
 /** A short message at the bottom of the page, announced politely, or assertively for errors. */
 export class Toast {

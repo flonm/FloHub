@@ -91,7 +91,10 @@ export function buildInbox(raw: RawInbox, fetchedAt: number, directRepos: Readon
   );
   const mine = group(pullsOf(raw.mine.nodes), viewer, false);
   review.sort((a, b) => newest(b) - newest(a));
-  mine.sort((a, b) => urgency(a) - urgency(b) || newest(b) - newest(a));
+  mine.sort((a, b) => {
+    const byUrgency = urgency(a) - urgency(b);
+    return byUrgency === 0 ? newest(b) - newest(a) : byUrgency;
+  });
   return {
     viewer,
     fetchedAt,
@@ -164,8 +167,8 @@ function toInboxPull(pull: RawInboxPull, viewer: string, review: boolean): Inbox
     totalThreads: pull.reviewThreads.totalCount,
     additions: pull.additions,
     deletions: pull.deletions,
-    rerequested: pull.latestReviews.nodes.some((review) => review.author?.login === viewer),
-    viaTeam: review && !pull.reviewRequests.nodes.some((request) => request.requestedReviewer?.login === viewer),
+    rerequested: pull.latestReviews.nodes.some((latest) => latest.author?.login === viewer),
+    viaTeam: review && pull.reviewRequests.nodes.every((request) => request.requestedReviewer?.login !== viewer),
   };
 }
 

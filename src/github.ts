@@ -192,7 +192,7 @@ interface RawViewedFiles {
   } | null;
 }
 
-export interface RawOverview {
+interface RawOverview {
   viewer: { login: string };
   repository: {
     pullRequest:
@@ -237,6 +237,7 @@ export class GitHubError extends Error {
     readonly status?: number,
   ) {
     super(message);
+    this.name = "GitHubError";
   }
 }
 
@@ -248,8 +249,7 @@ export async function readToken(): Promise<string> {
 
 /** @param token The personal access token to store; an empty string removes it. */
 export async function writeToken(token: string): Promise<void> {
-  if (token) await chrome.storage.local.set({ token });
-  else await chrome.storage.local.remove("token");
+  await (token ? chrome.storage.local.set({ token }) : chrome.storage.local.remove("token"));
 }
 
 /**
@@ -294,7 +294,7 @@ async function fetchBasePulls(ref: PullRef, branches: string[]): Promise<RawBase
   const query = `query ($owner: String!, $name: String!, ${parameters}) { repository(owner: $owner, name: $name) { ${fields.join("\n")} } }`;
   const variables = Object.fromEntries(branches.map((branch, index) => [`b${index}`, branch]));
   try {
-    const { data } = await graphql<{ repository: Record<string, { nodes: RawBasePull[] }> | null }>(query, {
+    const { data } = await graphql<{ repository: Record<string, { nodes: RawBasePull[] } | null> | null }>(query, {
       owner: ref.owner,
       name: ref.repo,
       ...variables,
@@ -319,6 +319,8 @@ export async function fetchVersionPatch(ref: PullRef, head: string, bases: strin
   const compares: RawCompare[] = [];
   for (const base of bases) {
     try {
+      // One base after the other: the first that GitHub still has is usually the right one
+      // oxlint-disable-next-line no-await-in-loop -- each try depends on whether the one before failed
       compares.push(await fetchCompare(ref, base, head));
     } catch (error) {
       const missing = error instanceof GitHubError && error.status === 404;
@@ -329,7 +331,7 @@ export async function fetchVersionPatch(ref: PullRef, head: string, bases: strin
   }
   const compare = compares[pickBase(compares.map((each) => ({ onBase: isOnBase(each), aheadBy: each.ahead_by })))];
   if (!compare) throw new GitHubError("failed", `Could not compare ${head.slice(0, 7)} with its base.`);
-  const files = (compare.files ?? []).map(toVersionFile);
+  const files = (compare.files ?? []).map((file) => toVersionFile(file));
   return { mergeBase: compare.merge_base_commit.sha, onBase: isOnBase(compare), files, truncated: files.length >= MAX_COMPARE_FILES };
 }
 
@@ -339,7 +341,10 @@ async function fetchCompare(ref: PullRef, base: string, head: string): Promise<R
   if (cached) return cached;
   const compare = (await request(`/repos/${ref.owner}/${ref.repo}/compare/${base}...${head}?per_page=1`, {})) as RawCompare;
   compareCache.set(key, compare);
-  if (compareCache.size > MAX_CACHED_COMPARES) compareCache.delete(compareCache.keys().next().value!);
+  if (compareCache.size > MAX_CACHED_COMPARES) {
+    const [oldest] = compareCache.keys();
+    if (oldest !== undefined) compareCache.delete(oldest);
+  }
   return compare;
 }
 
@@ -362,10 +367,10 @@ const compareCache = new Map<string, RawCompare>();
 function toVersionFile(file: NonNullable<RawCompare["files"]>[number]): VersionFile {
   return {
     filename: file.filename,
-    ...(file.previous_filename ? { previousFilename: file.previous_filename } : {}),
+    ...(file.previous_filename && { previousFilename: file.previous_filename }),
     status: file.status,
     // A pure rename or an empty file changes no lines and has no patch; only a binary or huge file lacks one otherwise.
-    ...(file.patch !== undefined ? { patch: file.patch } : file.changes === 0 ? { patch: "" } : {}),
+    ...(file.patch === undefined ? (file.changes === 0 ? { patch: "" } : {}) : { patch: file.patch }),
     sha: file.sha,
   };
 }
@@ -392,6 +397,7 @@ export async function fetchViewedFiles(ref: PullRef): Promise<ViewedFiles> {
   let after: string | null = null;
   for (let page = 0; page < MAX_FILE_PAGES; page++) {
     const variables = { owner: ref.owner, name: ref.repo, number: ref.number, after };
+    // oxlint-disable-next-line no-await-in-loop -- each page starts after the cursor the one before returned
     const result: { data: RawViewedFiles } = await graphql<RawViewedFiles>(VIEWED_FILES_QUERY, variables);
     const pullRequest: NonNullable<RawViewedFiles["repository"]>["pullRequest"] = result.data.repository?.pullRequest ?? null;
     if (!pullRequest?.files) throw new GitHubError("failed", "This token cannot read which files you viewed.");
@@ -410,11 +416,12 @@ export async function fetchViewedFiles(ref: PullRef): Promise<ViewedFiles> {
  */
 export async function setFileViewed(pullRequestId: string, path: string, viewed: boolean): Promise<void> {
   const field = viewed ? "markFileAsViewed" : "unmarkFileAsViewed";
-  const { data } = await graphql<Record<string, unknown>>(
+  const { data } = await graphql<Record<typeof field, { clientMutationId: string | null } | null | undefined>>(
     `mutation ($pullRequestId: ID!, $path: String!) { ${field}(input: { pullRequestId: $pullRequestId, path: $path }) { clientMutationId } }`,
     { pullRequestId, path },
   );
-  if (!data[field]) throw new GitHubError("failed", "GitHub did not save the change. Check the token's permissions.");
+  const saved = viewed ? data.markFileAsViewed : data.unmarkFileAsViewed;
+  if (!saved) throw new GitHubError("failed", "GitHub did not save the change. Check the token's permissions.");
 }
 
 /**
@@ -460,7 +467,7 @@ export async function fetchPendingComments(ref: PullRef): Promise<number | null>
  * GitHub rejects a change request without a comment unless a pending review carries draft comments, through REST and
  * GraphQL alike. A zero-width space passes that check and renders as an empty review.
  */
-const EMPTY_CHANGE_REQUEST = "\u200B";
+const EMPTY_CHANGE_REQUEST = "\u{200B}";
 
 /**
  * Submits a review. A pending review the viewer started is submitted with its draft comments,
@@ -505,6 +512,7 @@ export async function fetchViewerLogin(token?: string): Promise<string> {
   return data.viewer.login;
 }
 
+// oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- callers name the response's shape, like the assertions on REST responses
 async function graphql<T>(
   query: string,
   variables: Record<string, unknown>,
@@ -515,13 +523,13 @@ async function graphql<T>(
     errors?: { type?: string; message: string; path?: (string | number)[] }[];
   };
   const errors = body.errors ?? [];
-  if (!body.data) {
+  if (body.data === undefined || body.data === null) {
     const scopes = missingScopes(errors);
     if (scopes !== null) throw new GitHubError("scopes", scopes);
     throw new GitHubError("failed", errors.map((error) => error.message).join(" ") || "GitHub returned no data.");
   }
   const unreadable = errors.map(
-    (error) => error.path?.filter((segment): segment is string => typeof segment === "string").at(-1) ?? error.message,
+    (error) => error.path?.findLast((segment): segment is string => typeof segment === "string") ?? error.message,
   );
   return { data: body.data, unreadable: [...new Set(unreadable)] };
 }
@@ -533,7 +541,7 @@ async function graphql<T>(
 export function missingScopes(errors: { type?: string; message: string }[]): string | null {
   const refused = errors.find((error) => error.type === "INSUFFICIENT_SCOPES");
   if (!refused) return null;
-  const scopes = /following scopes: \[([^\]]*)\]/.exec(refused.message)?.[1]?.replaceAll("'", "").trim();
+  const scopes = /following scopes: \[([^\]]*)\]/u.exec(refused.message)?.[1]?.replaceAll("'", "").trim();
   return scopes ? `The token lacks the ${scopes} scope.` : "The token lacks a scope FloHub needs.";
 }
 
@@ -550,10 +558,18 @@ async function request(path: string, init: RequestInit, explicitToken?: string):
     },
   });
   if (response.status === 401) throw new GitHubError("unauthorized", "GitHub rejected the token.");
-  const body: unknown = await response.json().catch(() => null);
+  const body = await readJson(response);
   if (!response.ok) {
     const message = (body as { message?: string } | null)?.message ?? response.statusText;
     throw new GitHubError("failed", `GitHub answered ${response.status}: ${message}`, response.status);
   }
   return body;
+}
+
+async function readJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
 }

@@ -17,6 +17,7 @@ const preview: Preview = {
       frame.style.padding = "16px";
       if (dark) for (const [name, value] of Object.entries(PRIMER_DARK)) frame.style.setProperty(name, value);
       const content = story();
+      // eslint-disable-next-line no-unsanitized/property -- a story's own markup, written in this repository
       if (typeof content === "string") frame.innerHTML = content;
       else frame.append(content);
       return frame;

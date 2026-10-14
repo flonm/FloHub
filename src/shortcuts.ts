@@ -1,6 +1,6 @@
 export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES";
 
-export type ShortcutAction =
+type ShortcutAction =
   | { type: "navigate"; direction: 1 | -1 }
   | { type: "review"; event: ReviewEvent; withComment: boolean }
   | { type: "copy"; what: CopyTarget };
@@ -28,7 +28,7 @@ export interface KeyInput {
   time: number;
 }
 
-export const CHORD_TIMEOUT_MS = 1_500;
+export const CHORD_TIMEOUT_MS = 1500;
 
 const REVIEW_CHORDS: Record<string, ShortcutAction> = {
   y: { type: "review", event: "APPROVE", withComment: false },

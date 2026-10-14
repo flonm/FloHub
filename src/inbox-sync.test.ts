@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { ensureInboxAlarm, INBOX_ALARM, INBOX_PERIOD_MINUTES } from "./inbox-sync";
 
-type Alarm = { name: string; scheduledTime: number; periodInMinutes?: number };
+interface Alarm {
+  name: string;
+  scheduledTime: number;
+  periodInMinutes?: number;
+}
 
 let alarms: Map<string, Alarm>;
 let creates: number;
@@ -10,6 +14,8 @@ beforeEach(() => {
   alarms = new Map();
   creates = 0;
   (globalThis as { chrome?: unknown }).chrome = {
+    // Stand-ins for chrome's promise API, which settle without awaiting anything.
+    /* oxlint-disable typescript/require-await */
     alarms: {
       get: async (name: string) => alarms.get(name),
       create: async (name: string, info: { periodInMinutes: number }) => {
@@ -17,6 +23,7 @@ beforeEach(() => {
         alarms.set(name, { name, scheduledTime: Date.now() + info.periodInMinutes * 60_000, periodInMinutes: info.periodInMinutes });
       },
     },
+    /* oxlint-enable typescript/require-await */
   };
 });
 

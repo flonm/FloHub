@@ -17,7 +17,7 @@ import { VersionsDialog } from "./versions-dialog";
 
 const AUTO_REFRESH_GAP_MS = 15_000;
 const STICKY_HEADER_HEIGHT = 96;
-const ANCHOR_RETRY_MS = 1_000;
+const ANCHOR_RETRY_MS = 1000;
 const AGE_TICK_MS = 60_000;
 const CACHE_WAIT_MS = 300;
 const POKE_MEMORY_MS = 86_400_000;
@@ -94,13 +94,7 @@ const highlights = new DiffHighlights((status) => {
   update({ highlight });
 });
 
-void chrome.storage.local.get(["stackCollapsed", "floatingMinimized", "pokes"]).then((stored) => {
-  stackCollapsed = stored.stackCollapsed === true;
-  floatingMinimized = stored.floatingMinimized === true;
-  floating.setMinimized(floatingMinimized);
-  pokes = (stored.pokes as Record<string, number> | undefined) ?? {};
-  update({ stackCollapsed, ...(current ? { pokedAt: pokedAtFor(current) } : {}) });
-});
+void restoreSettings();
 setInterval(() => update({ now: Date.now() }), AGE_TICK_MS);
 
 new IntersectionObserver(updateVisibility, { rootMargin: `-${STICKY_HEADER_HEIGHT}px 0px 0px 0px` }).observe(
@@ -112,11 +106,11 @@ new MutationObserver(schedule).observe(document.documentElement, {
   subtree: true,
   attributeFilter: ["aria-pressed", "aria-checked"],
 });
-document.addEventListener("change", schedule, true);
-document.addEventListener("click", schedule, true);
+document.addEventListener("change", schedule, { capture: true });
+document.addEventListener("click", schedule, { capture: true });
 addEventListener("popstate", schedule);
 document.addEventListener("turbo:load", schedule);
-(window as { navigation?: EventTarget }).navigation?.addEventListener("currententrychange", schedule);
+(globalThis as { navigation?: EventTarget }).navigation?.addEventListener("currententrychange", schedule);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") void load(false);
 });
@@ -137,8 +131,18 @@ function schedule(): void {
   });
 }
 
+async function restoreSettings(): Promise<void> {
+  const stored = await chrome.storage.local.get(["stackCollapsed", "floatingMinimized", "pokes"]);
+  stackCollapsed = stored.stackCollapsed === true;
+  floatingMinimized = stored.floatingMinimized === true;
+  floating.setMinimized(floatingMinimized);
+  pokes = (stored.pokes as Record<string, number> | undefined) ?? {};
+  update({ stackCollapsed, ...(current && { pokedAt: pokedAtFor(current) }) });
+}
+
 function sync(): void {
-  if (!document.body) return;
+  // The DOM types promise a body, but there is none while the page is still parsing.
+  if (!(document.body as HTMLElement | null)) return;
   const ref = parsePullRef(location.href);
   if (!ref) {
     current = null;
@@ -199,7 +203,7 @@ function updateVisibility(): void {
 }
 
 function isInlineInView(): boolean {
-  if (!inline.host.isConnected || inline.host.hidden) return false;
+  if (!inline.host.isConnected || inline.host.hidden !== false) return false;
   const rect = inline.host.getBoundingClientRect();
   return rect.height > 0 && rect.bottom > STICKY_HEADER_HEIGHT && rect.top < innerHeight;
 }
@@ -230,7 +234,9 @@ function update(changes: Partial<Extract<BarState, { kind: "ready" }>>): void {
  * The wait is capped, since a slow storage read must not delay the loading state for long.
  */
 async function showFirst(ref: PullRef): Promise<void> {
-  await Promise.race([showCached(ref), new Promise((resolve) => setTimeout(resolve, CACHE_WAIT_MS))]);
+  await Promise.race([showCached(ref), new Promise((resolve) => {
+    setTimeout(resolve, CACHE_WAIT_MS);
+  })]);
   if (state.kind === "loading" && current && pullKey(current) === pullKey(ref)) render();
 }
 
@@ -277,8 +283,8 @@ function readyState(overview: Overview, ref: PullRef, exact: boolean): Extract<B
     busy,
     pokedAt: pokedAtFor(ref),
     forcePushes: {
-      count: (exact && pullRequest.forcePushes?.totalCount) || 0,
-      lastAt: (exact && pullRequest.forcePushes?.nodes.at(-1)?.createdAt) || null,
+      count: exact ? (pullRequest.forcePushes?.totalCount ?? 0) : 0,
+      lastAt: exact ? (pullRequest.forcePushes?.nodes.at(-1)?.createdAt ?? null) : null,
     },
     highlight,
     notice: null,
@@ -293,14 +299,15 @@ function readyState(overview: Overview, ref: PullRef, exact: boolean): Extract<B
 
 /** The visit's previous look, or the viewer's last review on a first visit; null until storage has answered. */
 function seenAtFor(ref: PullRef, lastReview: string | null): string | null {
-  if (!visit || visit.key !== pullKey(ref)) return null;
+  if (visit?.key !== pullKey(ref)) return null;
   return visit.previous ?? lastReview;
 }
 
 /** Remembers that the viewer opened this pull request now, and what they last saw before, for the discussion's "new" marks. */
 async function startVisit(ref: PullRef): Promise<void> {
   const key = pullKey(ref);
-  const stored = ((await chrome.storage.local.get(SEEN_KEY))[SEEN_KEY] as Record<string, string> | undefined) ?? {};
+  const saved = await chrome.storage.local.get(SEEN_KEY);
+  const stored = (saved[SEEN_KEY] as Record<string, string> | undefined) ?? {};
   if (current && pullKey(current) === key) {
     visit = { key, previous: stored[key] ?? null };
     if (state.kind === "ready") update({ discussionSeenAt: seenAtFor(ref, state.discussionLastReview) });
@@ -347,9 +354,7 @@ async function load(force: boolean): Promise<void> {
           notice:
             reply.value.unreadable.length > 0
               ? `This token cannot read ${reply.value.unreadable.join(", ")}, so parts may be missing. Check its permissions.`
-              : state.kind === "ready"
-                ? state.notice
-                : pendingNotice,
+              : (state.kind === "ready" ? state.notice : pendingNotice),
         }
       : { kind: "error", message: "Pull request not found." };
   } else if (reply.code !== "failed") {
@@ -371,6 +376,7 @@ async function rerequest(reviewer: Reviewer): Promise<void> {
 
   const reply = await send({ type: "rerequest", ref, login: reviewer.name });
   busy.delete(reviewer.key);
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- other handlers may change state during the await
   if (state.kind === "ready") {
     state = { ...state, notice: reply.ok ? null : `Could not re-request ${reviewer.name}: ${reply.message}` };
   }
@@ -422,6 +428,7 @@ async function copyText(text: string): Promise<boolean> {
     field.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none";
     document.body.append(field);
     field.select();
+    // oxlint-disable-next-line typescript/no-deprecated -- the fallback for pages where the Clipboard API is refused
     const copied = document.execCommand("copy");
     field.remove();
     return copied;
@@ -437,9 +444,9 @@ function swallowClaimedKey(event: KeyboardEvent): void {
 }
 
 function isTextField(event: KeyboardEvent): boolean {
-  const target = event.composedPath()[0];
+  const [target] = event.composedPath();
   if (!(target instanceof Element)) return false;
-  return (target instanceof HTMLElement && target.isContentEditable) || !!target.closest(TEXT_FIELDS);
+  return (target instanceof HTMLElement && target.isContentEditable) || Boolean(target.closest(TEXT_FIELDS));
 }
 
 function navigateStack(direction: 1 | -1): void {
@@ -467,16 +474,19 @@ function openReview(event: ReviewEvent): void {
   dialog.open({
     event,
     number: ref.number,
-    pendingComments: send({ type: "pending-comments", ref }).then((reply) => {
-      if (!reply.ok) throw new Error(reply.message);
-      return reply.value;
-    }),
+    pendingComments: pendingComments(ref),
     submit: async (body) => {
       const failure = await submitReview(ref, event, body);
       if (!failure) toast.show(event === "APPROVE" ? `Approved #${ref.number}.` : `Requested changes on #${ref.number}.`, "success");
       return failure;
     },
   });
+}
+
+async function pendingComments(ref: PullRef): Promise<number | null> {
+  const reply = await send({ type: "pending-comments", ref });
+  if (!reply.ok) throw new Error(reply.message);
+  return reply.value;
 }
 
 async function submitReview(ref: PullRef, event: ReviewEvent, body: string): Promise<string | null> {

@@ -1,11 +1,11 @@
-export type Mark = " " | "-" | "+";
+type Mark = " " | "-" | "+";
 
 export interface DiffLine {
   mark: Mark;
   text: string;
 }
 
-export interface Hunk {
+interface Hunk {
   lines: DiffLine[];
 }
 
@@ -41,8 +41,8 @@ export interface FileInterdiff {
 }
 
 const CONTEXT = 3;
-const MAX_EDITS = 2_000;
-const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@ ?/;
+const MAX_EDITS = 2000;
+const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@ ?/u;
 
 /**
  * Compares the changes two versions of a pull request make, file by file: a diff of their diffs, like
@@ -54,7 +54,7 @@ const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@ ?/;
 export function interdiff(before: VersionFile[], after: VersionFile[]): FileInterdiff[] {
   return pairFiles(before, after)
     .map(([old, current]) => compareFile(old, current))
-    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    .toSorted((a, b) => (a.path < b.path ? -1 : (a.path > b.path ? 1 : 0)));
 }
 
 /**
@@ -96,7 +96,9 @@ function sameOrigin(old: VersionFile, current: VersionFile): boolean {
  * @returns How the file's change differs between the versions.
  */
 export function compareFile(old: VersionFile | null, current: VersionFile | null): FileInterdiff {
-  const path = (current ?? old)!.filename;
+  const file = current ?? old;
+  if (!file) throw new Error("compareFile needs a file from at least one version");
+  const path = file.filename;
   const oldPath = old && current && old.filename !== current.filename ? old.filename : null;
   const result = (change: FileChange, lines: DiffLine[] = []): FileInterdiff => ({
     path,
@@ -108,7 +110,6 @@ export function compareFile(old: VersionFile | null, current: VersionFile | null
   });
 
   if (!old || !current) {
-    const file = (old ?? current)!;
     const mark: Mark = old ? "-" : "+";
     return result(old ? "dropped" : "added", file.patch === undefined ? [] : patchLines(file).map((text) => ({ mark, text })));
   }
@@ -127,7 +128,7 @@ export function compareFile(old: VersionFile | null, current: VersionFile | null
  * @returns The patch's lines.
  */
 export function patchLines(file: VersionFile): string[] {
-  return [...patchHeader(file), ...patchBody(file).map(normalizeLine)];
+  return [...patchHeader(file), ...patchBody(file).map((line) => normalizeLine(line))];
 }
 
 /**
@@ -146,11 +147,11 @@ export function patchHeader(file: VersionFile): string[] {
  * @returns The patch's raw lines, without the empty line a trailing newline leaves.
  */
 export function patchBody(file: VersionFile): string[] {
-  return (file.patch ?? "").split("\n").filter((line, index, lines) => line || index < lines.length - 1);
+  return (file.patch ?? "").split("\n").filter((line, index, lines) => line !== "" || index < lines.length - 1);
 }
 
 function normalizeLine(line: string): string {
-  const clean = line.replace(/\r$/, "");
+  const clean = line.replace(/\r$/u, "");
   return HUNK_HEADER.test(clean) ? clean.replace(HUNK_HEADER, "@@ ").trimEnd() : clean;
 }
 
@@ -178,6 +179,8 @@ export function diffLines(a: string[], b: string[]): DiffLine[] {
   return [...keep(a.slice(0, start)), ...middle, ...keep(a.slice(endA))];
 }
 
+// Index arithmetic within bounds the loops check; `?? 0` on every read would hide a real off-by-one.
+/* oxlint-disable typescript/no-non-null-assertion */
 function myers(a: string[], b: string[]): DiffLine[] | null {
   const n = a.length;
   const m = b.length;
@@ -225,12 +228,12 @@ function backtrack(a: string[], b: string[], trace: Int32Array[], edits: number)
     y--;
     lines.push({ mark: " ", text: a[x]! });
   }
-  return lines.reverse();
+  return lines.toReversed();
 }
 
 function toHunks(lines: DiffLine[]): Hunk[] {
   const hunks: Hunk[] = [];
-  const changed = lines.flatMap((line, index) => (line.mark === " " ? [] : [index]));
+  const changed = lines.flatMap((line, index) => (line.mark === " " ? [] : index));
   let index = 0;
   while (index < changed.length) {
     const first = changed[index]!;
@@ -241,3 +244,4 @@ function toHunks(lines: DiffLine[]): Hunk[] {
   }
   return hunks;
 }
+/* oxlint-enable typescript/no-non-null-assertion */

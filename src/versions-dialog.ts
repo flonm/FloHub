@@ -9,9 +9,9 @@ export interface VersionsDialogRequest {
   /** The repository's URL, like https://github.com/owner/repo. */
   repoUrl: string;
   /** Resolves to the pull request's versions; rejects with a message to show. */
-  versions(): Promise<VersionHistory>;
+  versions: () => Promise<VersionHistory>;
   /** Resolves to what a version changes; rejects with a message to show. */
-  patch(history: VersionHistory, version: Version): Promise<VersionPatch>;
+  patch: (history: VersionHistory, version: Version) => Promise<VersionPatch>;
 }
 
 const CHANGE: Record<FileChange, { label: string; tone: string }> = {
@@ -195,6 +195,7 @@ export class VersionsDialog {
     close.focus();
 
     void request.versions().then(
+      // oxlint-disable-next-line promise/always-return -- the chain ends here; nothing reads what it resolves to
       (history) => {
         if (!live()) return;
         const range = defaultRange(history.versions);
@@ -213,8 +214,9 @@ export class VersionsDialog {
         let shown = 0;
         const show = async () => {
           const showing = ++shown;
-          const older = history.versions[Number(from.select.value) - 1]!;
-          const newer = history.versions[Number(to.select.value) - 1]!;
+          const older = history.versions[Number(from.select.value) - 1];
+          const newer = history.versions[Number(to.select.value) - 1];
+          if (!older || !newer) return;
           link.href = `${request.repoUrl}/compare/${older.oid}..${newer.oid}`;
           link.title = "GitHub's plain compare of the two heads, including everything the base branch gained in between";
           error.textContent = "";
@@ -245,7 +247,7 @@ export class VersionsDialog {
 
 function versionSelect(name: string, versions: Version[], selected: number, now: number) {
   const select = el("select");
-  for (const version of [...versions].reverse()) {
+  for (const version of versions.toReversed()) {
     const option = el("option", { value: String(version.number) }, describeVersion(version, now));
     option.selected = version.number === selected;
     select.append(option);
@@ -260,7 +262,7 @@ function versionSelect(name: string, versions: Version[], selected: number, now:
  * @param now The current time.
  * @returns A one-line description, like "v3 · 1a2b3c4 · force-pushed by ana 2h ago · current".
  */
-export function describeVersion(version: Version, now: number): string {
+function describeVersion(version: Version, now: number): string {
   const parts = [`v${version.number}`, version.oid.slice(0, 7)];
   const age = formatAge(version.at, now).spoken;
   parts.push(version.pushedBy ? `force-pushed by ${version.pushedBy} ${age}` : age);
@@ -312,7 +314,8 @@ function renderResult(main: HTMLElement, summary: HTMLElement, files: FileInterd
       ),
     );
   }
-  for (const file of [...differing, ...opaque].sort((a, b) => (a.path < b.path ? -1 : 1))) content.push(renderFile(file));
+  const compared = [...differing, ...opaque].toSorted((a, b) => (a.path < b.path ? -1 : 1));
+  for (const file of compared) content.push(renderFile(file));
   if (unchanged.length > 0) {
     const details = el("details", { class: "unchanged" });
     details.append(el("summary", {}, `${unchanged.length} ${unchanged.length === 1 ? "file makes" : "files make"} the same change in both versions`));
@@ -349,21 +352,21 @@ function renderFile(file: FileInterdiff): HTMLElement {
     return details;
   }
   const diff = el("div", { class: "diff" });
-  file.hunks.forEach((hunk, index) => {
+  for (const [index, hunk] of file.hunks.entries()) {
     if (index > 0) diff.append(el("div", { class: "gap", "aria-hidden": "true" }, "⋯"));
     for (const line of hunk.lines) diff.append(renderLine(line.mark, line.text));
-  });
+  }
   details.append(diff);
   return details;
 }
 
 function renderLine(outer: string, text: string): HTMLElement {
-  const first = text[0];
+  const [first] = text;
   const meta = first !== "+" && first !== "-" && first !== " " && first !== "\\";
-  const row = el("div", { class: "line", "data-outer": outer, "data-inner": meta ? "meta" : (first ?? " ") });
+  const row = el("div", { class: "line", "data-outer": outer, "data-inner": meta ? "meta" : first });
   row.append(
     el("span", { class: "outer" }, outer === " " ? " " : outer),
-    el("span", { class: "inner" }, meta ? "" : (first ?? "")),
+    el("span", { class: "inner" }, meta ? "" : first),
     el("span", { class: "code" }, meta ? text : text.slice(1)),
   );
   return row;

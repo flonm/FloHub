@@ -8,6 +8,7 @@ const file = (filename: string, patch: string | undefined, extra: Partial<Versio
   sha: `sha-${filename}-${patch?.length ?? 0}`,
   ...extra,
 });
+const blob = (sha: string) => file("logo.png", undefined, { sha });
 
 /** Applies a diff's kept and added lines, which must give back the new side. */
 const newSide = (lines: { mark: string; text: string }[]) => lines.filter((line) => line.mark !== "-").map((line) => line.text);
@@ -33,7 +34,7 @@ describe("diffLines", () => {
 
   test("reconstructs both sides of random edits", () => {
     let seed = 7;
-    const random = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
+    const random = () => (seed = (seed * 48_271) % 2_147_483_647) / 2_147_483_647;
     for (let round = 0; round < 50; round++) {
       const a = Array.from({ length: Math.floor(random() * 30) }, () => String(Math.floor(random() * 5)));
       const b = Array.from({ length: Math.floor(random() * 30) }, () => String(Math.floor(random() * 5)));
@@ -44,8 +45,8 @@ describe("diffLines", () => {
   });
 
   test("falls back to replacing the middle when the edit is huge", () => {
-    const a = Array.from({ length: 3_000 }, (_, index) => `a${index}`);
-    const b = Array.from({ length: 3_000 }, (_, index) => `b${index}`);
+    const a = Array.from({ length: 3000 }, (_, index) => `a${index}`);
+    const b = Array.from({ length: 3000 }, (_, index) => `b${index}`);
     const lines = diffLines(["same", ...a, "end"], ["same", ...b, "end"]);
     expect(lines[0]).toEqual({ mark: " ", text: "same" });
     expect(lines.at(-1)).toEqual({ mark: " ", text: "end" });
@@ -113,7 +114,6 @@ describe("interdiff", () => {
   });
 
   test("compares files without a diff by blob", () => {
-    const blob = (sha: string) => file("logo.png", undefined, { sha });
     expect(interdiff([blob("1")], [blob("1")])[0]?.change).toBe("unchanged");
     expect(interdiff([blob("1")], [blob("2")])[0]?.change).toBe("opaque");
   });

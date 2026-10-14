@@ -7,8 +7,8 @@ export interface StackSectionOptions {
   collapsed: boolean;
   showMerged: boolean;
   now: number;
-  toggleCollapsed(): void;
-  toggleMerged(): void;
+  toggleCollapsed: () => void;
+  toggleMerged: () => void;
 }
 
 /**
@@ -41,7 +41,7 @@ export function renderStackSection(view: StackView, options: StackSectionOptions
  */
 export function renderStrip(view: StackView): HTMLElement {
   const strip = el("span", { class: "strip", "aria-hidden": "true" });
-  for (const entry of [...view.entries].reverse()) {
+  for (const entry of view.entries.toReversed()) {
     strip.append(el("span", { class: entry.current ? "segment current" : "segment", "data-stack-tone": entry.tone }));
   }
   return strip;

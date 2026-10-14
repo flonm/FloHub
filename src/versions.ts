@@ -1,9 +1,9 @@
-export interface RawCommitRef {
+interface RawCommitRef {
   oid: string;
   committedDate: string;
 }
 
-export interface RawVersionEvent {
+interface RawVersionEvent {
   __typename: string;
   createdAt?: string;
   actor?: { login: string } | null;
@@ -58,7 +58,7 @@ export interface VersionHistory {
 }
 
 /** How many candidate bases the service worker compares a version with. */
-export const MAX_BASE_TRIES = 6;
+const MAX_BASE_TRIES = 6;
 
 /**
  * Collects every head the pull request is known to have had: both sides of each force push, each reviewed commit,
@@ -105,12 +105,14 @@ export function deriveVersions(pull: RawVersionPull, basePulls: RawBasePull[], v
 
   const head = pull.commits.nodes.at(-1)?.commit;
   const headCommit = head?.oid === pull.headRefOid ? head : { oid: pull.headRefOid, committedDate: new Date().toISOString() };
-  see(headCommit, Number.POSITIVE_INFINITY).current = true;
-  if (viewerLatest) found.get(viewerLatest)!.viewerLatestReview = true;
+  see(headCommit, Infinity).current = true;
+  const viewerVersion = viewerLatest ? found.get(viewerLatest) : undefined;
+  if (viewerVersion) viewerVersion.viewerLatestReview = true;
 
   const versions = [...found.values()]
-    .sort((a, b) => Number(a.current) - Number(b.current) || a.order - b.order)
-    .map(({ order: _, ...version }, index) => ({ ...version, number: index + 1 }));
+    .toSorted((a, b) => (a.current === b.current ? a.order - b.order : Number(a.current) - Number(b.current)))
+    // oxlint-disable-next-line oxc/no-map-spread -- the copy drops `order`, which mutating in place can't
+    .map(({ order, ...version }, index) => ({ ...version, number: index + 1 }));
   return { baseRefOid: pull.baseRefOid, versions, baseHeads: deriveBaseHeads(basePulls) };
 }
 
@@ -140,7 +142,7 @@ function deriveBaseHeads(basePulls: RawBasePull[]): { oid: string; at: string }[
  */
 export function baseBranches(pull: RawVersionPull): string[] {
   const names = [pull.baseRefName];
-  for (const event of [...pull.timelineItems.nodes].reverse()) {
+  for (const event of pull.timelineItems.nodes.toReversed()) {
     if (event?.__typename === "BaseRefChangedEvent" && event.previousRefName) names.push(event.previousRefName);
     if (event?.__typename === "AutomaticBaseChangeSucceededEvent" && event.oldBase) names.push(event.oldBase);
   }
@@ -158,8 +160,8 @@ export function baseBranches(pull: RawVersionPull): string[] {
 export function baseCandidates(history: VersionHistory, version: Version): string[] {
   const at = Date.parse(version.at);
   const heads = history.baseHeads.filter((head) => head.oid !== history.baseRefOid);
-  const before = heads.filter((head) => Date.parse(head.at) <= at).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
-  const after = heads.filter((head) => Date.parse(head.at) > at).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const before = heads.filter((head) => Date.parse(head.at) <= at).toSorted((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  const after = heads.filter((head) => Date.parse(head.at) > at).toSorted((a, b) => Date.parse(a.at) - Date.parse(b.at));
   return [history.baseRefOid, ...[...before, ...after].map((head) => head.oid)].slice(0, MAX_BASE_TRIES);
 }
 
@@ -172,9 +174,12 @@ export function baseCandidates(history: VersionHistory, version: Version): strin
  */
 export function pickBase(compares: { onBase: boolean; aheadBy: number }[]): number {
   let best = 0;
-  compares.forEach((compare, index) => {
-    if (index > 0 && compare.onBase && compare.aheadBy < compares[best]!.aheadBy) best = index;
-  });
+  let bestAheadBy = compares[0]?.aheadBy ?? 0;
+  for (const [index, compare] of compares.entries()) {
+    if (index === 0 || !compare.onBase || compare.aheadBy >= bestAheadBy) continue;
+    best = index;
+    bestAheadBy = compare.aheadBy;
+  }
   return best;
 }
 
@@ -185,8 +190,9 @@ export function pickBase(compares: { onBase: boolean; aheadBy: number }[]): numb
  */
 export function defaultRange(versions: Version[]): { from: number; to: number } | null {
   const current = versions.at(-1);
-  if (!current || versions.length < 2) return null;
-  return { from: (lastReviewedVersion(versions) ?? versions.at(-2)!).number, to: current.number };
+  const previous = versions.at(-2);
+  if (!current || !previous) return null;
+  return { from: (lastReviewedVersion(versions) ?? previous).number, to: current.number };
 }
 
 /**
