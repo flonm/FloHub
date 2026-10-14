@@ -84,6 +84,8 @@ const INBOX_QUERY = `
 ${STACK_PULL_FRAGMENT}
 fragment InboxPull on PullRequest {
   ...StackPull
+  additions
+  deletions
   repository { nameWithOwner }
   author { login avatarUrl }
   latestReviews(first: 20) { nodes { author { login } submittedAt } }

@@ -2,6 +2,8 @@ import { deriveStatus, lastActivity, type RawStackPull, type StackTone } from ".
 
 /** A pull request as the inbox search returns it. */
 export type RawInboxPull = RawStackPull & {
+  additions: number;
+  deletions: number;
   repository: { nameWithOwner: string };
   author: { login: string; avatarUrl: string } | null;
   latestReviews: { nodes: { author: { login: string } | null; submittedAt: string | null }[] };
@@ -34,6 +36,9 @@ export interface InboxPull {
   lastActivity: string;
   resolvedThreads: number;
   totalThreads: number;
+  /** Lines the whole pull request adds and deletes; missing in an inbox cached before they were fetched. */
+  additions?: number;
+  deletions?: number;
   /** The viewer reviewed it before and was asked again. */
   rerequested: boolean;
 }
@@ -146,6 +151,8 @@ function toInboxPull(pull: RawInboxPull, viewer: string): InboxPull {
     lastActivity: lastActivity(pull),
     resolvedThreads: pull.reviewThreads.nodes.filter((thread) => thread.isResolved).length,
     totalThreads: pull.reviewThreads.totalCount,
+    additions: pull.additions,
+    deletions: pull.deletions,
     rerequested: pull.latestReviews.nodes.some((review) => review.author?.login === viewer),
   };
 }
