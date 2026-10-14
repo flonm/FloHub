@@ -83,7 +83,13 @@ fragment InboxPull on PullRequest {
   ...StackPull
   repository { nameWithOwner }
   author { login avatarUrl }
-  latestReviews(first: 20) { nodes { author { login } } }
+  latestReviews(first: 20) { nodes { author { login } submittedAt } }
+  reviewRequests(first: 50) {
+    nodes { requestedReviewer { ... on User { login } ... on Team { combinedSlug } } }
+  }
+  reviewRequestedEvents: timelineItems(last: 50, itemTypes: [REVIEW_REQUESTED_EVENT]) {
+    nodes { ... on ReviewRequestedEvent { createdAt requestedReviewer { ... on Team { combinedSlug } } } }
+  }
   stack {
     number
     size
@@ -96,7 +102,7 @@ query ($review: String!, $mine: String!) {
   mine: search(query: $mine, type: ISSUE, first: 50) { nodes { ... on PullRequest { ...InboxPull } } }
 }`;
 
-const REVIEW_SEARCH = "is:pr is:open archived:false review-requested:@me";
+const REVIEW_SEARCH = "is:pr is:open draft:false archived:false review-requested:@me";
 const MINE_SEARCH = "is:pr is:open archived:false author:@me";
 
 const VIEWED_FILES_QUERY = `
@@ -434,7 +440,7 @@ function pullPath(ref: PullRef): string {
 }
 
 /**
- * Searches the open pull requests that wait for the viewer's review, directly or through a team, and the viewer's own.
+ * Searches the open, non-draft pull requests that wait for the viewer's review, directly or through a team, and the viewer's own.
  * @returns The raw search results, 50 of each at most.
  */
 export async function fetchInbox(): Promise<RawInbox> {
