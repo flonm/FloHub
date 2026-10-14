@@ -141,15 +141,53 @@ const CHANGE_STATS: Record<string, { additions: number; deletions: number }> = {
 
 const EMPTY_INBOX = { viewer: { login: "octocat" }, review: { nodes: [] }, mine: { nodes: [] } };
 
+const README_FIRST_HUNK = [
+  " gh stack rebase [flags] [branch]",
+  " ```",
+  " ",
+  "-Fetches the latest changes from `origin`, then ensures each branch in the stack has the tip of the previous layer in its commit history. Rebases branches in order from trunk upward. If a branch's PR has been merged, the rebase automatically switches to `--onto` mode to correctly replay commits on top of the merge target.",
+  "+Fetches the latest changes from `origin`, then ensures each branch in the stack has the tip of the previous layer in its commit history. Rebases branches in order from trunk upward. If GitHub already rebased the stack, matching rewritten remote tips are adopted locally when your branches have not changed since the previous fetch and contain the same ordered commits. If a branch's PR has been merged, the rebase automatically switches to `--onto` mode to correctly replay commits on top of the merge target.",
+  " ",
+  " If a rebase conflict occurs, the operation pauses and prints the conflicted files with line numbers. Resolve the conflicts, stage with `git add`, and continue with `--continue`. To undo the entire rebase, use `--abort` to restore all branches to their pre-rebase state.",
+  " ",
+];
+const README_SECOND_CONTEXT = [
+  " ",
+  " A clean remote-ahead update (PRs added on top of your local stack) is pulled down automatically without prompting, so `sync` is safe to run in automation. Sync only prompts when the stacks have truly diverged.",
+  " ",
+];
+const README_SECOND_TAIL = [" #### Diverged stacks", " ", " When neither stack is a clean prefix of the other — for example, you added a branch locally while separate PRs were added to the same stack on GitHub — sync cannot merge the two automatically. In an interactive terminal it offers three choices:"];
+/** README.md as GitHub's page shows it (the current version), and as the reviewed v1 had it: moved, with another added line. */
+const README_CURRENT = [
+  "@@ -193,7 +193,7 @@ Pull from remote and do a cascading rebase across the stack.",
+  ...README_FIRST_HUNK,
+  "@@ -321,6 +321,8 @@ Performs a synchronization of the entire stack:",
+  ...README_SECOND_CONTEXT,
+  "+If GitHub already rebased the same stack branches, `sync` adopts those rewritten remote tips when your local tips have not changed since the previous fetch and `git range-diff` confirms the same commits in the same order. If local and remote commits both changed, sync stops rather than overwriting either side.",
+  "+",
+  ...README_SECOND_TAIL,
+].join("\n");
+const README_REVIEWED = [
+  "@@ -180,7 +180,7 @@ Pull from remote and do a cascading rebase across the stack.",
+  ...README_FIRST_HUNK,
+  "@@ -300,6 +300,8 @@ Performs a synchronization of the entire stack:",
+  ...README_SECOND_CONTEXT,
+  "+Sync adopts server rebases.",
+  "+",
+  ...README_SECOND_TAIL,
+].join("\n");
+
 const VERSION_FILES: Record<string, { filename: string; status: string; patch: string; sha: string }[]> = {
   aaaaaaa1: [
     { filename: "cmd/rebase.go", status: "modified", sha: "r1", patch: "@@ -10,3 +10,4 @@ func Rebase() {\n \tsync()\n+\tadopt(branch)\n \treturn nil" },
-    { filename: "README.md", status: "modified", sha: "m1", patch: "@@ -1,2 +1,3 @@\n # gh-stack\n+Adopts server rebases.\n " },
+    { filename: "README.md", status: "modified", sha: "m1", patch: README_REVIEWED },
+    { filename: "docs/same.md", status: "modified", sha: "s1", patch: "@@ -1,2 +1,3 @@\n # gh-stack\n+Adopts server rebases.\n " },
     { filename: "cmd/legacy.go", status: "modified", sha: "l1", patch: "@@ -4,2 +4,2 @@\n-old()\n+older()" },
   ],
   ccccccc3: [
     { filename: "cmd/rebase.go", status: "modified", sha: "r3", patch: "@@ -42,3 +42,5 @@ func Rebase() {\n \tsync()\n+\tadopt(branch, equivalent)\n+\tlog(branch)\n \treturn nil" },
-    { filename: "README.md", status: "modified", sha: "m3", patch: "@@ -8,2 +8,3 @@\n # gh-stack\n+Adopts server rebases.\n " },
+    { filename: "README.md", status: "modified", sha: "m3", patch: README_CURRENT },
+    { filename: "docs/same.md", status: "modified", sha: "s3", patch: "@@ -8,2 +8,3 @@\n # gh-stack\n+Adopts server rebases.\n " },
     { filename: "cmd/adopt_test.go", status: "added", sha: "t3", patch: "@@ -0,0 +1,2 @@\n+package cmd\n+func TestAdopt(t *testing.T) {}" },
   ],
 };
@@ -166,7 +204,9 @@ function createFixture(options: { partial?: boolean; failReadd?: boolean; inbox?
   const viewed = { ...CHANGED_FILES };
   const submissions: { path: string; body: unknown }[] = [];
   const reviewState = { pendingComments: null as number | null };
+  const compareLog: string[] = [];
   return {
+    compareLog,
     rerequests,
     requestLog,
     viewedMarks,
@@ -260,6 +300,8 @@ function createFixture(options: { partial?: boolean; failReadd?: boolean; inbox?
                   ...STACK_PULLS.find((pull) => pull.number === CURRENT),
                   ...(options.partial ? { statusCheckRollup: null } : {}),
                   baseRefName: "main",
+                  baseRefOid: "basebase",
+                  headRefOid: "ccccccc3",
                   stack: {
                     number: 338,
                     size: STACK_PULLS.length,
@@ -278,7 +320,7 @@ function createFixture(options: { partial?: boolean; failReadd?: boolean; inbox?
                       review("mojombo", "CHANGES_REQUESTED"),
                       review("coderabbitai", "COMMENTED", "Bot"),
                       review("pjhyett", "DISMISSED"),
-                      review("octocat", "APPROVED"),
+                      { ...review("octocat", "APPROVED"), commit: { oid: "aaaaaaa1" } },
                       review("wycats", "COMMENTED"),
                     ],
                   },
@@ -342,6 +384,7 @@ function createFixture(options: { partial?: boolean; failReadd?: boolean; inbox?
       const compare = /\/compare\/(\w+)\.\.\.(\w+)/.exec(request.url());
       if (compare) {
         const [, base, head] = compare as unknown as [string, string, string];
+        compareLog.push(`${base}...${head}`);
         const files = VERSION_FILES[head] ?? VERSION_FILES.ccccccc3!;
         await route.fulfill({
           json: { status: head === "ccccccc3" ? "ahead" : "diverged", merge_base_commit: { sha: head === "ccccccc3" ? base : "oldbase" }, files },
@@ -385,10 +428,15 @@ function floatingBar(page: Page) {
 function visibleText(text: string): string {
   return text
     .split("\n")
-    .filter((line) => !line.endsWith("conversations resolved"))
+    .filter((line) => !line.endsWith("conversations resolved") && !line.endsWith("between the versions"))
     .join(" ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+async function diffAnchorOf(path: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(path));
+  return `diff-${Buffer.from(digest).toString("hex")}`;
 }
 
 function check(condition: boolean, message: string): void {
@@ -478,12 +526,17 @@ check(
 const fileRows = (await versions.locator("details.file > summary").allInnerTexts()).map(visibleText);
 check(
   JSON.stringify(fileRows) ===
-    JSON.stringify(["cmd/adopt_test.go Newly changed +4", "cmd/legacy.go No longer changed −3", "cmd/rebase.go Changed +2 −1"]),
+    JSON.stringify([
+      "README.md Changed +1 −1",
+      "cmd/adopt_test.go Newly changed +4",
+      "cmd/legacy.go No longer changed −3",
+      "cmd/rebase.go Changed +2 −1",
+    ]),
   `interdiff lists files whose change differs, ignoring moved hunks: ${JSON.stringify(fileRows)}`,
 );
 check(
   (await versions.locator("details.unchanged > summary").innerText()).startsWith("1 file makes the same change"),
-  "README.md, whose hunk only moved, counts as unchanged",
+  "docs/same.md, whose hunk only moved, counts as unchanged",
 );
 await page.waitForTimeout(250);
 await page.screenshot({ path: `${SCREENSHOTS}/versions-light.png` });
@@ -492,6 +545,100 @@ await versions.getByText("No differences.").waitFor();
 check(true, "picking the same version on both sides shows no differences");
 await page.keyboard.press("Escape");
 check(await versions.isHidden(), "Escape closes the versions dialog");
+
+const readmeDiff = page.locator(`#${await diffAnchorOf("README.md")}`);
+const changedCell = readmeDiff.locator("[data-flohub-since]");
+await changedCell.first().waitFor();
+const readmeAnchor = await diffAnchorOf("README.md");
+check(
+  (await changedCell.count()) === 1 &&
+    (await page.locator(`#${readmeAnchor}R324 ~ td.blob-code`).getAttribute("data-flohub-since")) === "v1",
+  "only the line added since the reviewed version is highlighted, on the head side",
+);
+check(
+  (await readmeDiff.locator("flohub-since-badge").innerText()) === "Changed since your review (v1)",
+  "the file header says it changed since the review",
+);
+const removedMarker = page.locator(`#${readmeAnchor}R323 ~ td.blob-code flohub-removed`);
+check((await removedMarker.locator("button").innerText()) === "−1", "a marker shows where a reviewed line is gone");
+await removedMarker.locator("button").click();
+check(
+  (await removedMarker.locator(".panel").innerText()).includes("+Sync adopts server rebases."),
+  "the marker lists the line that is gone",
+);
+await page.keyboard.press("Escape");
+check(
+  !(await removedMarker.locator(".panel").evaluate((panel) => panel.matches(":popover-open"))),
+  "Escape closes the list of lines that are gone",
+);
+await readmeDiff.locator(`#${readmeAnchor}R324`).scrollIntoViewIfNeeded();
+await page.waitForTimeout(150);
+await readmeDiff.screenshot({ path: `${SCREENSHOTS}/since-review-light.png` });
+const versionsRow = inlineBar(page).locator(".bar", { hasText: "Versions" });
+check(
+  visibleText(await versionsRow.innerText()).includes("3 files changed since your review (v1), highlighted in Files changed"),
+  "the versions row says what changed since the review",
+);
+await versionsRow.getByText("1 file is no longer changed").click();
+check(
+  (await versionsRow.locator(".dropped li").allInnerTexts()).join() === "cmd/legacy.go",
+  "the files the pull request no longer changes are listed on demand, reachable by keyboard",
+);
+await inlineBar(page).getByRole("button", { name: "Hide" }).click();
+await page.waitForFunction(() => document.querySelectorAll("[data-flohub-since], flohub-removed, flohub-since-badge").length === 0);
+check(true, "Hide takes every highlight off the diff");
+await inlineBar(page).getByRole("button", { name: "Show" }).click();
+await changedCell.first().waitFor();
+check(true, "Show puts the highlights back");
+const comparesBeforeReload = fixture.compareLog.length;
+await page.reload();
+await changedCell.first().waitFor();
+check(
+  fixture.compareLog.length === comparesBeforeReload,
+  `a reload takes the highlights from storage, without comparing again: ${fixture.compareLog.length - comparesBeforeReload} new compares`,
+);
+
+// GitHub's React diff, which it serves to signed-in viewers: the same README.md lines in its split markup.
+const reactRow = (left: number | null, right: number | null, marker: string, text: string) => {
+  const side = (name: "left" | "right", line: number | null) =>
+    line === null
+      ? '<td class="empty-diff-line"></td><td class="empty-diff-line"></td>'
+      : `<td class="new-diff-line-number" data-diff-side="${name}" data-line-number="${line}">${line}</td>` +
+        `<td class="diff-text-cell" data-diff-side="${name}" data-line-number="${line}"><code>${marker}${text}</code></td>`;
+  return `<tr class="diff-line-row">${side("left", left)}${side("right", right)}</tr>`;
+};
+const REACT_PAGE = `<!doctype html><html><head><title>React diff</title></head><body><main>
+<div role="region" id="${readmeAnchor}"><div data-diff-header-wrapper="true"><div><div><h3><a href="#${readmeAnchor}"><code>README.md</code></a></h3></div></div></div>
+<table role="grid" data-diff-anchor="${readmeAnchor}"><tbody>
+<tr class="diff-line-row"><td colspan="4" class="diff-hunk-cell"><code class="diff-text-cell hunk">@@ -321,6 +321,8 @@</code></td></tr>
+${reactRow(323, 323, " ", "")}
+${reactRow(null, 324, "+", "If GitHub already rebased the same stack branches…")}
+${reactRow(null, 325, "+", "")}
+${reactRow(324, 326, " ", "#### Diverged stacks")}
+</tbody></table></div></main></body></html>`;
+await light.route("https://github.com/flohub/react-diff/**", (route) =>
+  route.fulfill({ body: REACT_PAGE, contentType: "text/html" }),
+);
+const reactPage = await light.newPage();
+await reactPage.goto("https://github.com/flohub/react-diff/pull/1/changes");
+await reactPage.locator("[data-flohub-since]").first().waitFor();
+check(
+  JSON.stringify(
+    await reactPage
+      .locator("[data-flohub-since]")
+      .evaluateAll((cells) => cells.map((cell) => `${cell.getAttribute("data-diff-side")}:${cell.getAttribute("data-line-number")}`)),
+  ) === JSON.stringify(["right:324"]),
+  "in GitHub's React diff, the line added since the review is highlighted",
+);
+check(
+  (await reactPage.locator('td.diff-text-cell[data-diff-side="right"][data-line-number="323"] flohub-removed button').innerText()) === "−1",
+  "in GitHub's React diff, the marker sits where the reviewed line is gone",
+);
+check(
+  (await reactPage.locator("[data-diff-header-wrapper] flohub-since-badge").innerText()) === "Changed since your review (v1)",
+  "in GitHub's React diff, the file header gets the badge",
+);
+await reactPage.close();
 
 const tree = page.getByRole("tree", { name: "File Tree" });
 const viewedToggle = (path: string) => tree.locator(`flohub-viewed[data-path="${path}"]`);

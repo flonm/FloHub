@@ -14,7 +14,7 @@ export interface VersionFile {
   filename: string;
   previousFilename?: string;
   status: string;
-  /** Missing for binary files and diffs too large for GitHub to show. */
+  /** Missing for binary files and diffs too large for GitHub to show; empty for pure renames and empty files. */
   patch?: string;
   sha: string;
 }
@@ -24,7 +24,8 @@ export interface VersionFile {
  * - `unchanged`: both versions make the same change.
  * - `added`: only the newer version touches the file.
  * - `dropped`: only the older version touched the file.
- * - `opaque`: the change differs, but GitHub shows no diff for at least one side.
+ * - `opaque`: GitHub shows no diff for at least one side, and the file's content differs between the versions, which
+ *   may only be because the base changed it, so the change can't be compared.
  */
 export type FileChange = "changed" | "unchanged" | "added" | "dropped" | "opaque";
 
@@ -51,6 +52,18 @@ const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@ ?/;
  * @returns One entry per file either version touches, in path order.
  */
 export function interdiff(before: VersionFile[], after: VersionFile[]): FileInterdiff[] {
+  return pairFiles(before, after)
+    .map(([old, current]) => compareFile(old, current))
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+/**
+ * Pairs each file of one version with the same file in the other: by path, or else through a rename.
+ * @param before The older version's files.
+ * @param after The newer version's files.
+ * @returns The pairs, with null for a file only one version touches.
+ */
+export function pairFiles(before: VersionFile[], after: VersionFile[]): [VersionFile | null, VersionFile | null][] {
   const unmatched = new Map(before.map((file) => [file.filename, file]));
   const pairs: [VersionFile | null, VersionFile | null][] = [];
   const later: VersionFile[] = [];
@@ -69,10 +82,7 @@ export function interdiff(before: VersionFile[], after: VersionFile[]): FileInte
     pairs.push([old, file]);
   }
   for (const old of unmatched.values()) pairs.push([old, null]);
-
-  return pairs
-    .map(([old, current]) => compareFile(old, current))
-    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return pairs;
 }
 
 function sameOrigin(old: VersionFile, current: VersionFile): boolean {
@@ -80,7 +90,12 @@ function sameOrigin(old: VersionFile, current: VersionFile): boolean {
   return (old.previousFilename ?? old.filename) === origin || old.filename === origin || current.filename === old.previousFilename;
 }
 
-function compareFile(old: VersionFile | null, current: VersionFile | null): FileInterdiff {
+/**
+ * @param old The file in the older version, or null when only the newer one touches it.
+ * @param current The file in the newer version, or null when only the older one touched it.
+ * @returns How the file's change differs between the versions.
+ */
+export function compareFile(old: VersionFile | null, current: VersionFile | null): FileInterdiff {
   const path = (current ?? old)!.filename;
   const oldPath = old && current && old.filename !== current.filename ? old.filename : null;
   const result = (change: FileChange, lines: DiffLine[] = []): FileInterdiff => ({
@@ -112,16 +127,26 @@ function compareFile(old: VersionFile | null, current: VersionFile | null): File
  * @returns The patch's lines.
  */
 export function patchLines(file: VersionFile): string[] {
-  const header =
-    file.status === "renamed" && file.previousFilename
-      ? [`rename from ${file.previousFilename}`, `rename to ${file.filename}`]
-      : file.status === "added"
-        ? ["new file"]
-        : file.status === "removed"
-          ? ["deleted file"]
-          : [];
-  const body = (file.patch ?? "").split("\n").filter((line, index, lines) => line || index < lines.length - 1);
-  return [...header, ...body.map(normalizeLine)];
+  return [...patchHeader(file), ...patchBody(file).map(normalizeLine)];
+}
+
+/**
+ * @param file The file.
+ * @returns The header lines {@link patchLines} starts with: a rename, or that the file is new or deleted.
+ */
+export function patchHeader(file: VersionFile): string[] {
+  if (file.status === "renamed" && file.previousFilename) return [`rename from ${file.previousFilename}`, `rename to ${file.filename}`];
+  if (file.status === "added") return ["new file"];
+  if (file.status === "removed") return ["deleted file"];
+  return [];
+}
+
+/**
+ * @param file The file.
+ * @returns The patch's raw lines, without the empty line a trailing newline leaves.
+ */
+export function patchBody(file: VersionFile): string[] {
+  return (file.patch ?? "").split("\n").filter((line, index, lines) => line || index < lines.length - 1);
 }
 
 function normalizeLine(line: string): string {

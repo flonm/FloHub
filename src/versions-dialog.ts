@@ -18,7 +18,7 @@ const CHANGE: Record<FileChange, { label: string; tone: string }> = {
   changed: { label: "Changed", tone: "attention" },
   added: { label: "Newly changed", tone: "success" },
   dropped: { label: "No longer changed", tone: "danger" },
-  opaque: { label: "Changed, no diff", tone: "attention" },
+  opaque: { label: "Can't compare", tone: "muted" },
   unchanged: { label: "Unchanged", tone: "muted" },
 };
 
@@ -142,6 +142,7 @@ details.file:not([open]) > summary { border-radius: 6px; }
 
 details.unchanged > summary { color: var(--vd-muted); cursor: pointer; }
 details.unchanged ul { margin: 6px 0 0; padding-left: 20px; font: 12px/20px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--vd-muted); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) { dialog[open] { animation: none; } }
 `;
 
@@ -278,14 +279,29 @@ interface Context {
 }
 
 function renderResult(main: HTMLElement, summary: HTMLElement, files: FileInterdiff[], context: Context): void {
-  const differing = files.filter((file) => file.change !== "unchanged");
-  const unchanged = files.filter((file) => file.change === "unchanged");
+  // Past GitHub's file limit, a file only one version lists may just be cut off from the other's list.
+  const truncated = context.before.truncated || context.after.truncated;
+  const shown = truncated ? files.filter((file) => file.change !== "added" && file.change !== "dropped") : files;
+  const differing = shown.filter((file) => file.change !== "unchanged" && file.change !== "opaque");
+  const opaque = shown.filter((file) => file.change === "opaque");
+  const unchanged = shown.filter((file) => file.change === "unchanged");
+  const headline = differing.length === 0 ? "No differences." : `${differing.length} of ${shown.length} files differ.`;
+  const uncompared = opaque.length === 0 ? "" : ` ${opaque.length} can't be compared.`;
   summary.replaceChildren(
-    el("strong", {}, differing.length === 0 ? "No differences." : `${differing.length} of ${files.length} files differ.`),
+    el("strong", {}, `${headline}${uncompared}`),
     ` Shows how the pull request's own changes differ between v${context.older.number} and v${context.newer.number}: lines marked on the left changed between the versions, ignoring what the base branch gained.`,
   );
 
   const content: Node[] = [];
+  if (truncated) {
+    content.push(
+      el(
+        "p",
+        { class: "hint" },
+        "GitHub lists at most 300 files per version, so files only one version lists are left out: they may just be past the cut.",
+      ),
+    );
+  }
   const offBase = [context.before, context.after].some((patch) => !patch.onBase) && context.history.baseHeads.length > 0;
   if (offBase) {
     content.push(
@@ -296,7 +312,7 @@ function renderResult(main: HTMLElement, summary: HTMLElement, files: FileInterd
       ),
     );
   }
-  for (const file of differing) content.push(renderFile(file));
+  for (const file of [...differing, ...opaque].sort((a, b) => (a.path < b.path ? -1 : 1))) content.push(renderFile(file));
   if (unchanged.length > 0) {
     const details = el("details", { class: "unchanged" });
     details.append(el("summary", {}, `${unchanged.length} ${unchanged.length === 1 ? "file makes" : "files make"} the same change in both versions`));
@@ -315,16 +331,19 @@ function renderFile(file: FileInterdiff): HTMLElement {
   const path = el("span", { class: "path" });
   if (file.oldPath) path.append(el("span", { class: "old-path" }, `${file.oldPath} → `));
   path.append(file.path);
-  const counts = el("span", { class: "counts", "aria-label": `${file.added} lines added, ${file.removed} removed between the versions` });
-  if (file.added > 0) counts.append(el("span", { class: "add" }, `+${file.added}`), " ");
-  if (file.removed > 0) counts.append(el("span", { class: "del" }, `−${file.removed}`));
+  const counts = el("span", { class: "counts" });
+  if (file.added > 0) counts.append(el("span", { class: "add", "aria-hidden": "true" }, `+${file.added}`), " ");
+  if (file.removed > 0) counts.append(el("span", { class: "del", "aria-hidden": "true" }, `−${file.removed}`));
+  if (file.added > 0 || file.removed > 0) {
+    counts.append(el("span", { class: "visually-hidden" }, `${file.added} lines added, ${file.removed} removed between the versions`));
+  }
   head.append(path, el("span", { class: "badge", "data-tone": change.tone }, change.label), counts);
   details.append(head);
 
   if (file.hunks.length === 0) {
     const reason =
       file.change === "opaque"
-        ? "GitHub shows no diff for this file (binary, or too large), but its content differs between the versions."
+        ? "GitHub shows no diff for this file (binary, or too large), so it can't be compared. Its content differs between the versions, which may only be because the base branch changed it."
         : "GitHub shows no diff for this file (binary, or too large).";
     details.append(el("p", { class: "note" }, reason));
     return details;

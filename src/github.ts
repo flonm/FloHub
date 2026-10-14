@@ -5,7 +5,7 @@ import type { RawPullRequest } from "./reviewers";
 import type { RawStack, RawStackPull } from "./stack";
 import type { ViewedFile, ViewedFiles } from "./viewed";
 import type { VersionFile } from "./interdiff";
-import { baseBranches, deriveVersions, type RawBasePull, type RawVersionPull, type VersionHistory } from "./versions";
+import { baseBranches, deriveVersions, pickBase, type RawBasePull, type RawVersionPull, type VersionHistory } from "./versions";
 
 const API = "https://api.github.com";
 
@@ -43,6 +43,8 @@ query ($owner: String!, $name: String!, $number: Int!) {
     pullRequest(number: $number) {
       ...StackPull
       baseRefName
+      baseRefOid
+      headRefOid
       author { login }
       viewerCanUpdate
       forcePushes: timelineItems(last: 1, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
@@ -65,6 +67,7 @@ query ($owner: String!, $name: String!, $number: Int!) {
           state
           submittedAt
           author { __typename login avatarUrl url }
+          commit { oid }
         }
       }
       stack {
@@ -128,7 +131,7 @@ query ($owner: String!, $name: String!, $number: Int!) {
       headRefOid
       createdAt
       commits(last: 1) { nodes { commit { oid committedDate } } }
-      timelineItems(last: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, BASE_REF_CHANGED_EVENT]) {
+      timelineItems(last: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, BASE_REF_CHANGED_EVENT, AUTOMATIC_BASE_CHANGE_SUCCEEDED_EVENT]) {
         nodes {
           __typename
           ... on HeadRefForcePushedEvent {
@@ -138,9 +141,12 @@ query ($owner: String!, $name: String!, $number: Int!) {
             afterCommit { oid committedDate }
           }
           ... on BaseRefChangedEvent { previousRefName }
+          ... on AutomaticBaseChangeSucceededEvent { oldBase }
         }
       }
-      reviews(last: 100) { nodes { author { login } commit { oid committedDate } } }
+      reviews(last: 100, states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]) {
+        nodes { author { login } submittedAt commit { oid committedDate } }
+      }
     }
   }
 }`;
@@ -148,6 +154,7 @@ query ($owner: String!, $name: String!, $number: Int!) {
 const BASE_PULL_FIELDS = `
 nodes {
   headRefOid
+  isCrossRepository
   commits(last: 1) { nodes { commit { oid committedDate } } }
   timelineItems(last: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
     nodes {
@@ -176,6 +183,9 @@ export interface RawOverview {
       | (RawPullRequest &
           RawStackPull & {
             baseRefName: string;
+            /** Missing from overviews cached before these fields existed. */
+            baseRefOid?: string;
+            headRefOid?: string;
             stack: RawStack | null;
             forcePushes: { totalCount: number; nodes: ({ createdAt?: string } | null)[] } | null;
           })
@@ -190,6 +200,8 @@ export interface VersionPatch {
   /** Whether the version descends from the chosen base; if not, the diff may include the base's own changes. */
   onBase: boolean;
   files: VersionFile[];
+  /** Whether GitHub cut the file list off at its limit, so files past it are missing. */
+  truncated: boolean;
 }
 
 export type Overview = RawOverview & {
@@ -276,47 +288,56 @@ async function fetchBasePulls(ref: PullRef, branches: string[]): Promise<RawBase
 }
 
 /**
- * Fetches what a version changes. It is diffed against the first candidate base it descends from, so an old version
- * in a stack is diffed against the base branch's head from back then. If it descends from none, it is diffed against
- * its merge base with the first candidate, as GitHub's own Files changed tab does.
+ * Fetches what a version changes, diffed against the closest base it was made on: of the candidate bases it descends
+ * from and its merge base with the current base, the one with the fewest commits between it and the version. That way
+ * an old version in a stack is diffed against the base branch's head from back then, while a head that is merely an
+ * old ancestor, like a release pull request's head in a git-flow repository, loses to the closer merge base.
  * @param ref The pull request.
  * @param head The version's commit.
- * @param bases Candidate bases, best first; see `baseCandidates`.
+ * @param bases Candidate bases, the current base first; see `baseCandidates`.
  * @returns The changed files.
  */
 export async function fetchVersionPatch(ref: PullRef, head: string, bases: string[]): Promise<VersionPatch> {
-  let fallback: VersionPatch | null = null;
+  const compares: RawCompare[] = [];
   for (const base of bases) {
-    const key = `${ref.owner}/${ref.repo}:${base}...${head}`;
-    let compare = compareCache.get(key);
-    if (!compare) {
-      try {
-        compare = (await request(`/repos/${ref.owner}/${ref.repo}/compare/${base}...${head}?per_page=1`, {})) as RawCompare;
-      } catch (error) {
-        const missing = error instanceof GitHubError && error.status === 404;
-        // An earlier head of the base branch may be gone; the version itself being gone fails every try.
-        if (missing && base !== bases[0]) continue;
-        throw missing ? new GitHubError("failed", `GitHub no longer has commit ${head.slice(0, 7)}.`) : error;
-      }
-      compareCache.set(key, compare);
-      if (compareCache.size > MAX_CACHED_COMPARES) compareCache.delete(compareCache.keys().next().value!);
+    try {
+      compares.push(await fetchCompare(ref, base, head));
+    } catch (error) {
+      const missing = error instanceof GitHubError && error.status === 404;
+      // An earlier head of the base branch may be gone; the version itself being gone fails every try.
+      if (missing && base !== bases[0]) continue;
+      throw missing ? new GitHubError("failed", `GitHub no longer has commit ${head.slice(0, 7)}.`) : error;
     }
-    const onBase = compare.status === "ahead" || compare.status === "identical";
-    const files = (compare.files ?? []).map(toVersionFile);
-    const patch: VersionPatch = { mergeBase: compare.merge_base_commit.sha, onBase, files };
-    if (onBase) return patch;
-    fallback ??= patch;
   }
-  if (!fallback) throw new GitHubError("failed", `Could not compare ${head.slice(0, 7)} with its base.`);
-  return fallback;
+  const compare = compares[pickBase(compares.map((each) => ({ onBase: isOnBase(each), aheadBy: each.ahead_by })))];
+  if (!compare) throw new GitHubError("failed", `Could not compare ${head.slice(0, 7)} with its base.`);
+  const files = (compare.files ?? []).map(toVersionFile);
+  return { mergeBase: compare.merge_base_commit.sha, onBase: isOnBase(compare), files, truncated: files.length >= MAX_COMPARE_FILES };
+}
+
+async function fetchCompare(ref: PullRef, base: string, head: string): Promise<RawCompare> {
+  const key = `${ref.owner}/${ref.repo}:${base}...${head}`;
+  const cached = compareCache.get(key);
+  if (cached) return cached;
+  const compare = (await request(`/repos/${ref.owner}/${ref.repo}/compare/${base}...${head}?per_page=1`, {})) as RawCompare;
+  compareCache.set(key, compare);
+  if (compareCache.size > MAX_CACHED_COMPARES) compareCache.delete(compareCache.keys().next().value!);
+  return compare;
+}
+
+function isOnBase(compare: RawCompare): boolean {
+  return compare.status === "ahead" || compare.status === "identical";
 }
 
 interface RawCompare {
   status: "ahead" | "behind" | "identical" | "diverged";
+  ahead_by: number;
   merge_base_commit: { sha: string };
-  files?: { filename: string; previous_filename?: string; status: string; patch?: string; sha: string }[];
+  files?: { filename: string; previous_filename?: string; status: string; patch?: string; sha: string; changes: number }[];
 }
 
+/** GitHub's compare API lists at most this many files. */
+const MAX_COMPARE_FILES = 300;
 const MAX_CACHED_COMPARES = 40;
 const compareCache = new Map<string, RawCompare>();
 
@@ -325,7 +346,8 @@ function toVersionFile(file: NonNullable<RawCompare["files"]>[number]): VersionF
     filename: file.filename,
     ...(file.previous_filename ? { previousFilename: file.previous_filename } : {}),
     status: file.status,
-    ...(file.patch !== undefined ? { patch: file.patch } : {}),
+    // A pure rename or an empty file changes no lines and has no patch; only a binary or huge file lacks one otherwise.
+    ...(file.patch !== undefined ? { patch: file.patch } : file.changes === 0 ? { patch: "" } : {}),
     sha: file.sha,
   };
 }

@@ -1,5 +1,6 @@
 import { formatAge } from "./age";
 import { BAR_STYLES } from "./bar-styles";
+import type { HighlightStatus } from "./diff-highlights";
 import { button, el, icon, iconButton, type IconName } from "./dom";
 import type { Reviewer, ReviewerStatus, Verdict } from "./reviewers";
 import type { StackView } from "./stack";
@@ -24,6 +25,8 @@ export type BarState =
       notice: string | null;
       /** How often the head branch was force-pushed, and when last. */
       forcePushes: { count: number; lastAt: string | null };
+      /** What the Files changed diff highlights, or null when the viewer has not reviewed an older version. */
+      highlight: HighlightStatus | null;
     };
 
 export interface BarActions {
@@ -35,6 +38,7 @@ export interface BarActions {
   toggleMerged(): void;
   toggleMinimized(): void;
   compareVersions(): void;
+  toggleHighlight(): void;
 }
 
 type Tone = "success" | "danger" | "attention" | "muted";
@@ -65,6 +69,8 @@ export class ReviewBar {
   private readonly root: HTMLElement;
   private state: BarState = { kind: "loading" };
   private expanded = false;
+  /** Whether the list of files the pull request no longer changes is open, kept across re-renders. */
+  private droppedOpen = false;
   private entering = false;
   private minimized = false;
 
@@ -141,7 +147,7 @@ export class ReviewBar {
       );
     }
     overview.append(this.renderReviewers());
-    if (state.kind === "ready" && state.forcePushes.count > 0) overview.append(this.renderVersions(state));
+    if (state.kind === "ready" && (state.forcePushes.count > 0 || state.highlight)) overview.append(this.renderVersions(state));
     return overview;
   }
 
@@ -150,11 +156,38 @@ export class ReviewBar {
     const times = count === 1 ? "once" : `${count} times`;
     const last = lastAt && count > 1 ? `, last ${formatAge(lastAt, state.now).spoken}` : lastAt ? ` ${formatAge(lastAt, state.now).spoken}` : "";
     const bar = el("div", { class: "bar" });
-    bar.append(
-      el("span", { class: "label" }, "Versions"),
-      el("span", { class: "message" }, `Force-pushed ${times}${last}`),
-      button("text-button", "Compare versions", () => this.actions.compareVersions(), "compare-versions"),
-    );
+    bar.append(el("span", { class: "label" }, "Versions"));
+    if (count > 0) bar.append(el("span", { class: "message" }, `Force-pushed ${times}${last}`));
+    bar.append(button("text-button", "Compare versions", () => this.actions.compareVersions(), "compare-versions"));
+    const highlight = state.highlight;
+    if (highlight) {
+      const files = highlight.changedFiles === 1 ? "1 file" : `${highlight.changedFiles} files`;
+      const text = highlight.hidden
+        ? `Highlights of what changed since your review (v${highlight.since.number}) are hidden`
+        : highlight.changedFiles === 0 && highlight.droppedFiles.length === 0
+          ? `Nothing changed since your review (v${highlight.since.number})`
+          : `${files} changed since your review (v${highlight.since.number}), highlighted in Files changed`;
+      bar.append(el("span", { class: "message" }, `· ${text}`));
+      if (highlight.truncated && !highlight.hidden) {
+        bar.append(el("span", { class: "message" }, "· GitHub lists at most 300 files, so files past that weren't compared"));
+      }
+      bar.append(
+        button("text-button", highlight.hidden ? "Show" : "Hide", () => this.actions.toggleHighlight(), "toggle-highlight"),
+      );
+      if (highlight.droppedFiles.length > 0 && !highlight.hidden) {
+        const dropped = highlight.droppedFiles.length;
+        const details = el("details", { class: "dropped" });
+        details.open = this.droppedOpen;
+        details.addEventListener("toggle", () => (this.droppedOpen = details.open));
+        const list = el("ul");
+        for (const path of highlight.droppedFiles) list.append(el("li", {}, path));
+        details.append(
+          el("summary", { "data-focus-key": "dropped-files" }, `${dropped} ${dropped === 1 ? "file is" : "files are"} no longer changed`),
+          list,
+        );
+        bar.append(details);
+      }
+    }
     return bar;
   }
 

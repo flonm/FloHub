@@ -82,6 +82,9 @@ button { font: inherit; color: inherit; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .message { color: var(--rb-muted); }
+.dropped summary { color: var(--rb-muted); cursor: pointer; }
+.dropped[open] { flex-basis: 100%; }
+.dropped ul { margin: 4px 0 0; padding-left: 20px; color: var(--rb-fg); font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .notice { flex-basis: 100%; color: var(--rb-danger); }
 .notice:empty { display: none; }
 
