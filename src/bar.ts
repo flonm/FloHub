@@ -11,7 +11,8 @@ export type BarState =
   | { kind: "error"; message: string }
   | {
       kind: "ready";
-      reviewers: Reviewer[];
+      /** Null while only a cached stack from another layer is shown. */
+      reviewers: Reviewer[] | null;
       stack: StackView;
       stackCollapsed: boolean;
       showMerged: boolean;
@@ -171,7 +172,7 @@ export class ReviewBar {
       bar.append(refresh);
     }
 
-    if (state.kind === "loading") {
+    if (state.kind === "loading" || (state.kind === "ready" && state.reviewers === null)) {
       bar.append(el("span", { class: "message", role: "status" }, "Loading reviewers…"));
       return bar;
     }
@@ -184,11 +185,12 @@ export class ReviewBar {
       return bar;
     }
 
-    if (state.reviewers.length === 0) {
+    const reviewers = state.reviewers ?? [];
+    if (reviewers.length === 0) {
       bar.append(el("span", { class: "message" }, "No reviews or review requests yet."));
     } else {
       const list = el("ul", { class: "chips" });
-      for (const reviewer of state.reviewers) {
+      for (const reviewer of reviewers) {
         list.append(this.renderChip(reviewer, state.busy.has(reviewer.key), state.pokedAt.get(reviewer.key), state.now));
       }
       bar.append(list);
@@ -281,6 +283,7 @@ export class ReviewBar {
       return [icon("people"), el("span", { class: "summary" }, text)];
     }
     const stack = this.renderPillStack(state.stack);
+    if (state.reviewers === null) return [...stack, icon("people"), el("span", { class: "summary" }, "Reviewers…")];
     if (state.reviewers.length === 0) {
       return [...stack, icon("people"), el("span", { class: "summary" }, "No reviewers")];
     }

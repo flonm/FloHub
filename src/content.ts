@@ -6,6 +6,8 @@ import { type PullRef, parsePullRef, pullKey, pullTab } from "./pull-ref";
 import { ReviewDialog } from "./review-dialog";
 import { deriveReviewers, type Reviewer } from "./reviewers";
 import { createShortcutMatcher, type ReviewEvent } from "./shortcuts";
+import type { Overview } from "./github";
+import { readCachedOverview } from "./overview-cache";
 import { deriveStack } from "./stack";
 import { Toast } from "./toast";
 import { baseCandidates } from "./versions";
@@ -15,6 +17,7 @@ const AUTO_REFRESH_GAP_MS = 15_000;
 const STICKY_HEADER_HEIGHT = 96;
 const ANCHOR_RETRY_MS = 1_000;
 const AGE_TICK_MS = 60_000;
+const CACHE_WAIT_MS = 300;
 const POKE_MEMORY_MS = 86_400_000;
 const TEXT_FIELDS = "input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox'], [role='combobox'], [role='searchbox']";
 
@@ -29,6 +32,8 @@ let stackCollapsed = false;
 let showMerged = false;
 let floatingMinimized = false;
 let pendingNotice: string | null = null;
+/** Whether a fresh overview arrived for this pull request; until then a ready state comes from the cache. */
+let loadedFresh = false;
 let viewerIsAuthor = false;
 let claimedKey: string | null = null;
 let pokes: Record<string, number> = {};
@@ -123,9 +128,10 @@ function sync(): void {
     busy.clear();
     showMerged = false;
     pendingNotice = null;
+    loadedFresh = false;
     viewedTree.sync(null);
     lastAnchorSearch = 0;
-    render();
+    void showFirst(ref);
     void load(true);
   }
 
@@ -136,8 +142,9 @@ function sync(): void {
 }
 
 /**
- * Looks for the header to mount the inline bar in, at most once per {@link ANCHOR_RETRY_MS}. A search that is
- * skipped runs once the wait is over, so the last change to a page that is still loading always gets a search.
+ * Looks for the header to mount the inline bar in. Only failed searches wait {@link ANCHOR_RETRY_MS} for the next
+ * one, so when GitHub re-renders the header and takes the bar with it, the bar is back on the next frame. A search
+ * that is skipped runs once the wait is over, so the last change to a page that is still loading always gets a search.
  */
 function mountInline(ref: PullRef): void {
   const wait = ANCHOR_RETRY_MS - (Date.now() - lastAnchorSearch);
@@ -148,8 +155,9 @@ function mountInline(ref: PullRef): void {
     }, wait);
     return;
   }
-  lastAnchorSearch = Date.now();
-  findInlineAnchor(document, ref.number)?.after(inline.host);
+  const anchor = findInlineAnchor(document, ref.number);
+  lastAnchorSearch = anchor ? 0 : Date.now();
+  anchor?.after(inline.host);
 }
 
 function updateVisibility(): void {
@@ -185,6 +193,68 @@ function update(changes: Partial<Extract<BarState, { kind: "ready" }>>): void {
   render();
 }
 
+/**
+ * Holds the loading state back until the cache answers, so a cached stack doesn't pop in after "Loading…".
+ * The wait is capped, since a slow storage read must not delay the loading state for long.
+ */
+async function showFirst(ref: PullRef): Promise<void> {
+  await Promise.race([showCached(ref), new Promise((resolve) => setTimeout(resolve, CACHE_WAIT_MS))]);
+  if (state.kind === "loading" && current && pullKey(current) === pullKey(ref)) render();
+}
+
+/**
+ * Shows the last overview fetched for this pull request, or the stack from another of its layers,
+ * while the fresh one loads. It never replaces a state the fresh load already set.
+ */
+async function showCached(ref: PullRef): Promise<void> {
+  const cached = await readCachedOverview(ref);
+  if (!cached || state.kind !== "loading" || !current || pullKey(current) !== pullKey(ref)) return;
+  const ready = readyState(cached.overview, ref, cached.exact);
+  if (!ready) return;
+  if (cached.exact) viewerIsAuthor = isAuthor(cached.overview);
+  state = { ...ready, refreshing: true, notice: pendingNotice };
+  render();
+}
+
+/**
+ * @param overview An overview GitHub returned for this pull request or, when not exact, for another layer of its stack.
+ * @param ref The pull request on screen.
+ * @param exact Whether the overview is this pull request's own; otherwise only its stack is used.
+ * @returns The bar state, or null when the overview does not cover the pull request.
+ */
+function readyState(overview: Overview, ref: PullRef, exact: boolean): Extract<BarState, { kind: "ready" }> | null {
+  const pullRequest = overview.repository?.pullRequest;
+  if (!pullRequest) return null;
+  let stack;
+  if (exact) {
+    stack = deriveStack(pullRequest, pullRequest.baseRefName);
+  } else {
+    const sibling = pullRequest.stack?.entries.nodes.find((node) => node.pullRequest?.number === ref.number)?.pullRequest;
+    if (!sibling || !pullRequest.stack) return null;
+    stack = deriveStack({ ...sibling, stack: pullRequest.stack }, pullRequest.stack.baseRefName);
+  }
+  return {
+    kind: "ready",
+    reviewers: exact ? deriveReviewers(pullRequest, overview.viewer.login) : null,
+    stack,
+    stackCollapsed,
+    showMerged,
+    now: Date.now(),
+    refreshing: false,
+    busy,
+    pokedAt: pokedAtFor(ref),
+    forcePushes: {
+      count: (exact && pullRequest.forcePushes?.totalCount) || 0,
+      lastAt: (exact && pullRequest.forcePushes?.nodes.at(-1)?.createdAt) || null,
+    },
+    notice: null,
+  };
+}
+
+function isAuthor(overview: Overview): boolean {
+  return overview.repository?.pullRequest?.author?.login === overview.viewer.login;
+}
+
 async function load(force: boolean): Promise<void> {
   const ref = current;
   if (!ref || (!force && Date.now() - lastLoad < AUTO_REFRESH_GAP_MS)) return;
@@ -201,23 +271,12 @@ async function load(force: boolean): Promise<void> {
   if (run !== generation || !current || pullKey(current) !== pullKey(ref)) return;
 
   if (reply.ok) {
-    const pullRequest = reply.value.repository?.pullRequest;
-    viewerIsAuthor = pullRequest?.author?.login === reply.value.viewer.login;
-    state = pullRequest
+    viewerIsAuthor = isAuthor(reply.value);
+    const ready = readyState(reply.value, ref, true);
+    loadedFresh = ready !== null;
+    state = ready
       ? {
-          kind: "ready",
-          reviewers: deriveReviewers(pullRequest, reply.value.viewer.login),
-          stack: deriveStack(pullRequest, pullRequest.baseRefName),
-          stackCollapsed,
-          showMerged,
-          now: Date.now(),
-          refreshing: false,
-          busy,
-          pokedAt: pokedAtFor(ref),
-          forcePushes: {
-            count: pullRequest.forcePushes?.totalCount ?? 0,
-            lastAt: pullRequest.forcePushes?.nodes.at(-1)?.createdAt ?? null,
-          },
+          ...ready,
           notice:
             reply.value.unreadable.length > 0
               ? `This token cannot read ${reply.value.unreadable.join(", ")}, so parts may be missing. Check its permissions.`
@@ -228,7 +287,7 @@ async function load(force: boolean): Promise<void> {
       : { kind: "error", message: "Pull request not found." };
   } else if (reply.code !== "failed") {
     state = { kind: "setup", message: reply.message };
-  } else if (state.kind === "ready") {
+  } else if (state.kind === "ready" && loadedFresh) {
     state = { ...state, refreshing: false, notice: reply.message };
   } else {
     state = { kind: "error", message: reply.message };
