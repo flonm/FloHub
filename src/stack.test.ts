@@ -41,7 +41,7 @@ describe("deriveStatus", () => {
     ["failed checks win over approval", { statusCheckRollup: { state: "FAILURE" }, reviewDecision: "APPROVED" }, "danger", "Checks failed"],
     ["errored checks", { statusCheckRollup: { state: "ERROR" } }, "danger", "Checks failed"],
     ["changes requested", { reviewDecision: "CHANGES_REQUESTED" }, "attention", "Changes requested"],
-    ["ready to merge while checks run", { reviewDecision: "APPROVED", statusCheckRollup: { state: "PENDING" } }, "success", "Ready to merge"],
+    ["ready to merge with no checks", { reviewDecision: "APPROVED", statusCheckRollup: null }, "success", "Ready to merge"],
     ["review required", { reviewDecision: "REVIEW_REQUIRED" }, "accent", "Needs review"],
   ] as const)("%s", (_name, overrides, tone, label) => {
     expect(deriveStatus(buildPull(overrides as Partial<RawStackPull>))).toMatchObject({ tone, label });
@@ -78,6 +78,28 @@ describe("deriveStatus", () => {
     });
 
     expect(deriveStatus(pull)).toMatchObject({ label: "Unresolved comments", detail: "Approved, but 1 conversation is still unresolved." });
+  });
+
+  test.each(["PENDING", "EXPECTED"] as const)("an approved pull request whose checks are %s shows them running", (state) => {
+    const pull = buildPull({ reviewDecision: "APPROVED", statusCheckRollup: { state } });
+
+    expect(deriveStatus(pull)).toEqual({
+      tone: "neutral",
+      label: "Checks running",
+      detail: "Approved, waiting for checks to finish before this can merge.",
+    });
+  });
+
+  test("unresolved conversations and a missing review outweigh running checks", () => {
+    const unresolved = buildPull({
+      reviewDecision: "APPROVED",
+      statusCheckRollup: { state: "PENDING" },
+      reviewThreads: { totalCount: 1, nodes: [{ isResolved: false }] },
+    });
+    const unreviewed = buildPull({ reviewDecision: "REVIEW_REQUIRED", statusCheckRollup: { state: "PENDING" } });
+
+    expect(deriveStatus(unresolved).label).toBe("Unresolved comments");
+    expect(deriveStatus(unreviewed).label).toBe("Needs review");
   });
 
   test("an approval with every conversation resolved is ready to merge", () => {

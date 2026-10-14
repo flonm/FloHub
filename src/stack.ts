@@ -134,7 +134,7 @@ function toEntry(pull: RawStackPull, position: number, current: boolean): StackE
  * Pull requests further up a stack target another branch, where branch protection leaves
  * `reviewDecision` empty; their decision comes from the latest approvals and change requests.
  * An approval counts even while branch rules still require more reviews, with a detail that says so.
- * An approved pull request is only ready to merge once every conversation is resolved.
+ * An approved pull request is only ready to merge once every conversation is resolved and its checks have finished.
  * @param pull The pull request.
  * @returns The badge tone and label.
  */
@@ -159,6 +159,9 @@ export function deriveStatus(pull: RawStackPull): { tone: StackTone; label: stri
   if (unresolved > 0) {
     const conversations = unresolved === 1 ? "1 conversation is" : `${unresolved} conversations are`;
     return { tone: "attention", label: "Unresolved comments", detail: `Approved, but ${conversations} still unresolved.` };
+  }
+  if (checks === "PENDING" || checks === "EXPECTED") {
+    return { tone: "neutral", label: "Checks running", detail: "Approved, waiting for checks to finish before this can merge." };
   }
   const detail =
     pull.reviewDecision === "REVIEW_REQUIRED"
