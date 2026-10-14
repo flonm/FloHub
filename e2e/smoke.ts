@@ -193,7 +193,43 @@ const VERSION_FILES: Record<string, { filename: string; status: string; patch: s
   ],
 };
 
-function createFixture(options: { partial?: boolean; failReadd?: boolean; inbox?: object; inboxGate?: Promise<unknown> } = {}) {
+const REVIEW_TEXTS: Record<string, { bodyText: string; hoursAgo: number }> = {
+  defunkt: { bodyText: "Please split the rebase planner out of this change.", hoursAgo: 20 },
+  coderabbitai: { bodyText: "Actionable comments posted: 2", hoursAgo: 3 },
+  octocat: { bodyText: "LGTM once the planner is split.", hoursAgo: 0.5 },
+};
+
+function withDiscussionText<T extends { author: { login: string } }>(node: T) {
+  const text = REVIEW_TEXTS[node.author.login];
+  return {
+    ...node,
+    bodyText: text?.bodyText ?? "",
+    url: `${PULL_URL}#pullrequestreview-${node.author.login}`,
+    ...(text ? { submittedAt: ago(text.hoursAgo) } : {}),
+  };
+}
+
+const LONG_COMMENT = [
+  "Before this merges, two things from the staging run:",
+  "1. The adopted branch keeps its old upstream, so a later push goes to the wrong remote ref.",
+  "2. When the server rebased onto a moved base, the local tip is ahead and the adoption is skipped silently.",
+  "Both reproduce with the fixture in cmd/rebase_test.go if you pass --server-rebased twice.",
+].join("\n");
+
+const DISCUSSION_COMMENTS = [
+  { bodyText: "Did we check this against a server-rebased stack?", url: `${PULL_URL}#issuecomment-1`, createdAt: ago(2), author: actor("wycats") },
+  { bodyText: LONG_COMMENT, url: `${PULL_URL}#issuecomment-2`, createdAt: ago(1), author: actor("mojombo") },
+  {
+    bodyText: "WarningThis pull request is not mergeable via GitHub because a downstack PR is open.",
+    url: `${PULL_URL}#issuecomment-3`,
+    createdAt: ago(5),
+    author: actor("hubot"),
+  },
+];
+
+function createFixture(
+  options: { partial?: boolean; failReadd?: boolean; inbox?: object; inboxGate?: Promise<unknown>; discussion?: boolean } = {},
+) {
   const requested: (object | null)[] = [
     actor("mojombo"),
     { __typename: "Team", name: "backend", combinedSlug: "github/backend", avatarUrl: null, url: "https://github.com/orgs/github/teams/backend" },
@@ -323,8 +359,9 @@ function createFixture(options: { partial?: boolean; failReadd?: boolean; inbox?
                       review("pjhyett", "DISMISSED"),
                       { ...review("octocat", "APPROVED"), commit: { oid: "aaaaaaa1" } },
                       review("wycats", "COMMENTED"),
-                    ],
+                    ].map((node) => (options.discussion ? withDiscussionText(node) : node)),
                   },
+                  ...(options.discussion ? { comments: { nodes: DISCUSSION_COMMENTS } } : {}),
                 },
               },
             },
@@ -1252,6 +1289,48 @@ check(
   `a failed re-add is retried once and then tells you to re-request by hand: ${failedFixture.requestLog.join()}`,
 );
 await failedPoke.close();
+
+const discussionContext = await launch("light", (route) => createFixture({ discussion: true }).handle(route));
+const discussionWorker = discussionContext.serviceWorkers()[0];
+await discussionWorker?.evaluate((at) => chrome.storage.local.set({ discussionSeen: { "github/gh-stack#344": at } }), ago(10));
+const discussionPage = await discussionContext.newPage();
+await discussionPage.goto(`${PULL_URL}/files`);
+const discussion = inlineBar(discussionPage).locator("section.discussion");
+await discussion.locator(".discussion-item").first().waitFor();
+const discussionItems = () =>
+  discussion.locator(".discussion-item").evaluateAll((items) =>
+    items.map((item) => `${item.querySelector(".name")?.textContent}${item.classList.contains("unread") ? "*" : ""}`),
+  );
+check(
+  (await discussion.locator(".discussion-new").innerText()) === "2 new" &&
+    JSON.stringify(await discussionItems()) === JSON.stringify(["mojombo*", "wycats*"]),
+  `the discussion shows the comments since the last visit, not the viewer's own or bots': ${JSON.stringify(await discussionItems())}`,
+);
+await discussion.getByRole("button", { name: "Show all (4)" }).click();
+check(
+  JSON.stringify(await discussionItems()) === JSON.stringify(["octocat", "mojombo*", "wycats*", "defunkt"]) &&
+    (await discussion.locator(".discussion-item", { hasText: "defunkt" }).locator(".discussion-verdict").innerText()) === "Requested changes",
+  `Show all lists every review text and comment, newest first, with the review's verdict: ${JSON.stringify(await discussionItems())}`,
+);
+await discussion.getByRole("button", { name: "Show bots (2)" }).click();
+check((await discussion.locator(".discussion-item").count()) === 6, "Show bots adds the bot review and the stack tool's comment");
+await discussion.getByRole("button", { name: "Hide bots" }).click();
+const longText = discussion.locator(".discussion-item", { hasText: "mojombo" }).locator(".discussion-text");
+const clampedBefore = await longText.evaluate((text) => text.classList.contains("clamped") && text.scrollHeight > text.clientHeight);
+await discussion.locator(".discussion-item", { hasText: "mojombo" }).getByRole("button", { name: "Show more" }).click();
+const clampedAfter = await longText.evaluate((text) => text.classList.contains("clamped"));
+check(clampedBefore && !clampedAfter, "a long comment is clamped to three lines until Show more");
+check(
+  (await discussion.locator(".discussion-item", { hasText: "wycats" }).getByRole("link", { name: /on GitHub/ }).getAttribute("href")) ===
+    `${PULL_URL}#issuecomment-1`,
+  "each item links to its comment on GitHub",
+);
+const seenNow = await discussionWorker?.evaluate(() =>
+  chrome.storage.local.get("discussionSeen").then((stored) => (stored.discussionSeen as Record<string, string>)["github/gh-stack#344"]),
+);
+check(Date.now() - Date.parse(seenNow ?? "") < 60_000, `opening the pull request records the visit: ${seenNow}`);
+await inlineBar(discussionPage).screenshot({ path: `${SCREENSHOTS}/discussion-light.png` });
+await discussionContext.close();
 
 const partial = await launch("light");
 await partial.route("https://api.github.com/**", (route) => createFixture({ partial: true }).handle(route));

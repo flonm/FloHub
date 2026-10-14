@@ -5,6 +5,8 @@ import { button, el, icon, iconButton, type IconName } from "./dom";
 import type { Reviewer, ReviewerStatus, Verdict } from "./reviewers";
 import type { StackView } from "./stack";
 import { describePosition, renderStackSection, renderStrip } from "./stack-view";
+import type { DiscussionItem } from "./discussion";
+import { renderDiscussionSection } from "./discussion-view";
 
 export type BarState =
   | { kind: "loading" }
@@ -27,6 +29,15 @@ export type BarState =
       forcePushes: { count: number; lastAt: string | null };
       /** What the Files changed diff highlights, or null when the viewer has not reviewed an older version. */
       highlight: HighlightStatus | null;
+      /** Review texts and general comments, newest first; null while only a cached stack from another layer is shown. */
+      discussion: DiscussionItem[] | null;
+      /** When the viewer last looked at this pull request, or null to mark nothing as new. */
+      discussionSeenAt: string | null;
+      /** When the viewer last reviewed it, the fallback for a first visit. */
+      discussionLastReview: string | null;
+      discussionExpanded: boolean;
+      showBots: boolean;
+      viewer: string;
     };
 
 export interface BarActions {
@@ -39,6 +50,8 @@ export interface BarActions {
   toggleMinimized(): void;
   compareVersions(): void;
   toggleHighlight(): void;
+  toggleDiscussion(): void;
+  toggleDiscussionBots(): void;
 }
 
 type Tone = "success" | "danger" | "attention" | "muted";
@@ -148,6 +161,19 @@ export class ReviewBar {
     }
     overview.append(this.renderReviewers());
     if (state.kind === "ready" && (state.forcePushes.count > 0 || state.highlight)) overview.append(this.renderVersions(state));
+    if (state.kind === "ready" && state.discussion) {
+      const discussion = renderDiscussionSection({
+        items: state.discussion,
+        seenAt: state.discussionSeenAt,
+        viewer: state.viewer,
+        expanded: state.discussionExpanded,
+        showBots: state.showBots,
+        now: state.now,
+        toggleExpanded: () => this.actions.toggleDiscussion(),
+        toggleBots: () => this.actions.toggleDiscussionBots(),
+      });
+      if (discussion) overview.append(discussion);
+    }
     return overview;
   }
 
