@@ -127,6 +127,23 @@ describe("buildInbox", () => {
     expect(inbox.review.flatMap((entry) => entry.pulls.map((pull) => pull.number)).sort()).toEqual([1, 3]);
   });
 
+  test("in a repository set to direct requests only, drops team requests from the list and the badge", () => {
+    const team = { reviewRequests: { nodes: [{ requestedReviewer: { combinedSlug: "octo-org/core" } }] } };
+    const elsewhere = { repository: { nameWithOwner: "octo-org/other" } };
+    const inbox = buildInbox(
+      buildRaw([buildPull(1, team), buildPull(2), buildPull(3, { ...team, ...elsewhere })]),
+      0,
+      new Set(["octo-org/octo-repo"]),
+    );
+    expect(inbox.review.map((entry) => [entry.repo, entry.pulls[0]?.number, entry.pulls[0]?.viaTeam])).toEqual(
+      expect.arrayContaining([
+        ["octo-org/octo-repo", 2, false],
+        ["octo-org/other", 3, true],
+      ]),
+    );
+    expect(inbox.reviewCount).toBe(2);
+  });
+
   test("carries each pull request's added and deleted lines", () => {
     const raw: RawInbox = { viewer: { login: "octocat" }, review: { nodes: [buildPull(7, { additions: 120, deletions: 34 })] }, mine: { nodes: [] } };
 

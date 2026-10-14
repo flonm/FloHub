@@ -41,6 +41,8 @@ export interface InboxPull {
   deletions?: number;
   /** The viewer reviewed it before and was asked again. */
   rerequested: boolean;
+  /** It waits for the viewer only through a team; missing in an inbox cached before this was tracked. */
+  viaTeam?: boolean;
 }
 
 export interface InboxGroup {
@@ -67,23 +69,31 @@ const URGENCY: Record<StackTone, number> = { danger: 0, attention: 1, success: 2
 
 /**
  * Turns the two inbox searches into groups: one per stack, or one per pull request outside any stack.
- * Review requests keep only non-draft pull requests that still wait for the viewer, see {@link isRequested}.
+ * Review requests keep only non-draft pull requests that still wait for the viewer, see {@link requestedVia}.
+ * In the repositories set to count only direct requests, a request that reaches the viewer through a team is dropped.
  * Review requests are ordered by their latest activity, the viewer's own pull requests by what needs them first.
  * @param raw The search results.
  * @param fetchedAt When they were fetched.
+ * @param directRepos Repositories, lowercase `owner/name`, that count only requests naming the viewer.
  * @returns The inbox.
  */
-export function buildInbox(raw: RawInbox, fetchedAt: number): Inbox {
+export function buildInbox(raw: RawInbox, fetchedAt: number, directRepos: ReadonlySet<string> = new Set()): Inbox {
+  const viewer = raw.viewer.login;
   // The search index lags behind a submitted review, so check the request is still open on the pull request itself.
   const review = group(
-    pullsOf(raw.review.nodes).filter((pull) => !pull.isDraft && isRequested(pull, raw.viewer.login)),
-    raw.viewer.login,
+    pullsOf(raw.review.nodes).filter((pull) => {
+      if (pull.isDraft) return false;
+      const via = requestedVia(pull, viewer);
+      return via === "user" || (via === "team" && !directRepos.has(pull.repository.nameWithOwner.toLowerCase()));
+    }),
+    viewer,
+    true,
   );
-  const mine = group(pullsOf(raw.mine.nodes), raw.viewer.login);
+  const mine = group(pullsOf(raw.mine.nodes), viewer, false);
   review.sort((a, b) => newest(b) - newest(a));
   mine.sort((a, b) => urgency(a) - urgency(b) || newest(b) - newest(a));
   return {
-    viewer: raw.viewer.login,
+    viewer,
     fetchedAt,
     review,
     mine,
@@ -102,22 +112,23 @@ function pullsOf(nodes: (RawInboxPull | Record<string, never>)[]): RawInboxPull[
  * The search already matched the viewer through a team, so any pending team is taken to be one of theirs.
  * @param pull The pull request.
  * @param viewer The viewer's login.
- * @returns Whether the pull request waits for the viewer's review right now.
+ * @returns How the pull request waits for the viewer's review right now: by name, through a team, or not at all.
  */
-function isRequested(pull: RawInboxPull, viewer: string): boolean {
+function requestedVia(pull: RawInboxPull, viewer: string): "user" | "team" | null {
   const reviewers = pull.reviewRequests.nodes.map((request) => request.requestedReviewer);
-  if (reviewers.some((reviewer) => reviewer?.login === viewer)) return true;
+  if (reviewers.some((reviewer) => reviewer?.login === viewer)) return "user";
   const teams = new Set(reviewers.flatMap((reviewer) => reviewer?.combinedSlug ?? []));
-  if (teams.size === 0) return false;
+  if (teams.size === 0) return null;
   const reviewedAt = pull.latestReviews.nodes.find((review) => review.author?.login === viewer)?.submittedAt;
-  if (!reviewedAt) return true;
-  return pull.reviewRequestedEvents.nodes.some(
+  if (!reviewedAt) return "team";
+  const asked = pull.reviewRequestedEvents.nodes.some(
     (event) =>
       teams.has(event.requestedReviewer?.combinedSlug ?? "") && Date.parse(event.createdAt) > Date.parse(reviewedAt),
   );
+  return asked ? "team" : null;
 }
 
-function group(pulls: RawInboxPull[], viewer: string): InboxGroup[] {
+function group(pulls: RawInboxPull[], viewer: string, review: boolean): InboxGroup[] {
   const groups = new Map<string, InboxGroup>();
   for (const pull of pulls) {
     const repo = pull.repository.nameWithOwner;
@@ -129,14 +140,14 @@ function group(pulls: RawInboxPull[], viewer: string): InboxGroup[] {
       stackSize: pull.stack?.size ?? 1,
       pulls: [],
     };
-    entry.pulls.push(toInboxPull(pull, viewer));
+    entry.pulls.push(toInboxPull(pull, viewer, review));
     groups.set(key, entry);
   }
   for (const entry of groups.values()) entry.pulls.sort((a, b) => (b.position ?? 0) - (a.position ?? 0));
   return [...groups.values()];
 }
 
-function toInboxPull(pull: RawInboxPull, viewer: string): InboxPull {
+function toInboxPull(pull: RawInboxPull, viewer: string, review: boolean): InboxPull {
   const { tone, label } = deriveStatus(pull);
   const position = pull.stack?.entries.nodes.find((node) => node.pullRequest?.number === pull.number)?.position ?? null;
   return {
@@ -154,6 +165,7 @@ function toInboxPull(pull: RawInboxPull, viewer: string): InboxPull {
     additions: pull.additions,
     deletions: pull.deletions,
     rerequested: pull.latestReviews.nodes.some((review) => review.author?.login === viewer),
+    viaTeam: review && !pull.reviewRequests.nodes.some((request) => request.requestedReviewer?.login === viewer),
   };
 }
 

@@ -4,6 +4,7 @@ import { type Inbox, type InboxGroup, type InboxPull, isStale } from "./inbox";
 import { INBOX_PERIOD_MINUTES } from "./inbox-sync";
 import { blocksInbox, isEmptyInbox, moveSelection, type Problem, problemFor, showsPull, updatedLabel } from "./inbox-view";
 import { send } from "./messages";
+import { writeReviewScope } from "./review-scope";
 import { formatDiffStat } from "./viewed";
 
 type SectionKind = "review" | "mine";
@@ -288,7 +289,31 @@ function renderPull(pull: InboxPull, entry: InboxGroup, kind: SectionKind): HTML
 
   link.append(lead, title, time, meta);
   item.append(link);
+  if (kind === "review" && pull.viaTeam) item.append(renderHideTeams(entry.repo, pull));
   return item;
+}
+
+/** Sets the repository to count only direct requests, for a row that reached the viewer through a team. */
+function renderHideTeams(repo: string, pull: InboxPull): HTMLElement {
+  const hide = el(
+    "button",
+    {
+      type: "button",
+      class: "hide-teams",
+      tabindex: "-1",
+      title: `Show only pull requests that request you by name in ${repo}. Undo it in the settings.`,
+      "aria-label": `Hide team requests in ${repo}`,
+      "data-focus-key": `hide-teams:${pull.url}`,
+    },
+    "Hide team requests",
+  );
+  hide.addEventListener("click", () => {
+    hide.disabled = true;
+    void writeReviewScope(repo, "direct").then(() => {
+      live.textContent = `Team requests in ${repo} hidden. Undo it in the settings.`;
+    });
+  });
+  return hide;
 }
 
 function updateAge(time: HTMLTimeElement, spoken: Element | null, now: number): void {
@@ -356,7 +381,11 @@ function rows(): HTMLAnchorElement[] {
 function updateTabStop(): void {
   const all = rows();
   const selected = all.find((row) => row.dataset.focusKey === selectedKey) ?? all[0];
-  for (const row of all) row.tabIndex = row === selected ? 0 : -1;
+  for (const row of all) {
+    row.tabIndex = row === selected ? 0 : -1;
+    const hide = row.parentElement?.querySelector<HTMLButtonElement>(".hide-teams");
+    if (hide) hide.tabIndex = row.tabIndex;
+  }
 }
 
 function onKeydown(event: KeyboardEvent): void {

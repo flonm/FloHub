@@ -1,5 +1,6 @@
 import { fetchInbox, GitHubError, readToken } from "./github";
 import { buildInbox, type Inbox } from "./inbox";
+import { readDirectRepos } from "./review-scope";
 
 const STORAGE_KEY = "inbox";
 export const INBOX_ALARM = "inbox";
@@ -30,6 +31,15 @@ export function refreshInbox(): Promise<Inbox> {
   return running;
 }
 
+/**
+ * Fetches the inbox again once any running fetch is done, for when a setting it was built with changed.
+ * @returns The fresh inbox.
+ */
+export async function refreshInboxAgain(): Promise<Inbox> {
+  await running?.catch(() => undefined);
+  return refreshInbox();
+}
+
 async function fetchAndStore(): Promise<Inbox> {
   const token = await readToken();
   if (!token) {
@@ -41,7 +51,7 @@ async function fetchAndStore(): Promise<Inbox> {
     if (error instanceof GitHubError && error.code !== "failed") await clearInbox();
     throw error;
   });
-  const inbox = buildInbox(raw, Date.now());
+  const inbox = buildInbox(raw, Date.now(), await readDirectRepos());
   if ((await readToken()) !== token) throw new GitHubError("failed", "The token changed. Try again.");
   await chrome.storage.local.set({ [STORAGE_KEY]: inbox });
   await showBadge(inbox.reviewCount);
