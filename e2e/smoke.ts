@@ -193,8 +193,12 @@ const VERSION_FILES: Record<string, { filename: string; status: string; patch: s
   ],
 };
 
-const REVIEW_TEXTS: Record<string, { bodyText: string; hoursAgo: number }> = {
-  defunkt: { bodyText: "Please split the rebase planner out of this change.", hoursAgo: 20 },
+const REVIEW_TEXTS: Record<string, { bodyText: string; bodyHTML?: string; hoursAgo: number }> = {
+  defunkt: {
+    bodyText: "Please split the rebase planner out of this change.",
+    bodyHTML: "<p>Please split the <strong>rebase planner</strong> out of this change.</p>",
+    hoursAgo: 20,
+  },
   coderabbitai: { bodyText: "Actionable comments posted: 2", hoursAgo: 3 },
   octocat: { bodyText: "LGTM once the planner is split.", hoursAgo: 0.5 },
 };
@@ -204,6 +208,7 @@ function withDiscussionText<T extends { author: { login: string } }>(node: T) {
   return {
     ...node,
     bodyText: text?.bodyText ?? "",
+    ...(text?.bodyHTML ? { bodyHTML: text.bodyHTML } : {}),
     url: `${PULL_URL}#pullrequestreview-${node.author.login}`,
     ...(text ? { submittedAt: ago(text.hoursAgo) } : {}),
   };
@@ -216,10 +221,29 @@ const LONG_COMMENT = [
   "Both reproduce with the fixture in cmd/rebase_test.go if you pass --server-rebased twice.",
 ].join("\n");
 
+const LONG_COMMENT_HTML = [
+  "<p>Before this merges, two things from the staging run:</p>",
+  "<ol><li>The adopted branch keeps its old upstream, so a later push goes to the wrong remote ref.</li>",
+  "<li>When the server rebased onto a moved base, the local tip is ahead and the adoption is skipped silently.</li></ol>",
+  "<p>Both reproduce with the fixture in <code>cmd/rebase_test.go</code> if you pass <code>--server-rebased</code> twice.</p>",
+  '<img src="x" onerror="document.title = \'pwned\'">',
+  '<a href="javascript:document.title = \'pwned\'">harmless looking</a>',
+  "<script>document.title = 'pwned'</script>",
+  '<svg onload="document.title = \'pwned\'"><circle r="4"></circle></svg>',
+].join("");
+
 const DISCUSSION_COMMENTS = [
-  { bodyText: "Did we check this against a server-rebased stack?", url: `${PULL_URL}#issuecomment-1`, createdAt: ago(2), author: actor("wycats") },
-  { bodyText: LONG_COMMENT, url: `${PULL_URL}#issuecomment-2`, createdAt: ago(1), author: actor("mojombo") },
   {
+    bodyText: "Did we check this against a server-rebased stack?",
+    bodyHTML: '<p>Did we check this against a <a href="/github/gh-stack/pull/341">server-rebased stack</a>?</p>',
+    url: `${PULL_URL}#issuecomment-1`,
+    createdAt: ago(2),
+    author: actor("wycats"),
+  },
+  { bodyText: LONG_COMMENT, bodyHTML: LONG_COMMENT_HTML, url: `${PULL_URL}#issuecomment-2`, createdAt: ago(1), author: actor("mojombo") },
+  {
+    bodyHTML:
+      '<div class="markdown-alert markdown-alert-warning"><p class="markdown-alert-title"><svg></svg>Warning</p><p>This pull request is not mergeable via GitHub because a downstack PR is open.</p></div>',
     bodyText: "WarningThis pull request is not mergeable via GitHub because a downstack PR is open.",
     url: `${PULL_URL}#issuecomment-3`,
     createdAt: ago(5),
@@ -1325,6 +1349,41 @@ check(
     `${PULL_URL}#issuecomment-1`,
   "each item links to its comment on GitHub",
 );
+const rich = await discussion.locator(".discussion-item").evaluateAll((items) => {
+  const by = (name: string) => items.find((item) => item.querySelector(".name")?.textContent === name)!.querySelector(".discussion-text")!;
+  const mojombo = by("mojombo");
+  const link = by("wycats").querySelector("a");
+  return {
+    strong: by("defunkt").querySelector("strong")?.textContent,
+    listItems: mojombo.querySelectorAll("ol > li").length,
+    code: [...mojombo.querySelectorAll("code")].map((code) => code.textContent),
+    link: [link?.getAttribute("href"), link?.getAttribute("target")],
+    unsafe: {
+      scripts: mojombo.querySelectorAll("script, svg").length,
+      handlers: [...mojombo.querySelectorAll("*")].filter((element) => [...element.attributes].some((attribute) => attribute.name.startsWith("on"))).length,
+      javascriptLinks: [...mojombo.querySelectorAll("a")].filter((anchor) => !/^https?:/.test(anchor.getAttribute("href") ?? "")).length,
+      linkTextKept: mojombo.textContent?.includes("harmless looking"),
+    },
+  };
+});
+check(
+  JSON.stringify(rich) ===
+    JSON.stringify({
+      strong: "rebase planner",
+      listItems: 2,
+      code: ["cmd/rebase_test.go", "--server-rebased"],
+      link: ["https://github.com/github/gh-stack/pull/341", "_top"],
+      unsafe: { scripts: 0, handlers: 0, javascriptLinks: 0, linkTextKept: true },
+    }) && (await discussionPage.title()) !== "pwned",
+  `comments render GitHub's formatting and drop scripts, handlers and javascript: links: ${JSON.stringify(rich)}`,
+);
+await discussion.getByRole("button", { name: "Show bots (2)" }).click();
+check(
+  (await discussion.locator(".markdown-alert.markdown-alert-warning").count()) === 1 &&
+    (await discussion.locator(".markdown-alert svg").count()) === 0,
+  "GitHub's alert boxes keep their kind, without their icons",
+);
+await discussion.getByRole("button", { name: "Hide bots" }).click();
 const seenNow = await discussionWorker?.evaluate(() =>
   chrome.storage.local.get("discussionSeen").then((stored) => (stored.discussionSeen as Record<string, string>)["github/gh-stack#344"]),
 );

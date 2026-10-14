@@ -279,8 +279,51 @@ button { font: inherit; color: inherit; }
 .discussion-age { margin-left: auto; color: var(--rb-muted); font-variant-numeric: tabular-nums; }
 .discussion-link { width: 20px; height: 20px; }
 .discussion-link svg { width: 12px; height: 12px; }
-.discussion-text { margin: 4px 0 0 26px; color: var(--rb-fg); white-space: pre-line; overflow-wrap: anywhere; }
-.discussion-text.clamped { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.discussion-text { margin: 4px 0 0 26px; color: var(--rb-fg); overflow-wrap: anywhere; }
+.discussion-text.clamped {
+  max-height: 6.5em;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 60%, transparent);
+  mask-image: linear-gradient(to bottom, #000 60%, transparent);
+}
+.discussion-text > :first-child { margin-top: 0; }
+.discussion-text > :last-child { margin-bottom: 0; }
+.discussion-text .plain { white-space: pre-line; }
+.discussion-text p, .discussion-text ul, .discussion-text ol, .discussion-text pre, .discussion-text blockquote,
+.discussion-text table, .discussion-text details, .discussion-text .markdown-alert { margin: 0 0 8px; }
+.discussion-text h1, .discussion-text h2, .discussion-text h3, .discussion-text h4, .discussion-text h5, .discussion-text h6 {
+  margin: 8px 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.discussion-text ul, .discussion-text ol { padding-left: 20px; }
+.discussion-text li + li { margin-top: 2px; }
+.discussion-text li:has(> input[type="checkbox"]) { list-style: none; margin-left: -18px; }
+.discussion-text a { color: var(--rb-accent); }
+.discussion-text code, .discussion-text kbd {
+  padding: 0.1em 0.35em;
+  border-radius: 6px;
+  background: var(--bgColor-neutral-muted, rgba(175, 184, 193, 0.2));
+  font: 11px/1.45 var(--fontStack-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+.discussion-text pre {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bgColor-muted, #f6f8fa);
+  overflow-x: auto;
+}
+.discussion-text pre code { padding: 0; background: none; white-space: pre; }
+.discussion-text blockquote { padding: 0 10px; border-left: 3px solid var(--rb-border); color: var(--rb-muted); }
+.discussion-text img { max-width: 100%; height: auto; }
+.discussion-text table { border-collapse: collapse; display: block; overflow-x: auto; }
+.discussion-text th, .discussion-text td { padding: 4px 8px; border: 1px solid var(--rb-border); }
+.discussion-text hr { height: 1px; border: 0; background: var(--rb-border); }
+.discussion-text .markdown-alert { padding: 4px 10px; border-left: 3px solid var(--rb-accent); }
+.discussion-text .markdown-alert-title { margin-bottom: 2px; font-weight: 600; }
+.discussion-text .markdown-alert-tip { border-left-color: var(--rb-success); }
+.discussion-text .markdown-alert-important { border-left-color: var(--rb-done); }
+.discussion-text .markdown-alert-warning { border-left-color: var(--rb-attention); }
+.discussion-text .markdown-alert-caution { border-left-color: var(--rb-danger); }
 .discussion-more { margin-left: 18px; }
 
 .visually-hidden {

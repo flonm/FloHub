@@ -69,6 +69,7 @@ query ($owner: String!, $name: String!, $number: Int!) {
           state
           submittedAt
           bodyText
+          bodyHTML
           url
           author { __typename login avatarUrl url }
           commit { oid }
@@ -77,6 +78,7 @@ query ($owner: String!, $name: String!, $number: Int!) {
       comments(last: 50) {
         nodes {
           bodyText
+          bodyHTML
           url
           createdAt
           author { __typename login avatarUrl url }

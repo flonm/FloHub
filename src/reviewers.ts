@@ -30,6 +30,7 @@ export interface RawPullRequest {
       submittedAt: string | null;
       /** Missing from overviews cached before review texts were fetched. */
       bodyText?: string;
+      bodyHTML?: string;
       url?: string;
       author: RawActor | null;
       commit?: { oid: string } | null;
