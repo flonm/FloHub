@@ -18,6 +18,10 @@ const SCENARIOS: Record<string, { when: string; overrides: Partial<RawStackPull>
     overrides: { reviewDecision: "APPROVED" },
     threads: [3, 5],
   },
+  "Checks running": {
+    when: "Approved, checks still running",
+    overrides: { reviewDecision: "APPROVED", statusCheckRollup: { state: "PENDING" } },
+  },
   "Ready to merge": { when: "Approved, every conversation resolved", overrides: { reviewDecision: "APPROVED" }, threads: [4, 4] },
   "Ready to merge, more reviews required": {
     when: "Approved, branch rules want more reviews",
