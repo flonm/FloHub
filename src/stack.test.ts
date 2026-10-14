@@ -148,6 +148,33 @@ describe("lastActivity", () => {
 });
 
 describe("deriveStack", () => {
+  const ready = { reviewDecision: "APPROVED", statusCheckRollup: { state: "SUCCESS" } } as const;
+
+  test("a ready layer waits on the open layers below it, naming them", () => {
+    const pulls = [buildPull({ number: 1 }), buildPull({ number: 2, ...ready }), buildPull({ number: 3, ...ready })];
+    const view = deriveStack({ ...pulls[2]!, stack: buildStack(pulls) }, "main");
+
+    expect(view.entries.map(({ number, label, detail }) => ({ number, label, detail }))).toEqual([
+      { number: 3, label: "Waiting on downstack", detail: "Ready, but #1 and #2 below it merge first." },
+      { number: 2, label: "Waiting on downstack", detail: "Ready, but #1 below it merges first." },
+      { number: 1, label: "Needs review", detail: null },
+    ]);
+  });
+
+  test("a ready layer above only merged layers is ready to merge", () => {
+    const pulls = [buildPull({ number: 1, state: "MERGED", mergedAt: "2026-10-08T10:00:00Z" }), buildPull({ number: 2, ...ready })];
+    const view = deriveStack({ ...pulls[1]!, stack: buildStack(pulls) }, "main");
+
+    expect(view.entries[0]).toMatchObject({ number: 2, label: "Ready to merge", tone: "success" });
+  });
+
+  test("leaves layers that aren't ready alone, whatever is below them", () => {
+    const pulls = [buildPull({ number: 1 }), buildPull({ number: 2, reviewDecision: "CHANGES_REQUESTED" })];
+    const view = deriveStack({ ...pulls[1]!, stack: buildStack(pulls) }, "main");
+
+    expect(view.entries[0]).toMatchObject({ number: 2, label: "Changes requested" });
+  });
+
   test("orders the stack top first, marks the current entry and counts resolved threads", () => {
     const bottom = buildPull({ number: 7235, state: "MERGED", mergedAt: "2026-10-08T10:00:00Z" });
     const middle = buildPull({
@@ -160,7 +187,7 @@ describe("deriveStack", () => {
     const view = deriveStack(current, "feat/base");
 
     expect(view.entries.map(({ number, position, label, current: isCurrent }) => ({ number, position, label, isCurrent }))).toEqual([
-      { number: 7237, position: 3, label: "Ready to merge", isCurrent: false },
+      { number: 7237, position: 3, label: "Waiting on downstack", isCurrent: false },
       { number: 7236, position: 2, label: "Needs review", isCurrent: true },
       { number: 7235, position: 1, label: "Merged", isCurrent: false },
     ]);

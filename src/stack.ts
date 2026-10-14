@@ -1,5 +1,7 @@
 export type StackTone = "success" | "attention" | "accent" | "danger" | "done" | "neutral";
 
+const READY_TO_MERGE = "Ready to merge";
+
 export interface RawTimelineItem {
   __typename: string;
   createdAt?: string;
@@ -74,9 +76,11 @@ export function deriveStack(
     ? stack.entries.nodes.flatMap(({ position, pullRequest: entry }) => (entry ? [{ position, entry }] : []))
     : [{ position: 1, entry: pullRequest }];
 
-  const entries = nodes
-    .map(({ position, entry }) => toEntry(entry, position, entry.number === pullRequest.number))
-    .sort((a, b) => b.position - a.position);
+  const entries = markWaitingOnDownstack(
+    nodes
+      .map(({ position, entry }) => toEntry(entry, position, entry.number === pullRequest.number))
+      .sort((a, b) => b.position - a.position),
+  );
 
   return {
     number: stack?.number ?? null,
@@ -85,6 +89,25 @@ export function deriveStack(
     currentPosition: entries.find((entry) => entry.current)?.position ?? 1,
     size: stack?.size ?? 1,
   };
+}
+
+/**
+ * A layer can only merge after every layer below it, so a layer that is ready to merge waits on its downstack
+ * while any of those is still open, as Graphite shows it. Layers in the merge queue have not merged yet either.
+ * @param entries The stack, any order.
+ * @returns The same entries, with ready layers above open ones marked as waiting on their downstack.
+ */
+export function markWaitingOnDownstack(entries: StackEntry[]): StackEntry[] {
+  return entries.map((entry) => {
+    if (entry.label !== READY_TO_MERGE) return entry;
+    const below = entries
+      .filter((other) => other.position < entry.position && !other.merged)
+      .sort((a, b) => a.position - b.position)
+      .map((other) => `#${other.number}`);
+    if (below.length === 0) return entry;
+    const layers = below.length === 1 ? `${below[0]} below it merges` : `${below.slice(0, -1).join(", ")} and ${below.at(-1)} below it merge`;
+    return { ...entry, label: "Waiting on downstack", detail: `Ready, but ${layers} first.` };
+  });
 }
 
 function toEntry(pull: RawStackPull, position: number, current: boolean): StackEntry {
@@ -141,7 +164,7 @@ export function deriveStatus(pull: RawStackPull): { tone: StackTone; label: stri
     pull.reviewDecision === "REVIEW_REQUIRED"
       ? "Approved, but GitHub's branch rules still require more reviews before this can merge."
       : null;
-  return { tone: "success", label: "Ready to merge", detail };
+  return { tone: "success", label: READY_TO_MERGE, detail };
 }
 
 /**
