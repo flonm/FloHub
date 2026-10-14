@@ -1,3 +1,4 @@
+import type { RawDiscussionComment } from "./discussion";
 import type { RawInbox } from "./inbox";
 import type { PullRef } from "./pull-ref";
 import type { ReviewEvent } from "./shortcuts";
@@ -67,8 +68,18 @@ query ($owner: String!, $name: String!, $number: Int!) {
         nodes {
           state
           submittedAt
+          bodyText
+          url
           author { __typename login avatarUrl url }
           commit { oid }
+        }
+      }
+      comments(last: 50) {
+        nodes {
+          bodyText
+          url
+          createdAt
+          author { __typename login avatarUrl url }
         }
       }
       stack {
@@ -190,6 +201,8 @@ export interface RawOverview {
             baseRefOid?: string;
             headRefOid?: string;
             stack: RawStack | null;
+            /** Missing from overviews cached before general comments were fetched. */
+            comments?: { nodes: RawDiscussionComment[] };
             forcePushes: { totalCount: number; nodes: ({ createdAt?: string } | null)[] } | null;
           })
       | null;

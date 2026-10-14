@@ -5,6 +5,7 @@ import { ViewedTree } from "./file-tree";
 import { send } from "./messages";
 import { type PullRef, parsePullRef, pullKey, pullTab } from "./pull-ref";
 import { ReviewDialog } from "./review-dialog";
+import { deriveDiscussion, lastReviewBy } from "./discussion";
 import { deriveReviewers, type Reviewer } from "./reviewers";
 import { type CopyTarget, createShortcutMatcher, type ReviewEvent } from "./shortcuts";
 import type { Overview } from "./github";
@@ -21,6 +22,9 @@ const AGE_TICK_MS = 60_000;
 const CACHE_WAIT_MS = 300;
 const POKE_MEMORY_MS = 86_400_000;
 const TEXT_FIELDS = "input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox'], [role='combobox'], [role='searchbox']";
+
+const SEEN_KEY = "discussionSeen";
+const SEEN_MEMORY_MS = 60 * 86_400_000;
 
 let current: PullRef | null = null;
 let state: BarState = { kind: "loading" };
@@ -39,6 +43,10 @@ let viewerIsAuthor = false;
 let claimedKey: string | null = null;
 let pokes: Record<string, number> = {};
 let highlight: HighlightStatus | null = null;
+let discussionExpanded = false;
+let showBots = false;
+/** When the viewer last opened the pull request on screen before this visit, once read from storage. */
+let visit: { key: string; previous: string | null } | null = null;
 const busy = new Set<string>();
 const dialog = new ReviewDialog();
 const versionsDialog = new VersionsDialog();
@@ -65,6 +73,14 @@ const actions = {
     floating.setMinimized(floatingMinimized);
   },
   compareVersions: () => compareVersions(),
+  toggleDiscussion: () => {
+    discussionExpanded = !discussionExpanded;
+    update({ discussionExpanded });
+  },
+  toggleDiscussionBots: () => {
+    showBots = !showBots;
+    update({ showBots });
+  },
   toggleHighlight: () => {
     if (highlight) highlights.setHidden(!highlight.hidden);
     schedule();
@@ -142,6 +158,10 @@ function sync(): void {
     loadedFresh = false;
     viewedTree.sync(null);
     lastAnchorSearch = 0;
+    discussionExpanded = false;
+    showBots = false;
+    visit = null;
+    void startVisit(ref);
     void showFirst(ref);
     void load(true);
   }
@@ -237,6 +257,7 @@ async function showCached(ref: PullRef): Promise<void> {
 function readyState(overview: Overview, ref: PullRef, exact: boolean): Extract<BarState, { kind: "ready" }> | null {
   const pullRequest = overview.repository?.pullRequest;
   if (!pullRequest) return null;
+  const lastReview = exact ? lastReviewBy(pullRequest, overview.viewer.login) : null;
   let stack;
   if (exact) {
     stack = deriveStack(pullRequest, pullRequest.baseRefName);
@@ -261,7 +282,32 @@ function readyState(overview: Overview, ref: PullRef, exact: boolean): Extract<B
     },
     highlight,
     notice: null,
+    discussion: exact ? deriveDiscussion(pullRequest) : null,
+    discussionSeenAt: seenAtFor(ref, lastReview),
+    discussionLastReview: lastReview,
+    discussionExpanded,
+    showBots,
+    viewer: overview.viewer.login,
   };
+}
+
+/** The visit's previous look, or the viewer's last review on a first visit; null until storage has answered. */
+function seenAtFor(ref: PullRef, lastReview: string | null): string | null {
+  if (!visit || visit.key !== pullKey(ref)) return null;
+  return visit.previous ?? lastReview;
+}
+
+/** Remembers that the viewer opened this pull request now, and what they last saw before, for the discussion's "new" marks. */
+async function startVisit(ref: PullRef): Promise<void> {
+  const key = pullKey(ref);
+  const stored = ((await chrome.storage.local.get(SEEN_KEY))[SEEN_KEY] as Record<string, string> | undefined) ?? {};
+  if (current && pullKey(current) === key) {
+    visit = { key, previous: stored[key] ?? null };
+    if (state.kind === "ready") update({ discussionSeenAt: seenAtFor(ref, state.discussionLastReview) });
+  }
+  const now = Date.now();
+  const kept = Object.fromEntries(Object.entries(stored).filter(([, at]) => now - Date.parse(at) < SEEN_MEMORY_MS));
+  await chrome.storage.local.set({ [SEEN_KEY]: { ...kept, [key]: new Date(now).toISOString() } });
 }
 
 function isAuthor(overview: Overview): boolean {
