@@ -11,9 +11,10 @@ import {
   setFileViewed,
   submitReview,
 } from "./github";
-import { clearInbox, ensureInboxAlarm, INBOX_ALARM, refreshInbox } from "./inbox-sync";
+import { clearInbox, ensureInboxAlarm, INBOX_ALARM, refreshInbox, refreshInboxAgain } from "./inbox-sync";
 import type { Message, Reply, ReplyByType } from "./messages";
 import { clearOverviewCache, queueCacheWrite, writeCachedOverview } from "./overview-cache";
+import { REVIEW_SCOPES_KEY } from "./review-scope";
 
 chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) => {
   handle(message).then(sendResponse);
@@ -27,6 +28,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.runtime.onStartup.addListener(() => void refreshInbox().catch(() => undefined));
 chrome.runtime.onInstalled.addListener(() => void refreshInbox().catch(() => undefined));
 chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "sync" && REVIEW_SCOPES_KEY in changes) void refreshInboxAgain().catch(() => undefined);
   if (area !== "local" || !("token" in changes)) return;
   void queueCacheWrite(clearOverviewCache);
   void clearInbox().then(() => refreshInbox()).catch(() => undefined);

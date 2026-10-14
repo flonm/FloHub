@@ -50,6 +50,22 @@
         color: var(--fg);
         font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
       }
+      select {
+        padding: 4px 8px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--bg);
+        color: var(--fg);
+        font: inherit;
+      }
+      .repos { margin: 12px 0 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: 6px; }
+      .repos:empty { display: none; }
+      .repos li { display: flex; align-items: center; gap: 12px; padding: 8px 12px; color: var(--fg); }
+      .repos li + li { border-top: 1px solid var(--border); }
+      .repos .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .add { display: flex; gap: 8px; margin-top: 12px; }
+      .add input { flex: 1; }
+      #scope-status[data-tone="error"] { color: var(--danger); }
       .actions { display: flex; gap: 8px; margin-top: 12px; }
       button {
         padding: 6px 14px;
@@ -107,6 +123,19 @@
         <li><kbd>C</kbd> then <kbd>G</kbd>: copy the pull request's link</li>
       </ul>
       <p>They never fire while you type in a text field. A pending review with draft comments is submitted with your verdict.</p>
+
+      <h2>Review requests</h2>
+      <p>
+        By default, a pull request waits for your review when it requests you or one of your teams. In busy repositories, set
+        <strong>Only me</strong> to see only the pull requests that request you by name. The popup's
+        <strong>Hide team requests</strong> button on a team request does the same.
+      </p>
+      <ul class="repos" id="repos" aria-label="Repositories"></ul>
+      <form class="add" id="add-repo">
+        <input id="repo" aria-label="Repository" autocomplete="off" spellcheck="false" placeholder="owner/repo" />
+        <button type="submit">Only me in this repo</button>
+      </form>
+      <p id="scope-status" role="status" aria-live="polite"></p>
 
       <div id="access" class="disclaimer" role="alert" hidden>
         <p>FloHub can't read <code>github.com</code> or <code>api.github.com</code> yet, so the overview won't appear.</p>

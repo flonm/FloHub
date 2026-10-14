@@ -240,6 +240,27 @@
         white-space: nowrap;
       }
 
+      .hide-teams {
+        position: absolute;
+        right: 12px;
+        bottom: 6px;
+        height: 18px;
+        padding: 0 6px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--bg);
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 16px;
+        cursor: pointer;
+        opacity: 0;
+      }
+      .layer:hover .hide-teams, .hide-teams:focus { opacity: 1; }
+      .layer:hover .hide-teams { background: var(--bg-muted); }
+      .hide-teams:hover { border-color: var(--muted); color: var(--fg); }
+      .hide-teams:disabled { cursor: default; }
+
       .empty { margin: 0; padding: 2px 12px 8px; color: var(--muted); }
 
       .notice {
