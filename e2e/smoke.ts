@@ -96,7 +96,7 @@ const INBOX = {
   review: {
     nodes: [
       inboxPull(901, "feat(api): add the stack endpoint", { stack: INBOX_STACK }),
-      inboxPull(903, "feat(ui): render the stack", { stack: INBOX_STACK, timelineItems: { nodes: [{ __typename: "HeadRefForcePushedEvent", createdAt: ago(1) }] } }),
+      inboxPull(903, "feat(ui): render the stack", { stack: INBOX_STACK, additions: 48, deletions: 7, timelineItems: { nodes: [{ __typename: "HeadRefForcePushedEvent", createdAt: ago(1) }] } }),
       inboxPull(
         77,
         "fix(auth): refresh tokens before they expire and retry the failed request once",
@@ -932,6 +932,17 @@ for (const scheme of ["light", "dark"] as const) {
       JSON.stringify(positions) === JSON.stringify(["3/3", "1/3", null, null, null]) &&
         (await popup.locator(".group-label").count()) === 0,
       `stacked rows show their layer inline, with no group heading: ${JSON.stringify(positions)}`,
+    );
+    const diffStats = await popup.locator(".pull").evaluateAll((rows) =>
+      rows.map((row) => {
+        const stat = row.querySelector(".diffstat");
+        return stat ? { shown: stat.querySelector("[aria-hidden]")?.textContent, spoken: stat.querySelector(".visually-hidden")?.textContent } : null;
+      }),
+    );
+    check(
+      JSON.stringify(diffStats[0]) === JSON.stringify({ shown: "+48\u22127", spoken: "48 additions, 7 deletions" }) &&
+        diffStats.slice(1).every((stat) => stat === null),
+      `rows show the pull request's added and deleted lines, and none without lines: ${JSON.stringify(diffStats)}`,
     );
     const badge = await inboxContext.serviceWorkers()[0]?.evaluate(() => chrome.action.getBadgeText({}));
     check(badge === "3", `the toolbar badge counts the review requests: "${badge}"`);

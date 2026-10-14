@@ -227,6 +227,9 @@
       }
       .threads { display: inline-flex; align-items: center; gap: 3px; color: var(--fg); font-variant-numeric: tabular-nums; }
       .threads.done { color: var(--muted); }
+      .diffstat span[aria-hidden] { display: inline-flex; gap: 4px; font-variant-numeric: tabular-nums; }
+      .diffstat .added { color: var(--success); }
+      .diffstat .deleted { color: var(--danger); }
       .threads svg { width: 12px; height: 12px; }
       .visually-hidden {
         position: absolute;

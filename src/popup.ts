@@ -4,6 +4,7 @@ import { type Inbox, type InboxGroup, type InboxPull, isStale } from "./inbox";
 import { INBOX_PERIOD_MINUTES } from "./inbox-sync";
 import { blocksInbox, isEmptyInbox, moveSelection, type Problem, problemFor, showsPull, updatedLabel } from "./inbox-view";
 import { send } from "./messages";
+import { formatDiffStat } from "./viewed";
 
 type SectionKind = "review" | "mine";
 
@@ -277,6 +278,8 @@ function renderPull(pull: InboxPull, entry: InboxGroup, kind: SectionKind): HTML
     meta.append(layer);
   }
   if (pull.totalThreads > 0) meta.append(renderThreads(pull));
+  const diffStat = renderDiffStat(pull);
+  if (diffStat) meta.append(diffStat);
   meta.append(spoken);
   updateAge(time, spoken, Date.now());
 
@@ -317,6 +320,18 @@ function renderThreads(pull: InboxPull): HTMLElement {
   threads.append(icon("comment"), el("span", { "aria-hidden": "true" }, `${pull.resolvedThreads}/${pull.totalThreads}`));
   threads.append(el("span", { class: "visually-hidden" }, label));
   return threads;
+}
+
+/** The pull request's added and deleted lines, like the counts in the Files changed tree. */
+function renderDiffStat(pull: InboxPull): HTMLElement | null {
+  const stat = formatDiffStat(pull.additions ?? 0, pull.deletions ?? 0);
+  if (!stat) return null;
+  const element = el("span", { class: "item diffstat", title: stat.label });
+  const visible = el("span", { "aria-hidden": "true" });
+  if (stat.added) visible.append(el("span", { class: "added" }, stat.added));
+  if (stat.deleted) visible.append(el("span", { class: "deleted" }, stat.deleted));
+  element.append(visible, el("span", { class: "visually-hidden" }, stat.label));
+  return element;
 }
 
 function renderAvatar(pull: InboxPull): HTMLElement {

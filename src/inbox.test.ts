@@ -17,6 +17,8 @@ function buildPull(number: number, overrides: Partial<RawInboxPull> = {}): RawIn
     latestOpinionatedReviews: { nodes: [] },
     reviewThreads: { totalCount: 0, nodes: [] },
     timelineItems: { nodes: [] },
+    additions: 0,
+    deletions: 0,
     repository: { nameWithOwner: "octo-org/octo-repo" },
     author: { login: "hubot", avatarUrl: "https://avatars.githubusercontent.com/hubot" },
     latestReviews: { nodes: [] },
@@ -123,6 +125,12 @@ describe("buildInbox", () => {
       0,
     );
     expect(inbox.review.flatMap((entry) => entry.pulls.map((pull) => pull.number)).sort()).toEqual([1, 3]);
+  });
+
+  test("carries each pull request's added and deleted lines", () => {
+    const raw: RawInbox = { viewer: { login: "octocat" }, review: { nodes: [buildPull(7, { additions: 120, deletions: 34 })] }, mine: { nodes: [] } };
+
+    expect(buildInbox(raw, 0).review[0]?.pulls[0]).toMatchObject({ additions: 120, deletions: 34 });
   });
 
   test("counts review requests for the badge and skips search hits that are not pull requests", () => {
