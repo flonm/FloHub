@@ -16,6 +16,7 @@ fragment StackPull on PullRequest {
   url
   state
   isDraft
+  isInMergeQueue
   mergeable
   reviewDecision
   createdAt

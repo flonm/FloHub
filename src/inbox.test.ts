@@ -76,7 +76,7 @@ describe("buildInbox", () => {
     expect(inbox.mine.map((entry) => entry.pulls[0]?.label)).toEqual([
       "Checks failed",
       "Changes requested",
-      "Approved",
+      "Ready to merge",
       "Draft",
     ]);
   });

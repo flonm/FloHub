@@ -134,7 +134,11 @@ function renderThreads(entry: StackEntry): HTMLElement {
   return threads;
 }
 
-function badge(entry: StackEntry): HTMLElement {
+/**
+ * @param entry The layer.
+ * @returns Its colored status badge, with the detail as a tooltip.
+ */
+export function badge(entry: Pick<StackEntry, "tone" | "label" | "detail">): HTMLElement {
   const element = el("span", { class: "state", "data-stack-tone": entry.tone }, entry.label);
   if (entry.detail) {
     element.title = entry.detail;

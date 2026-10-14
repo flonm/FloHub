@@ -13,6 +13,8 @@ export interface RawStackPull {
   url: string;
   state: "OPEN" | "CLOSED" | "MERGED";
   isDraft: boolean;
+  /** Missing in overviews cached before FloHub asked for it. */
+  isInMergeQueue?: boolean;
   mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
   reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
   createdAt: string;
@@ -109,12 +111,14 @@ function toEntry(pull: RawStackPull, position: number, current: boolean): StackE
  * Pull requests further up a stack target another branch, where branch protection leaves
  * `reviewDecision` empty; their decision comes from the latest approvals and change requests.
  * An approval counts even while branch rules still require more reviews, with a detail that says so.
+ * An approved pull request is only ready to merge once every conversation is resolved.
  * @param pull The pull request.
  * @returns The badge tone and label.
  */
 export function deriveStatus(pull: RawStackPull): { tone: StackTone; label: string; detail: string | null } {
   if (pull.state === "MERGED") return { tone: "done", label: "Merged", detail: null };
   if (pull.state === "CLOSED") return { tone: "neutral", label: "Closed", detail: null };
+  if (pull.isInMergeQueue) return { tone: "done", label: "Merging…", detail: "In the merge queue." };
   if (pull.isDraft) return { tone: "neutral", label: "Draft", detail: null };
   if (pull.mergeable === "CONFLICTING") return { tone: "danger", label: "Merge conflict", detail: null };
   const checks = pull.statusCheckRollup?.state;
@@ -124,15 +128,20 @@ export function deriveStatus(pull: RawStackPull): { tone: StackTone; label: stri
   if (pull.reviewDecision === "CHANGES_REQUESTED" || states.includes("CHANGES_REQUESTED")) {
     return { tone: "attention", label: "Changes requested", detail: null };
   }
-  if (pull.reviewDecision === "APPROVED") return { tone: "success", label: "Approved", detail: null };
-  if (states.includes("APPROVED")) {
-    const detail =
-      pull.reviewDecision === "REVIEW_REQUIRED"
-        ? "Approved, but GitHub's branch rules still require more reviews before this can merge."
-        : null;
-    return { tone: "success", label: "Approved", detail };
+  if (pull.reviewDecision !== "APPROVED" && !states.includes("APPROVED")) {
+    return { tone: "accent", label: "Needs review", detail: null };
   }
-  return { tone: "accent", label: "Needs review", detail: null };
+
+  const unresolved = pull.reviewThreads.nodes.filter((thread) => !thread.isResolved).length;
+  if (unresolved > 0) {
+    const conversations = unresolved === 1 ? "1 conversation is" : `${unresolved} conversations are`;
+    return { tone: "attention", label: "Unresolved comments", detail: `Approved, but ${conversations} still unresolved.` };
+  }
+  const detail =
+    pull.reviewDecision === "REVIEW_REQUIRED"
+      ? "Approved, but GitHub's branch rules still require more reviews before this can merge."
+      : null;
+  return { tone: "success", label: "Ready to merge", detail };
 }
 
 /**

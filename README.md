@@ -10,11 +10,11 @@
 A Chrome and Firefox extension that adds a Graphite-style overview to every GitHub pull request tab, including the new Files changed view. It shows the stack with each layer's status, plus every reviewer's verdict with one-click re-request.
 
 - **Stack:** GitHub's native stacked PRs, top layer first, down to the base branch. Each layer has a colored badge:
-  - purple: merged
+  - purple: merged, or *Merging…* while it waits in the merge queue
   - grey: draft or closed
   - red: merge conflict or failed checks
-  - yellow: changes requested
-  - green: approved
+  - yellow: changes requested, or *Unresolved comments* when it's approved but conversations are still open
+  - green: *Ready to merge*, approved with every conversation resolved
   - blue: needs review
 
   Each row also shows resolved/total conversations and the time since the last push, title or body edit, or review. The current PR is highlighted, and links keep you on the tab you're on. Merged layers fold into one "N merged" row. The whole section collapses to a colored strip, and that setting is remembered. A PR outside any stack shows on its own.
@@ -75,6 +75,7 @@ After `bun run build`, click the reload icon on the extension's card in `chrome:
 | `bun run typecheck` | `tsc --noEmit` |
 | `bun run lint:firefox` | Builds `dist-firefox/` and runs Mozilla's `web-ext lint` on it |
 | `bun run sign:firefox` | Builds `dist-firefox/` and has addons.mozilla.org sign it as an unlisted add-on. The signed `.xpi` lands in `web-ext-artifacts/`. Needs `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` from [your AMO API keys](https://addons.mozilla.org/developers/addon/api/key/). |
+| `bun run storybook` | Storybook at http://localhost:6008 with the stack section and every layer status, in light and dark (toolbar). Stories live in `src/stories/`. `bun run build-storybook` builds it into `storybook-static/`. |
 | `bun run e2e` | Builds, loads `dist/` into Playwright's Chromium, mocks `api.github.com`, and drives a public PR (`PULL_URL` overrides it). Screenshots go to `e2e/screenshots/`. |
 
 The smoke test runs logged out, so it exercises GitHub's classic PR markup. The bar anchors to the first page heading containing `#<number>` (see `src/anchor.ts`). If a GitHub redesign breaks that, the floating pill still works. Fix the anchor there.
