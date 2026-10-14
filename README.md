@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.png" alt="FloHub logo: an octopus carrying a stack of pull requests" width="128">
+</p>
+
 # FloHub
 
 > [!WARNING]

@@ -37,7 +37,7 @@ if (!result.success) {
   process.exit(1);
 }
 
-for (const file of new Bun.Glob("*").scanSync("static")) {
+for (const file of new Bun.Glob("**/*").scanSync("static")) {
   if (file === "manifest.json") continue;
   await Bun.write(`${OUT}/${file}`, Bun.file(`static/${file}`));
 }

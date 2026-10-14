@@ -4,3 +4,4 @@ dist/
 e2e/screenshots/
 dist-firefox/
 web-ext-artifacts/
+.DS_Store
