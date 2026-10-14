@@ -643,6 +643,25 @@ await page.getByRole("link", { name: /Conversation/ }).first().click();
 await page.waitForURL(/\/pull\/\d+$/);
 await inlineBar(page).getByText("Re-requested").first().waitFor();
 check(await inlineBar(page).isVisible(), "bar survives in-page navigation to the Conversation tab");
+const header = await page.evaluate((number) => {
+  const area = document.querySelector('[data-component="TitleArea"]');
+  const title = area?.querySelector("h1");
+  const label = [...(area?.querySelectorAll("span") ?? [])].find(
+    (span) => span.textContent?.trim() === `#${number}` && !span.classList.contains("sr-only") && span.getClientRects().length > 0,
+  );
+  const bar = document.querySelector('flohub-bar[data-mode="inline"]');
+  if (!area || !title || !label || !bar) return null;
+  const [t, n, b] = [title, label, bar].map((element) => element.getBoundingClientRect()) as [DOMRect, DOMRect, DOMRect];
+  return { sameLine: Math.abs(n.top - t.top) < 24, rightOfTitle: n.left >= t.right - 1, aboveBar: n.bottom <= b.top + 1 };
+}, CURRENT);
+if (header) {
+  check(
+    header.sameLine && header.rightOfTitle && header.aboveBar,
+    `in GitHub's React header the PR number stays right of the title, above the overview: ${JSON.stringify(header)}`,
+  );
+} else {
+  console.log("note - this page has no React PageHeader, so the header placement check was skipped");
+}
 await light.close();
 
 const cached = await launch("light");
@@ -904,8 +923,12 @@ await keys.route(`${PULL_URL}/files`, async (route) => {
   delete headers["content-security-policy"];
   const pageShortcut = `<script>
     window.pageKeys = [];
+    window.pageC = [];
     for (const type of ["keydown", "keyup"]) {
-      window.addEventListener(type, (event) => { if (event.key === "y") window.pageKeys.push(type); }, true);
+      window.addEventListener(type, (event) => {
+        if (event.key === "y") window.pageKeys.push(type);
+        if (event.key === "c") window.pageC.push(type);
+      }, true);
     }
   </script>`;
   const body = (await response.text()).replace(/<head[^>]*>/, (head) => `${head}${pageShortcut}`);
@@ -928,6 +951,22 @@ const pageKeys = () => keyPage.evaluate(() => (window as unknown as { pageKeys: 
 check((await pageKeys()) === "", `GitHub's own y shortcut never sees the Y of R→Y: "${await pageKeys()}"`);
 await keyPage.keyboard.press("y");
 check((await pageKeys()) === "keydown,keyup", "a plain Y still reaches GitHub's own shortcut");
+
+await keys.grantPermissions(["clipboard-read", "clipboard-write"], { origin: "https://github.com" });
+await keyPage.keyboard.press("c");
+await keyPage.keyboard.press("c");
+await toast.getByText(`Copied gh pr checkout ${CURRENT}`).waitFor();
+const readClipboard = () => keyPage.evaluate(() => navigator.clipboard.readText());
+const checkoutCommand = await readClipboard();
+await keyPage.keyboard.press("c");
+await keyPage.keyboard.press("g");
+await toast.getByText(`Copied ${PULL_URL}`).waitFor();
+const pullLink = await readClipboard();
+const pageC = await keyPage.evaluate(() => (window as unknown as { pageC: string[] }).pageC.join());
+check(
+  checkoutCommand === `gh pr checkout ${CURRENT}` && pullLink === PULL_URL && pageC === "",
+  `C then C copies the checkout command and C then G the link, and GitHub's own C shortcut never sees a C: "${checkoutCommand}", "${pullLink}", page saw "${pageC}"`,
+);
 
 await keyPage.keyboard.press("r");
 await keyPage.keyboard.press("a");

@@ -5,7 +5,7 @@ import { send } from "./messages";
 import { type PullRef, parsePullRef, pullKey, pullTab } from "./pull-ref";
 import { ReviewDialog } from "./review-dialog";
 import { deriveReviewers, type Reviewer } from "./reviewers";
-import { createShortcutMatcher, type ReviewEvent } from "./shortcuts";
+import { type CopyTarget, createShortcutMatcher, type ReviewEvent } from "./shortcuts";
 import type { Overview } from "./github";
 import { readCachedOverview } from "./overview-cache";
 import { deriveStack } from "./stack";
@@ -313,7 +313,7 @@ async function rerequest(reviewer: Reviewer): Promise<void> {
 
 function onKeydown(event: KeyboardEvent): void {
   if (!current || dialog.isOpen || versionsDialog.isOpen) return;
-  const action = matchShortcut({
+  const { action, claim } = matchShortcut({
     key: event.key,
     metaKey: event.metaKey,
     ctrlKey: event.ctrlKey,
@@ -323,13 +323,42 @@ function onKeydown(event: KeyboardEvent): void {
     editable: isTextField(event),
     time: event.timeStamp,
   });
+  if (claim) {
+    claimedKey = event.code;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
   if (!action) return;
-  claimedKey = event.code;
-  event.preventDefault();
-  event.stopImmediatePropagation();
   if (action.type === "navigate") navigateStack(action.direction);
+  else if (action.type === "copy") void copyForPull(action.what);
   else if (action.withComment) openReview(action.event);
   else void approveNow();
+}
+
+async function copyForPull(what: CopyTarget): Promise<void> {
+  const ref = current;
+  if (!ref) return;
+  const text =
+    what === "checkout" ? `gh pr checkout ${ref.number}` : `https://github.com/${ref.owner}/${ref.repo}/pull/${ref.number}`;
+  if (await copyText(text)) toast.show(`Copied ${text}`, "success");
+  else toast.show(`Could not copy to the clipboard: ${text}`, "danger");
+}
+
+/** Copies through the Clipboard API, or through a hidden text field where that API is unavailable. */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const field = Object.assign(document.createElement("textarea"), { value: text });
+    field.setAttribute("aria-hidden", "true");
+    field.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none";
+    document.body.append(field);
+    field.select();
+    const copied = document.execCommand("copy");
+    field.remove();
+    return copied;
+  }
 }
 
 /** Hides the rest of a key FloHub claimed from the page, whose own shortcuts may listen for keypress or keyup. */

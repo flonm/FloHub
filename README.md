@@ -25,7 +25,7 @@ A Chrome and Firefox extension that adds a Graphite-style overview to every GitH
 - **Compare versions after a rebase:** when the branch was force-pushed, a "Versions" row shows how often and offers **Compare versions**. It opens a range-diff of the whole pull request between any two of its versions: what the pull request itself changes in each version is diffed against the other, so what the base branch gained in between doesn't show up. Each line on the left shows whether a line of the patch was added (+) or removed (−) between the versions. Files are marked *Changed*, *Newly changed* or *No longer changed*, and files whose change is the same in both versions are listed collapsed. It ignores hunks that only moved, but conflict resolutions show up. By default it compares the version you last reviewed, or else the previous one, with the current one.
 
   Versions are the heads before and after every force push, plus every commit someone reviewed. Plain pushes in between aren't recorded anywhere, so they only show up if someone reviewed them. In a stack, an old version is diffed against the head the base branch had back then (the latest earlier head it descends from), so the parent's old commits don't leak into it.
-- **Placement:** the overview sits inline under the PR title. Once the header scrolls away, a compact pill appears at the bottom left with the stack strip, layer position and reviewer faces. It expands to the full overview (Escape closes it). The button beside it minimizes the pill to a slim tab at the window's left edge, so it doesn't cover the bottom of a long file tree; FloHub remembers the choice.
+- **Placement:** the overview sits inline below GitHub's PR header. In GitHub's newer header, that's below the tabs, so the PR number stays on the title's line. Once the header scrolls away, a compact pill appears at the bottom left with the stack strip, layer position and reviewer faces. It expands to the full overview (Escape closes it). The button beside it minimizes the pill to a slim tab at the window's left edge, so it doesn't cover the bottom of a long file tree; FloHub remembers the choice.
 
 ## Shortcuts
 
@@ -37,8 +37,12 @@ Graphite's shortcuts, on every pull request tab. They never fire while you type 
 | <kbd>R</kbd> then <kbd>Y</kbd> | Approve right away, without a comment |
 | <kbd>R</kbd> then <kbd>A</kbd> | Open the approve dialog to add a comment |
 | <kbd>R</kbd> then <kbd>N</kbd> | Open the request-changes dialog (a comment is required unless you have draft comments) |
+| <kbd>C</kbd> then <kbd>C</kbd> | Copy `gh pr checkout <number>` |
+| <kbd>C</kbd> then <kbd>G</kbd> | Copy the pull request's link |
 
 If you have a pending review with draft comments, every review shortcut submits it, so the drafts go out with your verdict, as with GitHub's "Submit review". In the dialog, <kbd>⌘</kbd><kbd>↵</kbd> submits and <kbd>Esc</kbd> cancels.
+
+Since <kbd>C</kbd> starts a FloHub shortcut, GitHub's own <kbd>C</kbd> shortcut (the commits menu on the Files changed tab) doesn't fire on pull request pages. <kbd>R</kbd> still reaches GitHub, so quote-reply on selected text keeps working.
 
 ## Install
 
