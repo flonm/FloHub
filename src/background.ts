@@ -11,7 +11,7 @@ import {
   setFileViewed,
   submitReview,
 } from "./github";
-import { clearInbox, INBOX_ALARM, INBOX_PERIOD_MINUTES, refreshInbox } from "./inbox-sync";
+import { clearInbox, ensureInboxAlarm, INBOX_ALARM, refreshInbox } from "./inbox-sync";
 import type { Message, Reply, ReplyByType } from "./messages";
 import { clearOverviewCache, queueCacheWrite, writeCachedOverview } from "./overview-cache";
 
@@ -20,7 +20,7 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
   return true;
 });
 
-chrome.alarms.create(INBOX_ALARM, { periodInMinutes: INBOX_PERIOD_MINUTES });
+void ensureInboxAlarm();
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === INBOX_ALARM) void refreshInbox().catch(() => undefined);
 });

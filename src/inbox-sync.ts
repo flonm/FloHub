@@ -8,6 +8,17 @@ export const INBOX_PERIOD_MINUTES = 5;
 let running: Promise<Inbox> | null = null;
 
 /**
+ * Schedules the periodic inbox refresh unless it is already scheduled.
+ * The service worker starts again whenever a GitHub page wakes it, and creating an alarm
+ * that exists replaces it, which would restart the countdown so it never fires while you browse.
+ */
+export async function ensureInboxAlarm(): Promise<void> {
+  const alarm = await chrome.alarms.get(INBOX_ALARM);
+  if (alarm?.periodInMinutes === INBOX_PERIOD_MINUTES) return;
+  await chrome.alarms.create(INBOX_ALARM, { periodInMinutes: INBOX_PERIOD_MINUTES });
+}
+
+/**
  * Fetches the inbox, stores it for the popup and shows the review count on the toolbar icon.
  * Calls that arrive while a fetch runs share it.
  * @returns The fresh inbox.
