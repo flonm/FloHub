@@ -13,12 +13,16 @@ export interface DiscussionItem {
   /** The review's verdict, or null for a general comment. */
   verdict: DiscussionVerdict | null;
   text: string;
+  /** GitHub's rendering of the text, or null in an overview cached before it was fetched. */
+  html: string | null;
   at: string;
   url: string;
 }
 
 export interface RawDiscussionComment {
   bodyText: string;
+  /** Missing from overviews cached before rendered texts were fetched. */
+  bodyHTML?: string;
   url: string;
   createdAt: string;
   author: RawActor | null;
@@ -26,7 +30,14 @@ export interface RawDiscussionComment {
 
 export interface RawDiscussionSource {
   reviews: {
-    nodes: { state: RawReviewState; submittedAt: string | null; bodyText?: string; url?: string; author: RawActor | null }[];
+    nodes: {
+      state: RawReviewState;
+      submittedAt: string | null;
+      bodyText?: string;
+      bodyHTML?: string;
+      url?: string;
+      author: RawActor | null;
+    }[];
   };
   /** Missing in an overview cached before comments were fetched. */
   comments?: { nodes: RawDiscussionComment[] };
@@ -61,12 +72,12 @@ export function deriveDiscussion(pull: RawDiscussionSource): DiscussionItem[] {
     const verdict = VERDICTS[review.state];
     const text = review.bodyText?.trim() ?? "";
     if (!verdict || !review.submittedAt || !review.url || !hasText(text)) continue;
-    items.push(toItem(review.url, review.author, verdict, text, review.submittedAt));
+    items.push(toItem(review.url, review.author, verdict, text, review.bodyHTML ?? null, review.submittedAt));
   }
   for (const comment of pull.comments?.nodes ?? []) {
     const text = comment.bodyText.trim();
     if (!hasText(text)) continue;
-    items.push(toItem(comment.url, comment.author, null, text, comment.createdAt));
+    items.push(toItem(comment.url, comment.author, null, text, comment.bodyHTML ?? null, comment.createdAt));
   }
   return items.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
@@ -100,7 +111,14 @@ function hasText(text: string): boolean {
   return text.replace(INVISIBLE, "").length > 0;
 }
 
-function toItem(url: string, author: RawActor | null, verdict: DiscussionVerdict | null, text: string, at: string): DiscussionItem {
+function toItem(
+  url: string,
+  author: RawActor | null,
+  verdict: DiscussionVerdict | null,
+  text: string,
+  html: string | null,
+  at: string,
+): DiscussionItem {
   return {
     key: url,
     author: author?.login ?? "ghost",
@@ -109,6 +127,7 @@ function toItem(url: string, author: RawActor | null, verdict: DiscussionVerdict
     bot: author?.__typename === "Bot" || (author?.login.endsWith("[bot]") ?? false) || TOOL_TEXTS.some((tool) => tool.test(text)),
     verdict,
     text,
+    html,
     at,
     url,
   };

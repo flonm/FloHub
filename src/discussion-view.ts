@@ -1,6 +1,7 @@
 import { formatAge } from "./age";
 import { type DiscussionItem, type DiscussionVerdict, isUnread } from "./discussion";
 import { el, icon } from "./dom";
+import { renderRichText } from "./rich-text";
 
 export interface DiscussionOptions {
   items: DiscussionItem[];
@@ -23,9 +24,10 @@ const VERDICT_LABEL: Record<DiscussionVerdict, { label: string; tone: string }> 
 
 /** Collapsed, the section shows the new items, up to this many, or else the newest one. */
 const MAX_COLLAPSED = 5;
-/** Texts longer than this, or with more lines, get a "Show more" toggle; shorter ones fit the three-line clamp. */
+/** Texts longer than this, with more lines, or with block content, are clamped behind a "Show more" toggle. */
 const CLAMP_CHARACTERS = 240;
 const CLAMP_LINES = 3;
+const BLOCK_CONTENT = /<(pre|img|table|ul|ol|blockquote|details|h[1-6])\b/i;
 
 /** Items whose full text the viewer opened, kept across re-renders. */
 const opened = new Set<string>();
@@ -104,9 +106,14 @@ function renderItem(item: DiscussionItem, unread: boolean, now: number): HTMLEle
   meta.append(link);
 
   const isOpen = opened.has(item.key);
-  const text = el("p", { class: isOpen ? "discussion-text" : "discussion-text clamped" }, item.text);
+  const long =
+    item.text.length > CLAMP_CHARACTERS || item.text.split("\n").length > CLAMP_LINES || BLOCK_CONTENT.test(item.html ?? "");
+  const text = el("div", { class: long && !isOpen ? "discussion-text clamped" : "discussion-text" });
+  const rich = item.html ? renderRichText(item.html) : null;
+  if (rich) text.append(rich);
+  else text.append(el("p", { class: "plain" }, item.text));
   entry.append(meta, text);
-  if (item.text.length > CLAMP_CHARACTERS || item.text.split("\n").length > CLAMP_LINES) {
+  if (long) {
     const more = el(
       "button",
       { type: "button", class: "text-button discussion-more", "aria-expanded": String(isOpen), "data-focus-key": `discussion-more:${item.key}` },
