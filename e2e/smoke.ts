@@ -1136,11 +1136,20 @@ check(
 await keyPage.keyboard.press("r");
 await keyPage.keyboard.press("n");
 await reviewDialog.getByText("No pending review comments.").waitFor();
-await keyPage.keyboard.press("Meta+Enter");
-await reviewDialog.getByText("Add a comment that explains the changes you're requesting.").waitFor();
 await keyPage.keyboard.press("Escape");
 await reviewDialog.waitFor({ state: "hidden" });
-check(keyFixture.submissions.length === 2, "R→N refuses an empty change request, and Escape closes the dialog");
+check(keyFixture.submissions.length === 2, "Escape closes the request-changes dialog without submitting");
+
+await keyPage.keyboard.press("r");
+await keyPage.keyboard.press("n");
+await reviewDialog.getByText("No pending review comments.").waitFor();
+await keyPage.keyboard.press("Meta+Enter");
+await toast.getByText(`Requested changes on #${CURRENT}.`).waitFor();
+check(
+  JSON.stringify(keyFixture.submissions[2]) ===
+    JSON.stringify({ path: "/reviews", body: { event: "REQUEST_CHANGES", body: "\u200B" } }),
+  `R→N submits an empty change request, with a zero-width space as the comment GitHub requires: ${JSON.stringify(keyFixture.submissions[2])}`,
+);
 
 keyFixture.reviewState.pendingComments = 2;
 await keyPage.keyboard.press("r");
@@ -1148,9 +1157,10 @@ await keyPage.keyboard.press("n");
 await reviewDialog.getByText("Submits your pending review with its 2 draft comments.").waitFor();
 await keyPage.screenshot({ path: `${SCREENSHOTS}/review-dialog-pending-light.png` });
 await keyPage.keyboard.press("Meta+Enter");
-await toast.getByText(`Requested changes on #${CURRENT}.`).waitFor();
+await reviewDialog.waitFor({ state: "hidden" });
+for (let waited = 0; keyFixture.submissions.length < 4 && waited < 5_000; waited += 50) await keyPage.waitForTimeout(50);
 check(
-  JSON.stringify(keyFixture.submissions[2]) ===
+  JSON.stringify(keyFixture.submissions[3]) ===
     JSON.stringify({ path: "/reviews/9/events", body: { event: "REQUEST_CHANGES" } }),
   "R→N with draft comments submits the pending review, comment optional",
 );
@@ -1160,7 +1170,7 @@ await filter.click();
 await keyPage.keyboard.type("ry");
 await keyPage.keyboard.press("Escape");
 await filter.blur();
-check(keyFixture.submissions.length === 3, "keys typed into GitHub's own text fields are ignored");
+check(keyFixture.submissions.length === 4, "keys typed into GitHub's own text fields are ignored");
 
 const upRequest = keyPage.waitForRequest((request) => request.isNavigationRequest(), { timeout: 10_000 });
 await keyPage.keyboard.press("Meta+Shift+ArrowUp");
