@@ -41,11 +41,11 @@ Graphite's shortcuts, on every pull request tab. They never fire while you type 
 | <kbd>⌘</kbd><kbd>⇧</kbd><kbd>↑</kbd> / <kbd>⌘</kbd><kbd>⇧</kbd><kbd>↓</kbd> (<kbd>Ctrl</kbd> outside macOS) | Go to the pull request above / below in the stack, on the same tab |
 | <kbd>R</kbd> then <kbd>Y</kbd> | Approve right away, without a comment |
 | <kbd>R</kbd> then <kbd>A</kbd> | Open the approve dialog to add a comment |
-| <kbd>R</kbd> then <kbd>N</kbd> | Open the request-changes dialog (a comment is required unless you have draft comments) |
+| <kbd>R</kbd> then <kbd>N</kbd> | Open the request-changes dialog; the comment is optional |
 | <kbd>C</kbd> then <kbd>C</kbd> | Copy `gh pr checkout <number>` |
 | <kbd>C</kbd> then <kbd>G</kbd> | Copy the pull request's link |
 
-If you have a pending review with draft comments, every review shortcut submits it, so the drafts go out with your verdict, as with GitHub's "Submit review". In the dialog, <kbd>⌘</kbd><kbd>↵</kbd> submits and <kbd>Esc</kbd> cancels.
+If you have a pending review with draft comments, every review shortcut submits it, so the drafts go out with your verdict, as with GitHub's "Submit review". In the dialog, <kbd>⌘</kbd><kbd>↵</kbd> submits and <kbd>Esc</kbd> cancels. GitHub refuses a change request without a comment, so an empty one is sent with an invisible zero-width space as its comment, which shows as an empty review.
 
 Since <kbd>C</kbd> starts a FloHub shortcut, GitHub's own <kbd>C</kbd> shortcut (the commits menu on the Files changed tab) doesn't fire on pull request pages. <kbd>R</kbd> still reaches GitHub, so quote-reply on selected text keeps working.
 

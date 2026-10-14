@@ -439,15 +439,23 @@ export async function fetchPendingComments(ref: PullRef): Promise<number | null>
 }
 
 /**
+ * GitHub rejects a change request without a comment unless a pending review carries draft comments, through REST and
+ * GraphQL alike. A zero-width space passes that check and renders as an empty review.
+ */
+const EMPTY_CHANGE_REQUEST = "\u200B";
+
+/**
  * Submits a review. A pending review the viewer started is submitted with its draft comments,
- * the way GitHub's own "Submit review" does; otherwise a new review is created.
+ * the way GitHub's own "Submit review" does; otherwise a new review is created. A change request
+ * may be empty, see {@link EMPTY_CHANGE_REQUEST}.
  * @param ref The pull request.
  * @param event Approve or request changes.
  * @param body The review comment; may be empty.
  */
 export async function submitReview(ref: PullRef, event: ReviewEvent, body: string): Promise<void> {
   const pending = await findPendingReview(ref);
-  const payload = JSON.stringify(body ? { event, body } : { event });
+  const text = body || (event === "REQUEST_CHANGES" && !pending ? EMPTY_CHANGE_REQUEST : "");
+  const payload = JSON.stringify(text ? { event, body: text } : { event });
   const path = pending ? `${pullPath(ref)}/reviews/${pending.id}/events` : `${pullPath(ref)}/reviews`;
   await request(path, { method: "POST", body: payload });
 }

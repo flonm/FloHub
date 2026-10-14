@@ -114,12 +114,9 @@ export class ReviewDialog {
     if (!this.host.isConnected) document.body.append(this.host);
     const run = ++this.generation;
     const copy = COPY[request.event];
-    let pending: number | null = null;
-
     const form = el("form", { method: "dialog" });
     const label = el("label", { for: "review-body" }, "Comment ");
-    const optional = el("span", { class: "optional" }, request.event === "APPROVE" ? "(optional)" : "");
-    label.append(optional);
+    label.append(el("span", { class: "optional" }, "(optional)"));
     const body = el("textarea", { id: "review-body", rows: "6", placeholder: "Leave a comment" });
     const hint = el("p", { class: "hint", "aria-live": "polite" }, "Checking for pending comments…");
     const error = el("p", { class: "error", role: "alert" });
@@ -130,14 +127,8 @@ export class ReviewDialog {
     form.append(el("h2", { id: "review-title" }, `${copy.title} #${request.number}`), label, body, hint, error, actions);
     this.dialog.replaceChildren(form);
 
-    const needsBody = () => request.event === "REQUEST_CHANGES" && pending === null && !body.value.trim();
     const send = async () => {
       if (submit.disabled) return;
-      if (needsBody()) {
-        error.textContent = "Add a comment that explains the changes you're requesting.";
-        body.focus();
-        return;
-      }
       error.textContent = "";
       submit.disabled = true;
       cancel.disabled = true;
@@ -171,12 +162,10 @@ export class ReviewDialog {
     void request.pendingComments.then(
       (count) => {
         if (run !== this.generation) return;
-        pending = count;
         hint.textContent =
           count === null
             ? "No pending review comments."
             : `Submits your pending review with its ${count} draft ${count === 1 ? "comment" : "comments"}.`;
-        if (request.event === "REQUEST_CHANGES") optional.textContent = count === null ? "" : "(optional)";
       },
       () => {
         if (run === this.generation) hint.textContent = "Could not check for pending comments.";
