@@ -78,6 +78,8 @@ function inboxPull(number: number, title: string, overrides: Record<string, unkn
     repository: { nameWithOwner: repo },
     author: { login: "hubot", avatarUrl: "https://avatars.githubusercontent.com/hubot?v=4" },
     latestReviews: { nodes: [] },
+    reviewRequests: { nodes: [{ requestedReviewer: { login: "octocat" } }] },
+    reviewRequestedEvents: { nodes: [] },
     stack: null,
     ...overrides,
   };
