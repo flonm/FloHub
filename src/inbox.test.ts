@@ -21,6 +21,7 @@ function buildPull(number: number, overrides: Partial<RawInboxPull> = {}): RawIn
     author: { login: "hubot", avatarUrl: "https://avatars.githubusercontent.com/hubot" },
     latestReviews: { nodes: [] },
     reviewRequests: { nodes: [{ requestedReviewer: { login: "octocat" } }] },
+    reviewRequestedEvents: { nodes: [] },
     stack: null,
     ...overrides,
   };
@@ -82,7 +83,7 @@ describe("buildInbox", () => {
 
   test("marks a review request the viewer already answered once as re-requested", () => {
     const inbox = buildInbox(
-      buildRaw([buildPull(1, { latestReviews: { nodes: [{ author: { login: "octocat" } }] } }), buildPull(2)]),
+      buildRaw([buildPull(1, { latestReviews: { nodes: [{ author: { login: "octocat" }, submittedAt: "2026-10-10T10:00:00Z" }] } }), buildPull(2)]),
       0,
     );
     expect(inbox.review.flatMap((entry) => entry.pulls.map((pull) => [pull.number, pull.rerequested]))).toEqual(
@@ -93,18 +94,35 @@ describe("buildInbox", () => {
     );
   });
 
-  test("leaves out drafts and pull requests the viewer is no longer asked to review by name", () => {
+  test("leaves out drafts and pull requests that no longer ask the viewer", () => {
     const inbox = buildInbox(
       buildRaw([
         buildPull(1),
         buildPull(2, { isDraft: true }),
         buildPull(3, { reviewRequests: { nodes: [] } }),
-        buildPull(4, { reviewRequests: { nodes: [{ requestedReviewer: {} }, { requestedReviewer: { login: "hubot" } }] } }),
+        buildPull(4, { reviewRequests: { nodes: [{ requestedReviewer: { login: "hubot" } }] } }),
       ]),
       0,
     );
     expect(inbox.review.flatMap((entry) => entry.pulls.map((pull) => pull.number))).toEqual([1]);
     expect(inbox.reviewCount).toBe(1);
+  });
+
+  test("keeps a team request until the viewer reviews, and again once the team is re-requested", () => {
+    const team = { reviewRequests: { nodes: [{ requestedReviewer: { combinedSlug: "octo-org/core" } }] } };
+    const requestedAt = (createdAt: string) => ({
+      reviewRequestedEvents: { nodes: [{ createdAt, requestedReviewer: { combinedSlug: "octo-org/core" } }] },
+    });
+    const reviewed = { latestReviews: { nodes: [{ author: { login: "octocat" }, submittedAt: "2026-10-11T09:00:00Z" }] } };
+    const inbox = buildInbox(
+      buildRaw([
+        buildPull(1, { ...team, ...requestedAt("2026-10-10T09:00:00Z") }),
+        buildPull(2, { ...team, ...requestedAt("2026-10-10T09:00:00Z"), ...reviewed }),
+        buildPull(3, { ...team, ...requestedAt("2026-10-12T09:00:00Z"), ...reviewed }),
+      ]),
+      0,
+    );
+    expect(inbox.review.flatMap((entry) => entry.pulls.map((pull) => pull.number)).sort()).toEqual([1, 3]);
   });
 
   test("counts review requests for the badge and skips search hits that are not pull requests", () => {
