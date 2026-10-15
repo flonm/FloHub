@@ -23,7 +23,7 @@ export interface RawStackPull {
   lastEditedAt: string | null;
   mergedAt: string | null;
   statusCheckRollup: { state: "ERROR" | "EXPECTED" | "FAILURE" | "PENDING" | "SUCCESS" } | null;
-  latestOpinionatedReviews: { nodes: { state: string }[] };
+  latestOpinionatedReviews: { nodes: { state: string; author?: { login: string } | null }[] };
   reviewThreads: { totalCount: number; nodes: { isResolved: boolean }[] };
   timelineItems: { nodes: RawTimelineItem[] };
 }

@@ -29,8 +29,8 @@ export function blocksInbox(problem: Problem | null): boolean {
  * @param inbox The inbox.
  * @returns Whether nothing waits for review and the viewer has no open pull requests.
  */
-export function isEmptyInbox(inbox: Pick<Inbox, "review" | "mine">): boolean {
-  return inbox.review.length === 0 && inbox.mine.length === 0;
+export function isEmptyInbox(inbox: Pick<Inbox, "review" | "mine" | "waiting">): boolean {
+  return inbox.review.length === 0 && inbox.mine.length === 0 && (inbox.waiting?.length ?? 0) === 0;
 }
 
 /**

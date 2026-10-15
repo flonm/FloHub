@@ -113,6 +113,23 @@ const INBOX = {
       {},
     ],
   },
+  waiting: {
+    nodes: [
+      inboxPull(
+        130,
+        "fix(sync): keep local commits on rebase",
+        {
+          author: { login: "mojombo", avatarUrl: "https://avatars.githubusercontent.com/mojombo?v=4" },
+          reviewDecision: "CHANGES_REQUESTED",
+          reviewRequests: { nodes: [] },
+          latestReviews: { nodes: [{ state: "CHANGES_REQUESTED", author: { login: "octocat" }, submittedAt: ago(5) }] },
+          latestOpinionatedReviews: { nodes: [{ state: "CHANGES_REQUESTED", author: { login: "octocat" } }] },
+          timelineItems: { nodes: [{ __typename: "HeadRefForcePushedEvent", createdAt: ago(2) }] },
+        },
+        "octo-org/api",
+      ),
+    ],
+  },
 };
 
 const UNREADABLE = "Resource not accessible by personal access token";
@@ -983,6 +1000,7 @@ for (const scheme of ["light", "dark"] as const) {
               "#77 fix(auth): refresh tokens before they expire and retry the failed request once",
             ],
           },
+          { heading: "Waiting for author1", rows: ["#130 fix(sync): keep local commits on rebase"] },
           { heading: "Your pull requests2", rows: ["#121 feat(stack): show failing checks", "#120 docs: explain the stack badge"] },
         ]),
       `popup groups review requests by stack, top layer first, and puts failing own PRs first: ${JSON.stringify(sections)}`,
@@ -991,11 +1009,16 @@ for (const scheme of ["light", "dark"] as const) {
       (await popup.locator(".pull", { hasText: "#77" }).getByText("Re-requested").count()) === 1,
       "a review request the viewer answered before is marked as re-requested",
     );
+    const waitingTags = await popup.locator(".pull", { hasText: "#130" }).locator(".tag").allTextContents();
+    check(
+      waitingTags.join(",") === "You requested changes,New commits",
+      `a pull request waiting for its author shows the viewer's verdict and the author's push since: ${waitingTags.join(",")}`,
+    );
     const positions = await popup.locator(".pull").evaluateAll((pulls) =>
       pulls.map((row) => row.querySelector(":scope .position [aria-hidden]")?.textContent ?? null),
     );
     check(
-      JSON.stringify(positions) === JSON.stringify(["3/3", "1/3", null, null, null]) &&
+      JSON.stringify(positions) === JSON.stringify(["3/3", "1/3", null, null, null, null]) &&
         (await popup.locator(".group-label").count()) === 0,
       `stacked rows show their layer inline, with no group heading: ${JSON.stringify(positions)}`,
     );
@@ -1029,8 +1052,8 @@ for (const scheme of ["light", "dark"] as const) {
       visited.push(await focusedRow());
     }
     check(
-      visited.join(",") === "#901,#77,#121,#77,#120,#121,#903,#903",
-      `arrow keys and j/k move through both sections, Home and End jump to the ends: ${visited.join(",")}`,
+      visited.join(",") === "#901,#77,#130,#77,#120,#121,#903,#903",
+      `arrow keys and j/k move through all sections, Home and End jump to the ends: ${visited.join(",")}`,
     );
     const tabStops = await popup.locator('.pull[tabindex="0"]').count();
     check(tabStops === 1, `the list holds a single tab stop: ${tabStops}`);
@@ -1073,6 +1096,24 @@ for (const scheme of ["light", "dark"] as const) {
       "Enter switches to a tab that already shows the pull request and closes the popup",
     );
     await existing.close();
+
+    const reviewToggle = popup.getByRole("button", { name: /^Waiting for your review/u });
+    await reviewToggle.click();
+    check(
+      (await reviewToggle.getAttribute("aria-expanded")) === "false" &&
+        (await popup.locator(".pull").count()) === 3 &&
+        (await popup.evaluate(() => document.activeElement?.id)) === "section-review",
+      "a section heading collapses its rows and keeps focus",
+    );
+    await popup.reload();
+    await popup.getByText("feat(stack): show failing checks").waitFor();
+    check(
+      (await reviewToggle.getAttribute("aria-expanded")) === "false" && (await popup.locator(".pull", { hasText: "#903" }).count()) === 0,
+      "a collapsed section stays collapsed the next time the popup opens",
+    );
+    await reviewToggle.press("Enter");
+    await popup.locator(".pull", { hasText: "#903" }).waitFor();
+    check((await reviewToggle.getAttribute("aria-expanded")) === "true", "Enter on a collapsed heading expands it again");
     await popup.mouse.move(0, 0);
     await popup.keyboard.press("Home");
   }
