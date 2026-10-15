@@ -173,6 +173,25 @@ describe("deriveReviewers", () => {
     expect(pokeable).toEqual(["mojombo", "octo-org/reviewers", "wycats"]);
   });
 
+  test("offers no poke to a requested reviewer whose latest verdict is an approval", () => {
+    const pullRequest = buildPullRequest({
+      requested: [user("mojombo"), user("defunkt"), user("wycats")],
+      reviews: [
+        [user("mojombo"), "APPROVED"],
+        [user("mojombo"), "COMMENTED"],
+        [user("defunkt"), "APPROVED"],
+        [user("defunkt"), "CHANGES_REQUESTED"],
+        [user("wycats"), "COMMENTED"],
+      ],
+    });
+
+    const pokeable = deriveReviewers(pullRequest, "octocat")
+      .filter((reviewer) => reviewer.canPoke)
+      .map((reviewer) => reviewer.name);
+
+    expect(pokeable).toEqual(["defunkt", "wycats"]);
+  });
+
   test("offers no poke when the viewer cannot update the pull request", () => {
     const pullRequest = buildPullRequest({ viewerCanUpdate: false, requested: [user("mojombo")] });
 
