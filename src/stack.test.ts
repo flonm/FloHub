@@ -145,6 +145,55 @@ describe("deriveStatus", () => {
     expect(deriveStatus(blocked).label).toBe("Changes requested");
     expect(deriveStatus(unreviewed).label).toBe("Needs review");
   });
+
+  const bot = { __typename: "Bot", login: "coderabbitai" } as const;
+  const human = { __typename: "User", login: "mona" } as const;
+
+  test.each([
+    ["requests changes", "CHANGES_REQUESTED"],
+    ["approves", "APPROVED"],
+  ] as const)("a bot that %s still leaves the pull request needing a person's review", (_name, state) => {
+    const pull = buildPull({ reviewDecision: state, latestOpinionatedReviews: { nodes: [{ state, author: bot }] } });
+
+    expect(deriveStatus(pull)).toEqual({ tone: "accent", label: "Needs review", detail: null });
+  });
+
+  test("a bot's change request without a review decision is ignored too", () => {
+    const pull = buildPull({ reviewDecision: null, latestOpinionatedReviews: { nodes: [{ state: "CHANGES_REQUESTED", author: bot }] } });
+
+    expect(deriveStatus(pull).label).toBe("Needs review");
+  });
+
+  test("a person's approval held back by a bot's change request still needs review, and says why", () => {
+    const pull = buildPull({
+      reviewDecision: "CHANGES_REQUESTED",
+      latestOpinionatedReviews: { nodes: [{ state: "APPROVED", author: human }, { state: "CHANGES_REQUESTED", author: bot }] },
+    });
+
+    expect(deriveStatus(pull)).toEqual({
+      tone: "accent",
+      label: "Needs review",
+      detail: "Has approvals, but GitHub still counts a bot's change request, which blocks merging.",
+    });
+  });
+
+  test("a person's change request still counts next to a bot's", () => {
+    const pull = buildPull({
+      reviewDecision: "CHANGES_REQUESTED",
+      latestOpinionatedReviews: { nodes: [{ state: "CHANGES_REQUESTED", author: human }, { state: "CHANGES_REQUESTED", author: bot }] },
+    });
+
+    expect(deriveStatus(pull).label).toBe("Changes requested");
+  });
+
+  test("a person's approval is ready to merge when GitHub didn't count the bot", () => {
+    const pull = buildPull({
+      reviewDecision: "APPROVED",
+      latestOpinionatedReviews: { nodes: [{ state: "APPROVED", author: human }, { state: "CHANGES_REQUESTED", author: bot }] },
+    });
+
+    expect(deriveStatus(pull).label).toBe("Ready to merge");
+  });
 });
 
 describe("lastActivity", () => {

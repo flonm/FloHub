@@ -24,7 +24,7 @@ fragment StackPull on PullRequest {
   lastEditedAt
   mergedAt
   statusCheckRollup { state }
-  latestOpinionatedReviews(first: 20, writersOnly: true) { nodes { state author { login } } }
+  latestOpinionatedReviews(first: 20, writersOnly: true) { nodes { state author { __typename login } } }
   reviewThreads(first: 100) { totalCount nodes { isResolved } }
   timelineItems(last: 20, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, PULL_REQUEST_COMMIT, PULL_REQUEST_REVIEW, RENAMED_TITLE_EVENT]) {
     nodes {

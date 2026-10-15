@@ -23,7 +23,8 @@ export interface RawStackPull {
   lastEditedAt: string | null;
   mergedAt: string | null;
   statusCheckRollup: { state: "ERROR" | "EXPECTED" | "FAILURE" | "PENDING" | "SUCCESS" } | null;
-  latestOpinionatedReviews: { nodes: { state: string; author?: { login: string } | null }[] };
+  /** `__typename` is missing in overviews and inboxes cached before FloHub asked for it. */
+  latestOpinionatedReviews: { nodes: { state: string; author?: { __typename?: string; login: string } | null }[] };
   reviewThreads: { totalCount: number; nodes: { isResolved: boolean }[] };
   timelineItems: { nodes: RawTimelineItem[] };
 }
@@ -136,6 +137,8 @@ function toEntry(pull: RawStackPull, position: number, current: boolean): StackE
  * While branch rules still require more reviews, such as a code owner's, a pull request with approvals
  * still needs review, with a detail that says it has approvals.
  * An approved pull request is only ready to merge once every conversation is resolved and its checks have finished.
+ * A bot's approval or change request, such as an AI reviewer's, never decides the status: only people's reviews count,
+ * and a review decision that only a bot's review explains is read as still needing review.
  * @param pull The pull request.
  * @returns The badge tone and label.
  */
@@ -148,15 +151,27 @@ export function deriveStatus(pull: RawStackPull): { tone: StackTone; label: stri
   const checks = pull.statusCheckRollup?.state;
   if (checks === "FAILURE" || checks === "ERROR") return { tone: "danger", label: "Checks failed", detail: null };
 
-  const states = new Set(pull.latestOpinionatedReviews.nodes.map((review) => review.state));
-  if (pull.reviewDecision === "CHANGES_REQUESTED" || states.has("CHANGES_REQUESTED")) {
+  const states = new Set<string>();
+  const botStates = new Set<string>();
+  for (const { state, author } of pull.latestOpinionatedReviews.nodes) {
+    const bot = author?.__typename === "Bot" || (author?.login.endsWith("[bot]") ?? false);
+    (bot ? botStates : states).add(state);
+  }
+  const fromBot =
+    (pull.reviewDecision === "APPROVED" || pull.reviewDecision === "CHANGES_REQUESTED") &&
+    botStates.has(pull.reviewDecision) &&
+    !states.has(pull.reviewDecision);
+  const decision = fromBot ? "REVIEW_REQUIRED" : pull.reviewDecision;
+  if (decision === "CHANGES_REQUESTED" || states.has("CHANGES_REQUESTED")) {
     return { tone: "attention", label: "Changes requested", detail: null };
   }
-  if (pull.reviewDecision !== "APPROVED" && !states.has("APPROVED")) {
+  if (decision !== "APPROVED" && !states.has("APPROVED")) {
     return { tone: "accent", label: "Needs review", detail: null };
   }
-  if (pull.reviewDecision === "REVIEW_REQUIRED") {
-    const detail = "Has approvals, but GitHub's branch rules still require more reviews, such as a code owner's, before this can merge.";
+  if (decision === "REVIEW_REQUIRED") {
+    const detail = fromBot
+      ? "Has approvals, but GitHub still counts a bot's change request, which blocks merging."
+      : "Has approvals, but GitHub's branch rules still require more reviews, such as a code owner's, before this can merge.";
     return { tone: "accent", label: "Needs review", detail };
   }
 

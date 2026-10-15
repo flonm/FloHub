@@ -27,7 +27,26 @@ const SCENARIOS: Record<string, { when: string; overrides: Partial<RawStackPull>
     when: "Approved, branch rules want more reviews",
     overrides: { reviewDecision: "REVIEW_REQUIRED", latestOpinionatedReviews: { nodes: [{ state: "APPROVED" }] } },
   },
+  "Approved, blocked by a bot": {
+    when: "A person approved, GitHub counts a bot's change request",
+    overrides: {
+      reviewDecision: "CHANGES_REQUESTED",
+      latestOpinionatedReviews: {
+        nodes: [
+          { state: "APPROVED", author: { __typename: "User", login: "mona" } },
+          { state: "CHANGES_REQUESTED", author: { __typename: "Bot", login: "coderabbitai" } },
+        ],
+      },
+    },
+  },
   "Needs review": { when: "Nobody reviewed it yet", overrides: {} },
+  "Needs review, bot requested changes": {
+    when: "Only a bot requested changes",
+    overrides: {
+      reviewDecision: "CHANGES_REQUESTED",
+      latestOpinionatedReviews: { nodes: [{ state: "CHANGES_REQUESTED", author: { __typename: "Bot", login: "coderabbitai" } }] },
+    },
+  },
 };
 
 type Scenario = keyof typeof SCENARIOS;
