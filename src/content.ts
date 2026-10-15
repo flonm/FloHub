@@ -1,6 +1,7 @@
 import { type BarState, ReviewBar } from "./bar";
 import { findInlineAnchor } from "./anchor";
 import { DiffHighlights, type HighlightStatus } from "./diff-highlights";
+import { Favicon, faviconUrl } from "./favicon";
 import { ViewedTree } from "./file-tree";
 import { send } from "./messages";
 import { type PullRef, parsePullRef, pullKey, pullTab } from "./pull-ref";
@@ -51,6 +52,7 @@ const busy = new Set<string>();
 const dialog = new ReviewDialog();
 const versionsDialog = new VersionsDialog();
 const toast = new Toast();
+const favicon = new Favicon();
 const matchShortcut = createShortcutMatcher();
 
 const actions = {
@@ -150,6 +152,7 @@ function sync(): void {
     highlights.sync(null);
     inline.host.remove();
     updateVisibility();
+    favicon.set(null);
     return;
   }
 
@@ -211,6 +214,8 @@ function isInlineInView(): boolean {
 function render(): void {
   inline.render(state);
   floating.render(state);
+  const tone = state.kind === "ready" ? (state.stack.entries.find((entry) => entry.current)?.tone ?? null) : null;
+  favicon.set(faviconUrl(tone));
 }
 
 /** @param message A notice to show in the bar, kept until the bar has loaded. */
