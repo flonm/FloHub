@@ -562,6 +562,17 @@ check(
     ]),
   `inline chips render in status order: ${JSON.stringify(chips)}`,
 );
+const favicons = async () =>
+  page.evaluate(() => [...document.head.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]')].map((link) => decodeURIComponent(link.href)));
+check(
+  (await favicons()).length === 2 && (await favicons()).every((href) => href.startsWith("data:image/svg+xml,") && href.includes("#bf8700")),
+  `the favicons show the pull request's status as a dot, not its checks: ${(await favicons()).length}`,
+);
+await page.evaluate(() => {
+  document.head.querySelector('link[rel="icon"]')?.setAttribute("href", "https://github.githubassets.com/favicons/favicon-success.svg");
+});
+await page.waitForFunction(() => document.head.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href.startsWith("data:"));
+check(true, "the status favicon comes back when GitHub swaps in its checks favicon");
 check(await floatingBar(page).isHidden(), "floating pill is hidden while the inline bar is in view");
 check(
   (await inlineBar(page).getByRole("button", { name: /Re-request review from/u }).count()) === 3,
