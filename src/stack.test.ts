@@ -114,13 +114,13 @@ describe("deriveStatus", () => {
     expect(deriveStatus(pull).label).toBe("Needs review");
   });
 
-  test("counts an approval while branch rules still require more reviews, and says so", () => {
+  test("still needs review while branch rules require more reviews, such as a code owner's, and says it has approvals", () => {
     const pull = buildPull({ reviewDecision: "REVIEW_REQUIRED", latestOpinionatedReviews: { nodes: [{ state: "APPROVED" }] } });
 
     expect(deriveStatus(pull)).toEqual({
-      tone: "success",
-      label: "Ready to merge",
-      detail: "Approved, but GitHub's branch rules still require more reviews before this can merge.",
+      tone: "accent",
+      label: "Needs review",
+      detail: "Has approvals, but GitHub's branch rules still require more reviews, such as a code owner's, before this can merge.",
     });
   });
 

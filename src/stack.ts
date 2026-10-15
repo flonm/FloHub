@@ -133,7 +133,8 @@ function toEntry(pull: RawStackPull, position: number, current: boolean): StackE
  *
  * Pull requests further up a stack target another branch, where branch protection leaves
  * `reviewDecision` empty; their decision comes from the latest approvals and change requests.
- * An approval counts even while branch rules still require more reviews, with a detail that says so.
+ * While branch rules still require more reviews, such as a code owner's, a pull request with approvals
+ * still needs review, with a detail that says it has approvals.
  * An approved pull request is only ready to merge once every conversation is resolved and its checks have finished.
  * @param pull The pull request.
  * @returns The badge tone and label.
@@ -154,6 +155,10 @@ export function deriveStatus(pull: RawStackPull): { tone: StackTone; label: stri
   if (pull.reviewDecision !== "APPROVED" && !states.has("APPROVED")) {
     return { tone: "accent", label: "Needs review", detail: null };
   }
+  if (pull.reviewDecision === "REVIEW_REQUIRED") {
+    const detail = "Has approvals, but GitHub's branch rules still require more reviews, such as a code owner's, before this can merge.";
+    return { tone: "accent", label: "Needs review", detail };
+  }
 
   const unresolved = pull.reviewThreads.nodes.filter((thread) => !thread.isResolved).length;
   if (unresolved > 0) {
@@ -163,11 +168,7 @@ export function deriveStatus(pull: RawStackPull): { tone: StackTone; label: stri
   if (checks === "PENDING" || checks === "EXPECTED") {
     return { tone: "neutral", label: "Checks running", detail: "Approved, waiting for checks to finish before this can merge." };
   }
-  const detail =
-    pull.reviewDecision === "REVIEW_REQUIRED"
-      ? "Approved, but GitHub's branch rules still require more reviews before this can merge."
-      : null;
-  return { tone: "success", label: READY_TO_MERGE, detail };
+  return { tone: "success", label: READY_TO_MERGE, detail: null };
 }
 
 /**
