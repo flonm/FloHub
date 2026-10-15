@@ -14,11 +14,12 @@ const USER_CONTENT = ".markdown-body, .comment-body, .js-comment-body";
  * @returns The element to insert after, or null when the page has no recognizable header.
  */
 export function findInlineAnchor(root: ParentNode, number: number): Element | null {
-  const numberPattern = new RegExp(`#${number}(?!\\d)`);
+  const numberPattern = new RegExp(`#${number}(?!\\d)`, "u");
+  // eslint-disable-next-line unicorn/prefer-scoped-selector -- the root is the document, where :scope adds nothing
   const heading = [...root.querySelectorAll("main h1, main h2, [role='main'] h1")].find(
     (candidate) =>
       !candidate.closest(USER_CONTENT) &&
-      numberPattern.test(candidate.textContent ?? "") &&
+      numberPattern.test(candidate.textContent) &&
       candidate.getClientRects().length > 0,
   );
   if (!heading) return null;

@@ -119,37 +119,33 @@ export function deriveReviewers(pullRequest: RawPullRequest, viewerLogin: string
       const verdict = candidate.opinionated ?? (candidate.commented ? "commented" : null);
       if (candidate.kind === "bot" && !candidate.requested && verdict === "commented") return [];
       const status: ReviewerStatus | null = candidate.requested
-        ? verdict
-          ? "rerequested"
-          : "pending"
+        ? (verdict ? "rerequested" : "pending")
         : verdict;
       if (!status) return [];
-      return [
-        {
-          key: candidate.key,
-          kind: candidate.kind,
-          name: candidate.name,
-          avatarUrl: candidate.avatarUrl,
-          url: candidate.url,
-          status,
-          previous: status === "rerequested" ? verdict : null,
-          canRerequest:
-            pullRequest.viewerCanUpdate &&
-            candidate.kind === "user" &&
-            !candidate.requested &&
-            candidate.name !== viewerLogin,
-          canPoke:
-            pullRequest.viewerCanUpdate &&
-            candidate.requested &&
-            candidate.kind !== "bot" &&
-            candidate.name !== viewerLogin,
-        },
-      ];
+      return {
+        key: candidate.key,
+        kind: candidate.kind,
+        name: candidate.name,
+        avatarUrl: candidate.avatarUrl,
+        url: candidate.url,
+        status,
+        previous: status === "rerequested" ? verdict : null,
+        canRerequest:
+          pullRequest.viewerCanUpdate &&
+          candidate.kind === "user" &&
+          !candidate.requested &&
+          candidate.name !== viewerLogin,
+        canPoke:
+          pullRequest.viewerCanUpdate &&
+          candidate.requested &&
+          candidate.kind !== "bot" &&
+          candidate.name !== viewerLogin,
+      };
     })
-    .sort(
-      (a, b) =>
-        STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || a.name.localeCompare(b.name),
-    );
+    .toSorted((a, b) => {
+      const byStatus = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
+      return byStatus === 0 ? a.name.localeCompare(b.name) : byStatus;
+    });
 }
 
 function toCandidate(reviewer: RawActor | RawTeam): Candidate {

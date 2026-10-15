@@ -39,7 +39,7 @@ describe("deriveDiscussion", () => {
         nodes: [
           review(user("octocat"), "PENDING", "Draft summary", "2026-10-10T10:00:00Z"),
           review(user("mojombo"), "COMMENTED", "", "2026-10-10T11:00:00Z"),
-          review(user("defunkt"), "CHANGES_REQUESTED", "\u200B", "2026-10-10T12:00:00Z"),
+          review(user("defunkt"), "CHANGES_REQUESTED", "\u{200B}", "2026-10-10T12:00:00Z"),
           review(user("pjhyett"), "APPROVED", "  \n ", "2026-10-10T13:00:00Z"),
         ],
       },

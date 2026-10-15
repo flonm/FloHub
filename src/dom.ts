@@ -89,7 +89,8 @@ export function icon(name: IconName, className?: string): SVGSVGElement {
   svg.setAttribute("height", "14");
   svg.setAttribute("aria-hidden", "true");
   if (className) svg.setAttribute("class", className);
-  for (const [tag, attributes] of ICONS[name]) {
+  const shapes = ICONS[name];
+  for (const [tag, attributes] of shapes) {
     const shape = document.createElementNS(SVG_NS, tag);
     for (const [attribute, value] of Object.entries(attributes)) shape.setAttribute(attribute, value);
     svg.append(shape);

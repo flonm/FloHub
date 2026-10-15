@@ -32,7 +32,7 @@ export interface ViewedFiles {
 export function formatDiffStat(additions: number, deletions: number): DiffStat | null {
   if (additions === 0 && deletions === 0) return null;
   const added = additions > 0 ? `+${additions.toLocaleString("en-US")}` : null;
-  const deleted = deletions > 0 ? `\u2212${deletions.toLocaleString("en-US")}` : null;
+  const deleted = deletions > 0 ? `\u{2212}${deletions.toLocaleString("en-US")}` : null;
   const label = `${count(additions, "addition")}, ${count(deletions, "deletion")}`;
   return { added, deleted, label, width: [added, deleted].filter(Boolean).join(" ").length };
 }
@@ -62,10 +62,9 @@ export function matchPath(candidate: string, paths: Iterable<string>): string | 
   let match: string | null = null;
   for (const path of paths) {
     if (path === candidate) return path;
-    if (path.endsWith(suffix)) {
-      if (match !== null) return null;
-      match = path;
-    }
+    if (!path.endsWith(suffix)) continue;
+    if (match !== null) return null;
+    match = path;
   }
   return match;
 }

@@ -1,5 +1,5 @@
 import { fetchInbox, GitHubError, readToken } from "./github";
-import { buildInbox, type Inbox } from "./inbox";
+import { buildInbox, type Inbox, type RawInbox } from "./inbox";
 import { readDirectRepos } from "./review-scope";
 
 const STORAGE_KEY = "inbox";
@@ -24,10 +24,14 @@ export async function ensureInboxAlarm(): Promise<void> {
  * Calls that arrive while a fetch runs share it.
  * @returns The fresh inbox.
  */
-export function refreshInbox(): Promise<Inbox> {
-  running ??= fetchAndStore().finally(() => {
-    running = null;
-  });
+export async function refreshInbox(): Promise<Inbox> {
+  running ??= (async () => {
+    try {
+      return await fetchAndStore();
+    } finally {
+      running = null;
+    }
+  })();
   return running;
 }
 
@@ -36,7 +40,11 @@ export function refreshInbox(): Promise<Inbox> {
  * @returns The fresh inbox.
  */
 export async function refreshInboxAgain(): Promise<Inbox> {
-  await running?.catch(() => undefined);
+  try {
+    await running;
+  } catch {
+    // The fetch below reports its own failure.
+  }
   return refreshInbox();
 }
 
@@ -46,22 +54,19 @@ async function fetchAndStore(): Promise<Inbox> {
     await clearInbox();
     throw new GitHubError("no-token", "Add a GitHub token to see your inbox.");
   }
-  const raw = await fetchInbox().catch(async (error: unknown) => {
+  let raw: RawInbox;
+  try {
+    raw = await fetchInbox();
+  } catch (error) {
     // A count the token can no longer refresh would sit on the toolbar icon for good.
     if (error instanceof GitHubError && error.code !== "failed") await clearInbox();
     throw error;
-  });
+  }
   const inbox = buildInbox(raw, Date.now(), await readDirectRepos());
   if ((await readToken()) !== token) throw new GitHubError("failed", "The token changed. Try again.");
   await chrome.storage.local.set({ [STORAGE_KEY]: inbox });
   await showBadge(inbox.reviewCount);
   return inbox;
-}
-
-/** @returns The last stored inbox, or null. */
-export async function readStoredInbox(): Promise<Inbox | null> {
-  const stored = await chrome.storage.local.get(STORAGE_KEY);
-  return (stored[STORAGE_KEY] as Inbox | undefined) ?? null;
 }
 
 /** Drops the stored inbox and the badge, for when the token changes. */

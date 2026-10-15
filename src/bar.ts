@@ -41,17 +41,17 @@ export type BarState =
     };
 
 export interface BarActions {
-  refresh(): void;
-  rerequest(reviewer: Reviewer): void;
-  poke(reviewer: Reviewer): void;
-  openOptions(): void;
-  toggleStack(): void;
-  toggleMerged(): void;
-  toggleMinimized(): void;
-  compareVersions(): void;
-  toggleHighlight(): void;
-  toggleDiscussion(): void;
-  toggleDiscussionBots(): void;
+  refresh: () => void;
+  rerequest: (reviewer: Reviewer) => void;
+  poke: (reviewer: Reviewer) => void;
+  openOptions: () => void;
+  toggleStack: () => void;
+  toggleMerged: () => void;
+  toggleMinimized: () => void;
+  compareVersions: () => void;
+  toggleHighlight: () => void;
+  toggleDiscussion: () => void;
+  toggleDiscussionBots: () => void;
 }
 
 type Tone = "success" | "danger" | "attention" | "muted";
@@ -100,14 +100,13 @@ export class ReviewBar {
     this.root.setAttribute("role", "region");
     this.root.setAttribute("aria-label", "Reviewers");
     this.shadow.append(style, this.root);
-    if (mode === "floating") {
-      this.shadow.addEventListener("keydown", (event) => {
-        if ((event as KeyboardEvent).key === "Escape" && this.expanded) this.toggle(false);
-      });
-      document.addEventListener("pointerdown", (event) => {
-        if (this.expanded && !event.composedPath().includes(this.host)) this.toggle(false);
-      });
-    }
+    if (mode !== "floating") return;
+    this.shadow.addEventListener("keydown", (event) => {
+      if ((event as KeyboardEvent).key === "Escape" && this.expanded) this.toggle(false);
+    });
+    document.addEventListener("pointerdown", (event) => {
+      if (this.expanded && !event.composedPath().includes(this.host)) this.toggle(false);
+    });
   }
 
   /** @param state What to show. */
@@ -136,7 +135,7 @@ export class ReviewBar {
     this.expanded = false;
     this.host.toggleAttribute("data-minimized", minimized);
     this.render(this.state);
-    if (hadFocus) this.shadow.querySelector<HTMLElement>(`[data-focus-key="${minimized ? "restore" : "pill"}"]`)?.focus();
+    if (hadFocus) this.shadow.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(minimized ? "restore" : "pill")}"]`)?.focus();
   }
 
   private toggle(expanded: boolean): void {
@@ -147,7 +146,7 @@ export class ReviewBar {
 
   private renderFull(): HTMLElement {
     const overview = el("div", { class: "overview" });
-    const state = this.state;
+    const { state } = this;
     if (state.kind === "ready") {
       overview.append(
         renderStackSection(state.stack, {
@@ -180,19 +179,19 @@ export class ReviewBar {
   private renderVersions(state: Extract<BarState, { kind: "ready" }>): HTMLElement {
     const { count, lastAt } = state.forcePushes;
     const times = count === 1 ? "once" : `${count} times`;
-    const last = lastAt && count > 1 ? `, last ${formatAge(lastAt, state.now).spoken}` : lastAt ? ` ${formatAge(lastAt, state.now).spoken}` : "";
+    const last = lastAt && count > 1 ? `, last ${formatAge(lastAt, state.now).spoken}` : (lastAt ? ` ${formatAge(lastAt, state.now).spoken}` : "");
     const bar = el("div", { class: "bar" });
     bar.append(el("span", { class: "label" }, "Versions"));
     if (count > 0) bar.append(el("span", { class: "message" }, `Force-pushed ${times}${last}`));
     bar.append(button("text-button", "Compare versions", () => this.actions.compareVersions(), "compare-versions"));
-    const highlight = state.highlight;
+    const { highlight } = state;
     if (highlight) {
       const files = highlight.changedFiles === 1 ? "1 file" : `${highlight.changedFiles} files`;
       const text = highlight.hidden
         ? `Highlights of what changed since your review (v${highlight.since.number}) are hidden`
-        : highlight.changedFiles === 0 && highlight.droppedFiles.length === 0
+        : (highlight.changedFiles === 0 && highlight.droppedFiles.length === 0
           ? `Nothing changed since your review (v${highlight.since.number})`
-          : `${files} changed since your review (v${highlight.since.number}), highlighted in Files changed`;
+          : `${files} changed since your review (v${highlight.since.number}), highlighted in Files changed`);
       bar.append(el("span", { class: "message" }, `· ${text}`));
       if (highlight.truncated && !highlight.hidden) {
         bar.append(el("span", { class: "message" }, "· GitHub lists at most 300 files, so files past that weren't compared"));
@@ -220,7 +219,7 @@ export class ReviewBar {
   private renderReviewers(): HTMLElement {
     const bar = el("div", { class: "bar" });
     bar.append(el("span", { class: "label" }, "Reviewers"));
-    const state = this.state;
+    const { state } = this;
     if (state.kind === "ready") {
       const refresh = iconButton("refresh", "Refresh reviewers", () => this.actions.refresh(), "refresh");
       refresh.classList.add("refresh");
@@ -336,12 +335,12 @@ export class ReviewBar {
   }
 
   private renderPillContent(): Node[] {
-    const state = this.state;
+    const { state } = this;
     if (state.kind !== "ready") {
       const text = state.kind === "loading" ? "Reviewers…" : "Reviewers";
       return [icon("people"), el("span", { class: "summary" }, text)];
     }
-    const stack = this.renderPillStack(state.stack);
+    const stack = renderPillStack(state.stack);
     if (state.reviewers === null) return [...stack, icon("people"), el("span", { class: "summary" }, "Reviewers…")];
     if (state.reviewers.length === 0) {
       return [...stack, icon("people"), el("span", { class: "summary" }, "No reviewers")];
@@ -369,18 +368,18 @@ export class ReviewBar {
       el("span", { class: "visually-hidden" }, `. ${description}`),
     ];
   }
+}
 
-  private renderPillStack(view: StackView): Node[] {
-    const current = view.entries.find((entry) => entry.current);
-    const position = view.number === null ? (current?.label ?? "") : `${view.currentPosition}/${view.size}`;
-    const spoken = `${describePosition(view)}${current ? `, ${current.label}` : ""}. `;
-    return [
-      renderStrip(view),
-      el("span", { class: "summary", "aria-hidden": "true" }, position),
-      el("span", { class: "visually-hidden" }, spoken),
-      el("span", { class: "divider", "aria-hidden": "true" }),
-    ];
-  }
+function renderPillStack(view: StackView): Node[] {
+  const current = view.entries.find((entry) => entry.current);
+  const position = view.number === null ? (current?.label ?? "") : `${view.currentPosition}/${view.size}`;
+  const spoken = `${describePosition(view)}${current ? `, ${current.label}` : ""}. `;
+  return [
+    renderStrip(view),
+    el("span", { class: "summary", "aria-hidden": "true" }, position),
+    el("span", { class: "visually-hidden" }, spoken),
+    el("span", { class: "divider", "aria-hidden": "true" }),
+  ];
 }
 
 function summarize(reviewers: Reviewer[]): string {
@@ -407,5 +406,5 @@ function avatar(reviewer: Reviewer): HTMLElement {
 function avatarUrl(url: string): string {
   const sized = new URL(url);
   sized.searchParams.set("s", "48");
-  return sized.toString();
+  return sized.href;
 }

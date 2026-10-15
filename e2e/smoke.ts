@@ -1,13 +1,13 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import nodePath from "node:path";
 import { type BrowserContext, chromium, type Page, type Route } from "playwright";
 
 process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS = "1";
 
-const EXTENSION = resolve("dist");
+const EXTENSION = nodePath.resolve("dist");
 const PULL_URL = process.env.PULL_URL ?? "https://github.com/github/gh-stack/pull/344";
-const SCREENSHOTS = resolve(process.env.SCREENSHOTS ?? "e2e/screenshots");
+const SCREENSHOTS = nodePath.resolve(process.env.SCREENSHOTS ?? "e2e/screenshots");
 
 function actor(login: string, typename: "User" | "Bot" = "User") {
   return {
@@ -23,7 +23,7 @@ function review(login: string, state: string, typename: "User" | "Bot" = "User")
 }
 
 const HOUR = 3_600_000;
-const REPO_URL = PULL_URL.replace(/\/pull\/\d+$/, "");
+const REPO_URL = PULL_URL.replace(/\/pull\/\d+$/u, "");
 const CURRENT = Number(PULL_URL.split("/").pop());
 
 function ago(hours: number): string {
@@ -208,9 +208,9 @@ function withDiscussionText<T extends { author: { login: string } }>(node: T) {
   return {
     ...node,
     bodyText: text?.bodyText ?? "",
-    ...(text?.bodyHTML ? { bodyHTML: text.bodyHTML } : {}),
+    ...(text?.bodyHTML && { bodyHTML: text.bodyHTML }),
     url: `${PULL_URL}#pullrequestreview-${node.author.login}`,
-    ...(text ? { submittedAt: ago(text.hoursAgo) } : {}),
+    ...(text && { submittedAt: ago(text.hoursAgo) }),
   };
 }
 
@@ -266,7 +266,7 @@ function createFixture(
   const submissions: { path: string; body: unknown }[] = [];
   const reviewState = { pendingComments: null as number | null };
   const compareLog: string[] = [];
-  return {
+  const created = {
     compareLog,
     rerequests,
     requestLog,
@@ -277,12 +277,12 @@ function createFixture(
     overviewDelay: 0,
     /** An HTTP status to fail the overview query with, or 0 to answer it. */
     overviewFailure: 0,
-    async handle(route: Route) {
+    async handle(route: Route): Promise<void> {
       const request = route.request();
       const graphql = request.url().endsWith("/graphql")
         ? (request.postDataJSON() as { query: string; variables: { path?: string } })
         : null;
-      const mutation = graphql?.query.match(/\b(markFileAsViewed|unmarkFileAsViewed)\b/)?.[1];
+      const mutation = graphql?.query.match(/\b(markFileAsViewed|unmarkFileAsViewed)\b/u)?.[1];
       if (graphql && mutation) {
         const path = graphql.variables.path ?? "";
         viewedMarks.push(`${mutation === "markFileAsViewed" ? "mark" : "unmark"}:${path}`);
@@ -291,11 +291,10 @@ function createFixture(
         return;
       }
       if (graphql?.query.includes("viewerViewedState")) {
-        const nodes = Object.entries(viewed).map(([path, viewerViewedState]) => ({
-          path,
-          viewerViewedState,
-          ...(CHANGE_STATS[path] ?? { additions: 3, deletions: 3 }),
-        }));
+        const nodes = Object.entries(viewed).map(([path, viewerViewedState]) => {
+          const { additions, deletions } = CHANGE_STATS[path] ?? { additions: 3, deletions: 3 };
+          return { path, viewerViewedState, additions, deletions };
+        });
         await route.fulfill({
           json: {
             data: {
@@ -347,9 +346,13 @@ function createFixture(
         return;
       }
       if (graphql) {
-        if (this.overviewDelay > 0) await new Promise((resolve) => setTimeout(resolve, this.overviewDelay));
-        if (this.overviewFailure > 0) {
-          await route.fulfill({ status: this.overviewFailure, json: { message: "Bad gateway" } });
+        if (created.overviewDelay > 0) {
+          await new Promise((resolve) => {
+            setTimeout(resolve, created.overviewDelay);
+          });
+        }
+        if (created.overviewFailure > 0) {
+          await route.fulfill({ status: created.overviewFailure, json: { message: "Bad gateway" } });
           return;
         }
         await route.fulfill({
@@ -359,7 +362,7 @@ function createFixture(
               repository: {
                 pullRequest: {
                   ...STACK_PULLS.find((pull) => pull.number === CURRENT),
-                  ...(options.partial ? { statusCheckRollup: null } : {}),
+                  ...(options.partial && { statusCheckRollup: null }),
                   baseRefName: "main",
                   baseRefOid: "basebase",
                   headRefOid: "ccccccc3",
@@ -385,18 +388,16 @@ function createFixture(
                       review("wycats", "COMMENTED"),
                     ].map((node) => (options.discussion ? withDiscussionText(node) : node)),
                   },
-                  ...(options.discussion ? { comments: { nodes: DISCUSSION_COMMENTS } } : {}),
+                  ...(options.discussion && { comments: { nodes: DISCUSSION_COMMENTS } }),
                 },
               },
             },
-            ...(options.partial
-              ? {
+            ...(options.partial && {
                   errors: [
                     { message: UNREADABLE, path: ["repository", "pullRequest", "statusCheckRollup"] },
                     { message: UNREADABLE, path: ["repository", "pullRequest", "reviewRequests", "nodes", 2, "requestedReviewer"] },
                   ],
-                }
-              : {}),
+                }),
           },
         });
         return;
@@ -430,9 +431,9 @@ function createFixture(
         await route.fulfill({ status: 201, json: {} });
         return;
       }
-      const reviews = /\/pulls\/\d+\/reviews(\/\d+\/(comments|events))?(\?|$)/.exec(new URL(request.url()).pathname + "?");
+      const reviews = /\/pulls\/\d+\/reviews(\/\d+\/(comments|events))?(\?|$)/u.exec(`${new URL(request.url()).pathname}?`);
       if (reviews) {
-        const path = new URL(request.url()).pathname.replace(/^.*\/pulls\/\d+/, "");
+        const path = new URL(request.url()).pathname.replace(/^.*\/pulls\/\d+/u, "");
         if (request.method() === "POST") {
           submissions.push({ path, body: request.postDataJSON() });
           await route.fulfill({ status: 200, json: { id: 9, state: "APPROVED" } });
@@ -443,7 +444,7 @@ function createFixture(
         }
         return;
       }
-      const compare = /\/compare\/(\w+)\.\.\.(\w+)/.exec(request.url());
+      const compare = /\/compare\/(\w+)\.\.\.(\w+)/u.exec(request.url());
       if (compare) {
         const [, base, head] = compare as unknown as [string, string, string];
         compareLog.push(`${base}...${head}`);
@@ -456,17 +457,20 @@ function createFixture(
       await route.fulfill({ status: 404, json: { message: "Not mocked" } });
     },
   };
+  return created;
 }
 
-function badgeText(context: BrowserContext): Promise<string | undefined> {
-  return context.serviceWorkers()[0]?.evaluate(() => chrome.action.getBadgeText({})) ?? Promise.resolve(undefined);
+async function badgeText(context: BrowserContext): Promise<string | undefined> {
+  const [worker] = context.serviceWorkers();
+  const text = await worker?.evaluate(async () => chrome.action.getBadgeText({}));
+  return text;
 }
 
 /**
  * @param api Answers GitHub's API from the start, so the refresh the stored token starts never reaches the real one.
  */
 async function launch(colorScheme: "light" | "dark", api?: (route: Route) => Promise<void>): Promise<BrowserContext> {
-  const context = await chromium.launchPersistentContext(await mkdtemp(join(tmpdir(), "flohub-")), {
+  const context = await chromium.launchPersistentContext(await mkdtemp(nodePath.join(tmpdir(), "flohub-")), {
     channel: "chromium",
     headless: true,
     colorScheme,
@@ -475,7 +479,7 @@ async function launch(colorScheme: "light" | "dark", api?: (route: Route) => Pro
   });
   if (api) await context.route("https://api.github.com/**", api);
   const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
-  await worker.evaluate(() => chrome.storage.local.set({ token: "test-token" }));
+  await worker.evaluate(async () => chrome.storage.local.set({ token: "test-token" }));
   return context;
 }
 
@@ -492,7 +496,7 @@ function visibleText(text: string): string {
     .split("\n")
     .filter((line) => !line.endsWith("conversations resolved") && !line.endsWith("between the versions"))
     .join(" ")
-    .replace(/\s+/g, " ")
+    .replaceAll(/\s+/gu, " ")
     .trim();
 }
 
@@ -507,30 +511,30 @@ function check(condition: boolean, message: string): void {
 }
 
 const setup = await launch("light");
-await setup.route("https://api.github.com/**", (route) => createFixture().handle(route));
-const setupWorker = setup.serviceWorkers()[0];
-await setupWorker?.evaluate(() => chrome.storage.local.remove("token"));
+await setup.route("https://api.github.com/**", async (route) => createFixture().handle(route));
+const [setupWorker] = setup.serviceWorkers();
+await setupWorker?.evaluate(async () => chrome.storage.local.remove("token"));
 const extensionId = new URL(setupWorker?.url() ?? "").host;
 const options = await setup.newPage();
 await options.goto(`chrome-extension://${extensionId}/options.html`);
 await options.getByLabel("Personal access token").fill("github_pat_test");
 await options.getByRole("button", { name: "Save and test" }).click();
 await options.getByText("Signed in as octocat").waitFor();
-const stored = await setupWorker?.evaluate(() => chrome.storage.local.get("token"));
+const stored = await setupWorker?.evaluate(async () => chrome.storage.local.get("token"));
 check(stored?.token === "github_pat_test", "options page tests the token against GitHub and stores it");
 await options.screenshot({ path: `${SCREENSHOTS}/options-light.png` });
 await setup.close();
 
 const light = await launch("light");
 const fixture = createFixture();
-await light.route("https://api.github.com/**", (route) => fixture.handle(route));
+await light.route("https://api.github.com/**", async (route) => fixture.handle(route));
 const page = await light.newPage();
 
 await page.goto(`${PULL_URL}/files`);
 await inlineBar(page).getByText("Changes requested").first().waitFor();
 const chips = await inlineBar(page).locator(".chips > li").allInnerTexts();
 check(
-  JSON.stringify(chips.map((chip) => chip.replace(/\s+/g, " ").trim())) ===
+  JSON.stringify(chips.map((chip) => chip.replaceAll(/\s+/gu, " ").trim())) ===
     JSON.stringify([
       "defunkt Changes requested",
       "mojombo Re-requested · had requested changes",
@@ -543,12 +547,12 @@ check(
 );
 check(await floatingBar(page).isHidden(), "floating pill is hidden while the inline bar is in view");
 check(
-  (await inlineBar(page).getByRole("button", { name: /Re-request review from/ }).count()) === 3,
+  (await inlineBar(page).getByRole("button", { name: /Re-request review from/u }).count()) === 3,
   "re-request is offered for defunkt, pjhyett and wycats only",
 );
 const rows = await inlineBar(page).locator(".stack-list > li").allInnerTexts();
 check(
-  JSON.stringify(rows.map(visibleText)) ===
+  JSON.stringify(rows.map((row) => visibleText(row))) ===
     JSON.stringify([
       "Draft #348 docs(stack): document server rebases 1w",
       "Checks failed #347 feat(stack): show adopted branches in status 0/3 5h",
@@ -566,7 +570,7 @@ check(
   "current layer is marked as the current page",
 );
 check(
-  (await inlineBar(page).getByRole("link", { name: /#345/ }).getAttribute("href")) === `${REPO_URL}/pull/345/files`,
+  (await inlineBar(page).getByRole("link", { name: /#345/u }).getAttribute("href")) === `${REPO_URL}/pull/345/files`,
   "stack links keep the Files changed tab",
 );
 await inlineBar(page).getByRole("button", { name: "2 merged" }).click();
@@ -575,7 +579,7 @@ check((await inlineBar(page).getByText("Merged", { exact: true }).count()) === 2
 await inlineBar(page).screenshot({ path: `${SCREENSHOTS}/inline-light.png` });
 
 check(
-  visibleText(await inlineBar(page).getByText(/^Force-pushed/).innerText()) === "Force-pushed 2 times, last 3 hours ago",
+  visibleText(await inlineBar(page).getByText(/^Force-pushed/u).innerText()) === "Force-pushed 2 times, last 3 hours ago",
   "versions row counts the force pushes",
 );
 await inlineBar(page).getByRole("button", { name: "Compare versions" }).click();
@@ -585,7 +589,7 @@ check(
   (await versions.getByLabel("From").inputValue()) === "1" && (await versions.getByLabel("To").inputValue()) === "3",
   "versions default to the viewer's last reviewed version → current",
 );
-const fileRows = (await versions.locator("details.file > summary").allInnerTexts()).map(visibleText);
+const fileRows = (await versions.locator("details.file > summary").allInnerTexts()).map((row) => visibleText(row));
 check(
   JSON.stringify(fileRows) ===
     JSON.stringify([
@@ -643,7 +647,7 @@ check(
 );
 await versionsRow.getByText("1 file is no longer changed").click();
 check(
-  (await versionsRow.locator(".dropped li").allInnerTexts()).join() === "cmd/legacy.go",
+  (await versionsRow.locator(".dropped li").allInnerTexts()).join(",") === "cmd/legacy.go",
   "the files the pull request no longer changes are listed on demand, reachable by keyboard",
 );
 await inlineBar(page).getByRole("button", { name: "Hide" }).click();
@@ -678,7 +682,7 @@ ${reactRow(null, 324, "+", "If GitHub already rebased the same stack branches…
 ${reactRow(null, 325, "+", "")}
 ${reactRow(324, 326, " ", "#### Diverged stacks")}
 </tbody></table></div></main></body></html>`;
-await light.route("https://github.com/flohub/react-diff/**", (route) =>
+await light.route("https://github.com/flohub/react-diff/**", async (route) =>
   route.fulfill({ body: REACT_PAGE, contentType: "text/html" }),
 );
 const reactPage = await light.newPage();
@@ -688,7 +692,7 @@ check(
   JSON.stringify(
     await reactPage
       .locator("[data-flohub-since]")
-      .evaluateAll((cells) => cells.map((cell) => `${cell.getAttribute("data-diff-side")}:${cell.getAttribute("data-line-number")}`)),
+      .evaluateAll((cells) => cells.map((cell) => `${cell.dataset.diffSide}:${cell.dataset.lineNumber}`)),
   ) === JSON.stringify(["right:324"]),
   "in GitHub's React diff, the line added since the review is highlighted",
 );
@@ -716,7 +720,7 @@ check(
   "every file with changed lines shows its counts, a pure rename shows none",
 );
 check(
-  (await diffStat("README.md").innerText()).replace(/\s+/g, " ") === "+2 \u22121" &&
+  (await diffStat("README.md").innerText()).replaceAll(/\s+/gu, " ") === "+2 \u{2212}1" &&
     (await diffStat("cmd/rebase_test.go").innerText()) === "+1,234" &&
     (await diffStat("cmd/rebase.go").getAttribute("title")) === "120 additions, 34 deletions",
   "line counts read +added −deleted, leave out an empty side and spell out both in the tooltip",
@@ -739,7 +743,7 @@ check(
 );
 const viewedFolders = await tree
   .locator('[role="treeitem"][data-flohub-viewed="VIEWED"]:not([data-flohub-file])')
-  .evaluateAll((items) => items.map((item) => item.querySelector(".ActionList-item-label")?.textContent?.trim()));
+  .evaluateAll((items) => items.map((item) => item.querySelector(".ActionList-item-label")?.textContent.trim()));
 check(
   JSON.stringify(viewedFolders) === JSON.stringify(["docs/src/content/docs", "guides", "reference"]),
   `only folders whose files are all viewed are dimmed: ${JSON.stringify(viewedFolders)}`,
@@ -750,8 +754,8 @@ await tree.locator('flohub-viewed[data-path="cmd/rebase_test.go"][aria-checked="
 await viewedToggle("README.md").click();
 await tree.locator('flohub-viewed[data-path="README.md"][aria-checked="false"]').waitFor();
 check(
-  fixture.viewedMarks.join() === "mark:cmd/rebase_test.go,unmark:README.md",
-  `tree checkboxes mark and unmark files through the API: ${fixture.viewedMarks.join()}`,
+  fixture.viewedMarks.join(",") === "mark:cmd/rebase_test.go,unmark:README.md",
+  `tree checkboxes mark and unmark files through the API: ${fixture.viewedMarks.join(",")}`,
 );
 check(page.url() === urlBeforeToggle, "clicking a tree checkbox does not jump to the file");
 await page.evaluate(() => {
@@ -846,17 +850,17 @@ check(await restoreTab.isHidden(), "the edge tab restores the floating pill");
 await page.mouse.wheel(0, -5000);
 await inlineBar(page).getByRole("button", { name: "Re-request review from defunkt" }).click();
 await inlineBar(page).locator(".chips > li", { hasText: "defunkt" }).getByText("Re-requested").waitFor();
-check(fixture.rerequests.join() === "defunkt", "re-request posts only defunkt to requested_reviewers");
+check(fixture.rerequests.join(",") === "defunkt", "re-request posts only defunkt to requested_reviewers");
 
-await page.getByRole("link", { name: /Conversation/ }).first().click();
-await page.waitForURL(/\/pull\/\d+$/);
+await page.getByRole("link", { name: /Conversation/u }).first().click();
+await page.waitForURL(/\/pull\/\d+$/u);
 await inlineBar(page).getByText("Re-requested").first().waitFor();
 check(await inlineBar(page).isVisible(), "bar survives in-page navigation to the Conversation tab");
 const header = await page.evaluate((number) => {
   const area = document.querySelector('[data-component="TitleArea"]');
   const title = area?.querySelector("h1");
   const label = [...(area?.querySelectorAll("span") ?? [])].find(
-    (span) => span.textContent?.trim() === `#${number}` && !span.classList.contains("sr-only") && span.getClientRects().length > 0,
+    (span) => span.textContent.trim() === `#${number}` && !span.classList.contains("sr-only") && span.getClientRects().length > 0,
   );
   const bar = document.querySelector('flohub-bar[data-mode="inline"]');
   if (!area || !title || !label || !bar) return null;
@@ -875,17 +879,17 @@ await light.close();
 
 const cached = await launch("light");
 const cachedFixture = createFixture();
-await cached.route("https://api.github.com/**", (route) => cachedFixture.handle(route));
+await cached.route("https://api.github.com/**", async (route) => cachedFixture.handle(route));
 const cachedPage = await cached.newPage();
 await cachedPage.goto(`${PULL_URL}/files`);
 await inlineBar(cachedPage).locator(".stack-list").waitFor();
 await inlineBar(cachedPage).getByText("Changes requested").first().waitFor();
-cachedFixture.overviewDelay = 5_000;
+cachedFixture.overviewDelay = 5000;
 await cachedPage.reload();
 const reloadStarted = Date.now();
-await inlineBar(cachedPage).locator(".stack-list").waitFor({ timeout: 3_000 });
+await inlineBar(cachedPage).locator(".stack-list").waitFor({ timeout: 3000 });
 check(
-  Date.now() - reloadStarted < 3_000 &&
+  Date.now() - reloadStarted < 3000 &&
     (await inlineBar(cachedPage).locator(".chips > li").count()) === 6 &&
     (await inlineBar(cachedPage).getByRole("button", { name: "Refresh reviewers" }).getAttribute("aria-busy")) === "true",
   "a revisit shows the cached stack and reviewers at once, marked as refreshing",
@@ -895,43 +899,43 @@ check(true, "the fresh overview replaces the cached one when it arrives");
 
 await cachedPage.goto(PULL_URL, { waitUntil: "commit" });
 const longestGap = await cachedPage.evaluate(
-  () =>
+  async () =>
     new Promise<number>((resolve) => {
+      // oxlint-disable-next-line unicorn/consistent-function-scoping -- the function runs in the page, where outer scopes don't exist
       const shown = () =>
-        !!document.querySelector('flohub-bar[data-mode="inline"]')?.shadowRoot?.querySelector(".stack-header");
+        Boolean(document.querySelector('flohub-bar[data-mode="inline"]')?.shadowRoot?.querySelector(".stack-header"));
       let firstShown = 0;
       let hiddenSince = 0;
       let longest = 0;
       const timer = setInterval(() => {
         const now = performance.now();
         if (shown()) {
-          if (!firstShown) firstShown = now;
-          if (hiddenSince) longest = Math.max(longest, now - hiddenSince);
+          if (firstShown === 0) firstShown = now;
+          if (hiddenSince !== 0) longest = Math.max(longest, now - hiddenSince);
           hiddenSince = 0;
-        } else if (firstShown && !hiddenSince) {
+        } else if (firstShown !== 0 && hiddenSince === 0) {
           hiddenSince = now;
         }
-        if (firstShown && now - firstShown > 3_000) {
-          clearInterval(timer);
-          resolve(hiddenSince ? now - hiddenSince : longest);
-        }
+        if (firstShown === 0 || now - firstShown <= 3000) return;
+        clearInterval(timer);
+        resolve(hiddenSince === 0 ? longest : now - hiddenSince);
       }, 10);
     }),
 );
 check(longestGap < 150, `once shown, the cached stack stays while GitHub re-renders the header (longest gap ${Math.round(longestGap)}ms)`);
 
-const cachedWorker = cached.serviceWorkers()[0];
-await cachedWorker?.evaluate((current) => {
+const [cachedWorker] = cached.serviceWorkers();
+await cachedWorker?.evaluate(async (current) => {
+  // oxlint-disable-next-line unicorn/consistent-function-scoping -- the function runs in the service worker, where outer scopes don't exist
   const key = (n: number) => `github/gh-stack#${n}`;
-  return chrome.storage.local.get(["overviewIndex", `overview:${key(current)}`]).then((stored) => {
-    const overview = stored[`overview:${key(current)}`] as { repository: { pullRequest: { number: number } } };
-    overview.repository.pullRequest.number = 999;
-    const index = { [key(999)]: { savedAt: Date.now(), repo: "github/gh-stack", members: [current, 999] } };
-    return chrome.storage.local.set({ overviewIndex: index, [`overview:${key(999)}`]: overview });
-  });
+  const saved = await chrome.storage.local.get(["overviewIndex", `overview:${key(current)}`]);
+  const overview = saved[`overview:${key(current)}`] as { repository: { pullRequest: { number: number } } };
+  overview.repository.pullRequest.number = 999;
+  const index = { [key(999)]: { savedAt: Date.now(), repo: "github/gh-stack", members: [current, 999] } };
+  await chrome.storage.local.set({ overviewIndex: index, [`overview:${key(999)}`]: overview });
 }, CURRENT);
 await cachedPage.reload();
-await inlineBar(cachedPage).locator(".stack-list").waitFor({ timeout: 3_000 });
+await inlineBar(cachedPage).locator(".stack-list").waitFor({ timeout: 3000 });
 check(
   (await inlineBar(cachedPage).locator('[aria-current="page"]').innerText()).includes(`#${CURRENT}`) &&
     (await inlineBar(cachedPage).getByText("Loading reviewers…").count()) === 1,
@@ -939,10 +943,10 @@ check(
 );
 await inlineBar(cachedPage).getByText("Changes requested").first().waitFor({ timeout: 10_000 });
 check(true, "reviewers fill in once the fresh overview arrives");
-cachedFixture.overviewDelay = 3_000;
+cachedFixture.overviewDelay = 3000;
 cachedFixture.overviewFailure = 502;
 await cachedPage.reload();
-await inlineBar(cachedPage).locator(".stack-list").waitFor({ timeout: 3_000 });
+await inlineBar(cachedPage).locator(".stack-list").waitFor({ timeout: 3000 });
 await inlineBar(cachedPage).getByRole("button", { name: "Retry" }).waitFor({ timeout: 10_000 });
 check(
   (await inlineBar(cachedPage).locator(".chips > li").count()) === 0,
@@ -951,9 +955,9 @@ check(
 await cached.close();
 
 for (const scheme of ["light", "dark"] as const) {
-  const inboxContext = await launch(scheme, (route) => createFixture().handle(route));
+  const inboxContext = await launch(scheme, async (route) => createFixture().handle(route));
   // Tabs the extension opens skip the route, so their rows point at pull requests that do not exist and do not redirect.
-  await inboxContext.route("https://github.com/octo-org/api/pull/77/files", (route) =>
+  await inboxContext.route("https://github.com/octo-org/api/pull/77/files", async (route) =>
     route.fulfill({ contentType: "text/html", body: "<title>Pull request</title>" }),
   );
   const popupId = new URL(inboxContext.serviceWorkers()[0]?.url() ?? "").host;
@@ -987,26 +991,26 @@ for (const scheme of ["light", "dark"] as const) {
       (await popup.locator(".pull", { hasText: "#77" }).getByText("Re-requested").count()) === 1,
       "a review request the viewer answered before is marked as re-requested",
     );
-    const positions = await popup.locator(".pull").evaluateAll((rows) =>
-      rows.map((row) => row.querySelector(".position [aria-hidden]")?.textContent ?? null),
+    const positions = await popup.locator(".pull").evaluateAll((pulls) =>
+      pulls.map((row) => row.querySelector(":scope .position [aria-hidden]")?.textContent ?? null),
     );
     check(
       JSON.stringify(positions) === JSON.stringify(["3/3", "1/3", null, null, null]) &&
         (await popup.locator(".group-label").count()) === 0,
       `stacked rows show their layer inline, with no group heading: ${JSON.stringify(positions)}`,
     );
-    const diffStats = await popup.locator(".pull").evaluateAll((rows) =>
-      rows.map((row) => {
+    const diffStats = await popup.locator(".pull").evaluateAll((pulls) =>
+      pulls.map((row) => {
         const stat = row.querySelector(".diffstat");
         return stat ? { shown: stat.querySelector("[aria-hidden]")?.textContent, spoken: stat.querySelector(".visually-hidden")?.textContent } : null;
       }),
     );
     check(
-      JSON.stringify(diffStats[0]) === JSON.stringify({ shown: "+48\u22127", spoken: "48 additions, 7 deletions" }) &&
+      JSON.stringify(diffStats[0]) === JSON.stringify({ shown: "+48\u{2212}7", spoken: "48 additions, 7 deletions" }) &&
         diffStats.slice(1).every((stat) => stat === null),
       `rows show the pull request's added and deleted lines, and none without lines: ${JSON.stringify(diffStats)}`,
     );
-    const badge = await inboxContext.serviceWorkers()[0]?.evaluate(() => chrome.action.getBadgeText({}));
+    const badge = await inboxContext.serviceWorkers()[0]?.evaluate(async () => chrome.action.getBadgeText({}));
     check(badge === "3", `the toolbar badge counts the review requests: "${badge}"`);
     const longTitle = await popup.locator(".pull", { hasText: "#77" }).locator(".title").evaluate((title) => ({
       truncated: title.scrollWidth > title.clientWidth,
@@ -1017,7 +1021,7 @@ for (const scheme of ["light", "dark"] as const) {
       `a long title truncates and keeps the full title as a tooltip: ${JSON.stringify(longTitle)}`,
     );
 
-    const focusedRow = () => popup.evaluate(() => document.activeElement?.querySelector(".number")?.textContent?.trim() ?? null);
+    const focusedRow = async () => popup.evaluate(() => document.activeElement?.querySelector(".number")?.textContent.trim() ?? null);
     check((await focusedRow()) === "#903", `the popup opens with focus on the first row: ${await focusedRow()}`);
     const visited: (string | null)[] = [];
     for (const key of ["ArrowDown", "j", "j", "k", "End", "ArrowUp", "Home", "ArrowUp"]) {
@@ -1025,8 +1029,8 @@ for (const scheme of ["light", "dark"] as const) {
       visited.push(await focusedRow());
     }
     check(
-      visited.join() === "#901,#77,#121,#77,#120,#121,#903,#903",
-      `arrow keys and j/k move through both sections, Home and End jump to the ends: ${visited.join()}`,
+      visited.join(",") === "#901,#77,#121,#77,#120,#121,#903,#903",
+      `arrow keys and j/k move through both sections, Home and End jump to the ends: ${visited.join(",")}`,
     );
     const tabStops = await popup.locator('.pull[tabindex="0"]').count();
     check(tabStops === 1, `the list holds a single tab stop: ${tabStops}`);
@@ -1062,6 +1066,7 @@ for (const scheme of ["light", "dark"] as const) {
     await launcher.locator(".pull", { hasText: "#77" }).waitFor();
     const pagesBefore = inboxContext.pages().length;
     await launcher.locator(".pull", { hasText: "#77" }).focus();
+    // eslint-disable-next-line unicorn/prefer-await -- the press rejects once the popup closes, while waitForEvent waits for that close
     await Promise.all([launcher.waitForEvent("close"), launcher.keyboard.press("Enter").catch(() => undefined)]);
     check(
       inboxContext.pages().length === pagesBefore - 1 && inboxContext.pages().filter((tab) => tab.url().includes("/pull/77")).length === 1,
@@ -1073,7 +1078,7 @@ for (const scheme of ["light", "dark"] as const) {
   }
   await popup.waitForFunction(() => [...document.images].every((image) => image.complete));
   await popup.screenshot({ path: `${SCREENSHOTS}/popup-${scheme}.png`, fullPage: true });
-  await inboxContext.serviceWorkers()[0]?.evaluate(() => chrome.storage.local.remove("token"));
+  await inboxContext.serviceWorkers()[0]?.evaluate(async () => chrome.storage.local.remove("token"));
   await popup.reload();
   await popup.getByRole("button", { name: "Set up token" }).waitFor();
   check(
@@ -1084,9 +1089,8 @@ for (const scheme of ["light", "dark"] as const) {
 }
 
 for (const scheme of ["light", "dark"] as const) {
-  let release = () => {};
-  const gate = new Promise<void>((resolve) => (release = resolve));
-  const emptyContext = await launch(scheme, (route) => createFixture({ inbox: EMPTY_INBOX, inboxGate: gate }).handle(route));
+  const { promise: gate, resolve: release } = Promise.withResolvers<null>();
+  const emptyContext = await launch(scheme, async (route) => createFixture({ inbox: EMPTY_INBOX, inboxGate: gate }).handle(route));
   const popupId = new URL(emptyContext.serviceWorkers()[0]?.url() ?? "").host;
   const popup = await emptyContext.newPage();
   await popup.setViewportSize({ width: 504, height: 600 });
@@ -1094,7 +1098,7 @@ for (const scheme of ["light", "dark"] as const) {
   await popup.locator(".skeleton").waitFor();
   check((await popup.locator("main").getAttribute("aria-busy")) === "true", `the first open shows a busy skeleton (${scheme})`);
   if (scheme === "light") await popup.screenshot({ path: `${SCREENSHOTS}/popup-loading-light.png`, fullPage: true });
-  release();
+  release(null);
   await popup.getByText("Nothing to review").waitFor();
   check(
     (await popup.locator("section").count()) === 0 && (await popup.locator("main").getAttribute("aria-busy")) === "false",
@@ -1103,6 +1107,7 @@ for (const scheme of ["light", "dark"] as const) {
   await popup.screenshot({ path: `${SCREENSHOTS}/popup-empty-${scheme}.png`, fullPage: true });
   if (scheme === "light") {
     // The popup closes while the key is still being pressed.
+    // eslint-disable-next-line unicorn/prefer-await -- the press rejects once the popup closes, while waitForEvent waits for that close
     await Promise.all([popup.waitForEvent("close"), popup.keyboard.press("Escape").catch(() => undefined)]);
     check(true, "Escape closes the popup");
   }
@@ -1110,7 +1115,7 @@ for (const scheme of ["light", "dark"] as const) {
 }
 
 const dark = await launch("dark");
-await dark.route("https://api.github.com/**", (route) => createFixture().handle(route));
+await dark.route("https://api.github.com/**", async (route) => createFixture().handle(route));
 const darkPage = await dark.newPage();
 await darkPage.goto(`${PULL_URL}/files`);
 await inlineBar(darkPage).getByText("Approved").first().waitFor();
@@ -1126,8 +1131,8 @@ await floatingBar(darkPage).locator(".panel").waitFor();
 await darkPage.waitForTimeout(250);
 await darkPage.screenshot({ path: `${SCREENSHOTS}/floating-expanded-dark.png` });
 
-const worker = dark.serviceWorkers()[0];
-await worker?.evaluate(() => chrome.storage.local.remove("token"));
+const [worker] = dark.serviceWorkers();
+await worker?.evaluate(async () => chrome.storage.local.remove("token"));
 await darkPage.goto(`${PULL_URL}/files`);
 await inlineBar(darkPage).getByRole("button", { name: "Set up token" }).waitFor();
 check(true, "missing token shows the setup prompt");
@@ -1136,7 +1141,7 @@ await dark.close();
 
 const keys = await launch("light");
 const keyFixture = createFixture();
-await keys.route("https://api.github.com/**", (route) => keyFixture.handle(route));
+await keys.route("https://api.github.com/**", async (route) => keyFixture.handle(route));
 await keys.route(`${PULL_URL}/files`, async (route) => {
   const response = await route.fetch();
   const headers = { ...response.headers() };
@@ -1151,7 +1156,7 @@ await keys.route(`${PULL_URL}/files`, async (route) => {
       }, true);
     }
   </script>`;
-  const body = (await response.text()).replace(/<head[^>]*>/, (head) => `${head}${pageShortcut}`);
+  const body = (await response.text()).replace(/<head[^>]*>/u, (head) => `${head}${pageShortcut}`);
   await route.fulfill({ response, headers, body });
 });
 const keyPage = await keys.newPage();
@@ -1167,7 +1172,7 @@ check(
   JSON.stringify(keyFixture.submissions) === JSON.stringify([{ path: "/reviews", body: { event: "APPROVE" } }]),
   `R→Y approves without a comment: ${JSON.stringify(keyFixture.submissions)}`,
 );
-const pageKeys = () => keyPage.evaluate(() => (window as unknown as { pageKeys: string[] }).pageKeys.join());
+const pageKeys = async () => keyPage.evaluate(() => (globalThis as unknown as { pageKeys: string[] }).pageKeys.join(","));
 check((await pageKeys()) === "", `GitHub's own y shortcut never sees the Y of R→Y: "${await pageKeys()}"`);
 await keyPage.keyboard.press("y");
 check((await pageKeys()) === "keydown,keyup", "a plain Y still reaches GitHub's own shortcut");
@@ -1176,13 +1181,13 @@ await keys.grantPermissions(["clipboard-read", "clipboard-write"], { origin: "ht
 await keyPage.keyboard.press("c");
 await keyPage.keyboard.press("c");
 await toast.getByText(`Copied gh pr checkout ${CURRENT}`).waitFor();
-const readClipboard = () => keyPage.evaluate(() => navigator.clipboard.readText());
+const readClipboard = async () => keyPage.evaluate(async () => navigator.clipboard.readText());
 const checkoutCommand = await readClipboard();
 await keyPage.keyboard.press("c");
 await keyPage.keyboard.press("g");
 await toast.getByText(`Copied ${PULL_URL}`).waitFor();
 const pullLink = await readClipboard();
-const pageC = await keyPage.evaluate(() => (window as unknown as { pageC: string[] }).pageC.join());
+const pageC = await keyPage.evaluate(() => (globalThis as unknown as { pageC: string[] }).pageC.join(","));
 check(
   checkoutCommand === `gh pr checkout ${CURRENT}` && pullLink === PULL_URL && pageC === "",
   `C then C copies the checkout command and C then G the link, and GitHub's own C shortcut never sees a C: "${checkoutCommand}", "${pullLink}", page saw "${pageC}"`,
@@ -1220,7 +1225,7 @@ await keyPage.keyboard.press("Meta+Enter");
 await toast.getByText(`Requested changes on #${CURRENT}.`).waitFor();
 check(
   JSON.stringify(keyFixture.submissions[2]) ===
-    JSON.stringify({ path: "/reviews", body: { event: "REQUEST_CHANGES", body: "\u200B" } }),
+    JSON.stringify({ path: "/reviews", body: { event: "REQUEST_CHANGES", body: "\u{200B}" } }),
   `R→N submits an empty change request, with a zero-width space as the comment GitHub requires: ${JSON.stringify(keyFixture.submissions[2])}`,
 );
 
@@ -1231,7 +1236,7 @@ await reviewDialog.getByText("Submits your pending review with its 2 draft comme
 await keyPage.screenshot({ path: `${SCREENSHOTS}/review-dialog-pending-light.png` });
 await keyPage.keyboard.press("Meta+Enter");
 await reviewDialog.waitFor({ state: "hidden" });
-for (let waited = 0; keyFixture.submissions.length < 4 && waited < 5_000; waited += 50) await keyPage.waitForTimeout(50);
+for (let waited = 0; keyFixture.submissions.length < 4 && waited < 5000; waited += 50) await keyPage.waitForTimeout(50);
 check(
   JSON.stringify(keyFixture.submissions[3]) ===
     JSON.stringify({ path: "/reviews/9/events", body: { event: "REQUEST_CHANGES" } }),
@@ -1258,7 +1263,7 @@ check(down === `${REPO_URL}/pull/341/files`, `⌘⇧↓ moves down the stack: ${
 await keys.close();
 
 const darkKeys = await launch("dark");
-await darkKeys.route("https://api.github.com/**", (route) => createFixture().handle(route));
+await darkKeys.route("https://api.github.com/**", async (route) => createFixture().handle(route));
 const darkKeyPage = await darkKeys.newPage();
 await darkKeyPage.goto(`${PULL_URL}/files`);
 await inlineBar(darkKeyPage).locator(".stack-list").waitFor();
@@ -1271,57 +1276,57 @@ await darkKeys.close();
 
 const pokes = await launch("light");
 const pokeFixture = createFixture();
-await pokes.route("https://api.github.com/**", (route) => pokeFixture.handle(route));
+await pokes.route("https://api.github.com/**", async (route) => pokeFixture.handle(route));
 const pokePage = await pokes.newPage();
 await pokePage.goto(`${PULL_URL}/files`);
 await inlineBar(pokePage).locator(".stack-list").waitFor();
-const pokeButtons = await inlineBar(pokePage).getByRole("button", { name: /^Poke / }).evaluateAll((buttons) =>
-  buttons.map((button) => button.getAttribute("aria-label")?.split(":")[0]),
+const pokeButtons = await inlineBar(pokePage).getByRole("button", { name: /^Poke /u }).evaluateAll((buttons) =>
+  buttons.map((button) => button.getAttribute("aria-label")?.split(":", 1)[0]),
 );
 check(
   JSON.stringify(pokeButtons) === JSON.stringify(["Poke mojombo", "Poke github/backend"]),
   `only currently requested reviewers can be poked: ${JSON.stringify(pokeButtons)}`,
 );
-await inlineBar(pokePage).getByRole("button", { name: /^Poke mojombo/ }).click();
+await inlineBar(pokePage).getByRole("button", { name: /^Poke mojombo/u }).click();
 await pokePage.locator("flohub-toast").getByText("Poked mojombo. GitHub notifies them within a minute.").waitFor();
 await inlineBar(pokePage).locator(".chips > li", { hasText: "mojombo" }).getByText("· poked just now").waitFor();
-await inlineBar(pokePage).getByRole("button", { name: /^Poke github\/backend/ }).click();
+await inlineBar(pokePage).getByRole("button", { name: /^Poke github\/backend/u }).click();
 await inlineBar(pokePage).locator(".chips > li", { hasText: "github/backend" }).getByText("· poked just now").waitFor();
 check(
-  pokeFixture.requestLog.join() === "remove:mojombo,add:mojombo,remove:team:backend,add:team:backend",
-  `a poke removes and re-adds the request, for users and teams: ${pokeFixture.requestLog.join()}`,
+  pokeFixture.requestLog.join(",") === "remove:mojombo,add:mojombo,remove:team:backend,add:team:backend",
+  `a poke removes and re-adds the request, for users and teams: ${pokeFixture.requestLog.join(",")}`,
 );
 await inlineBar(pokePage).screenshot({ path: `${SCREENSHOTS}/poke-light.png` });
 await pokePage.reload();
 await inlineBar(pokePage).locator(".chips > li", { hasText: "mojombo" }).getByText("· poked just now").waitFor();
 check(
-  (await inlineBar(pokePage).getByRole("button", { name: /^Poke / }).count()) === 0,
+  (await inlineBar(pokePage).getByRole("button", { name: /^Poke /u }).count()) === 0,
   "a poked reviewer can't be poked again within the hour, across reloads",
 );
 await pokes.close();
 
 const failedPoke = await launch("light");
 const failedFixture = createFixture({ failReadd: true });
-await failedPoke.route("https://api.github.com/**", (route) => failedFixture.handle(route));
+await failedPoke.route("https://api.github.com/**", async (route) => failedFixture.handle(route));
 const failedPage = await failedPoke.newPage();
 await failedPage.goto(`${PULL_URL}/files`);
 await inlineBar(failedPage).locator(".stack-list").waitFor();
-await inlineBar(failedPage).getByRole("button", { name: /^Poke mojombo/ }).click();
-await failedPage.locator("flohub-toast").getByText(/Re-request mojombo by hand\./).waitFor();
+await inlineBar(failedPage).getByRole("button", { name: /^Poke mojombo/u }).click();
+await failedPage.locator("flohub-toast").getByText(/Re-request mojombo by hand\./u).waitFor();
 check(
-  failedFixture.requestLog.join() === "remove:mojombo,add:mojombo,add:mojombo",
-  `a failed re-add is retried once and then tells you to re-request by hand: ${failedFixture.requestLog.join()}`,
+  failedFixture.requestLog.join(",") === "remove:mojombo,add:mojombo,add:mojombo",
+  `a failed re-add is retried once and then tells you to re-request by hand: ${failedFixture.requestLog.join(",")}`,
 );
 await failedPoke.close();
 
-const discussionContext = await launch("light", (route) => createFixture({ discussion: true }).handle(route));
-const discussionWorker = discussionContext.serviceWorkers()[0];
-await discussionWorker?.evaluate((at) => chrome.storage.local.set({ discussionSeen: { "github/gh-stack#344": at } }), ago(10));
+const discussionContext = await launch("light", async (route) => createFixture({ discussion: true }).handle(route));
+const [discussionWorker] = discussionContext.serviceWorkers();
+await discussionWorker?.evaluate(async (at) => chrome.storage.local.set({ discussionSeen: { "github/gh-stack#344": at } }), ago(10));
 const discussionPage = await discussionContext.newPage();
 await discussionPage.goto(`${PULL_URL}/files`);
 const discussion = inlineBar(discussionPage).locator("section.discussion");
 await discussion.locator(".discussion-item").first().waitFor();
-const discussionItems = () =>
+const discussionItems = async () =>
   discussion.locator(".discussion-item").evaluateAll((items) =>
     items.map((item) => `${item.querySelector(".name")?.textContent}${item.classList.contains("unread") ? "*" : ""}`),
   );
@@ -1345,7 +1350,7 @@ await discussion.locator(".discussion-item", { hasText: "mojombo" }).getByRole("
 const clampedAfter = await longText.evaluate((text) => text.classList.contains("clamped"));
 check(clampedBefore && !clampedAfter, "a long comment is clamped to three lines until Show more");
 check(
-  (await discussion.locator(".discussion-item", { hasText: "wycats" }).getByRole("link", { name: /on GitHub/ }).getAttribute("href")) ===
+  (await discussion.locator(".discussion-item", { hasText: "wycats" }).getByRole("link", { name: /on GitHub/u }).getAttribute("href")) ===
     `${PULL_URL}#issuecomment-1`,
   "each item links to its comment on GitHub",
 );
@@ -1355,14 +1360,14 @@ const rich = await discussion.locator(".discussion-item").evaluateAll((items) =>
   const link = by("wycats").querySelector("a");
   return {
     strong: by("defunkt").querySelector("strong")?.textContent,
-    listItems: mojombo.querySelectorAll("ol > li").length,
+    listItems: mojombo.querySelectorAll(":scope ol > li").length,
     code: [...mojombo.querySelectorAll("code")].map((code) => code.textContent),
     link: [link?.getAttribute("href"), link?.getAttribute("target")],
     unsafe: {
       scripts: mojombo.querySelectorAll("script, svg").length,
       handlers: [...mojombo.querySelectorAll("*")].filter((element) => [...element.attributes].some((attribute) => attribute.name.startsWith("on"))).length,
-      javascriptLinks: [...mojombo.querySelectorAll("a")].filter((anchor) => !/^https?:/.test(anchor.getAttribute("href") ?? "")).length,
-      linkTextKept: mojombo.textContent?.includes("harmless looking"),
+      javascriptLinks: [...mojombo.querySelectorAll("a")].filter((anchor) => !/^https?:/u.test(anchor.getAttribute("href") ?? "")).length,
+      linkTextKept: mojombo.textContent.includes("harmless looking"),
     },
   };
 });
@@ -1384,15 +1389,16 @@ check(
   "GitHub's alert boxes keep their kind, without their icons",
 );
 await discussion.getByRole("button", { name: "Hide bots" }).click();
-const seenNow = await discussionWorker?.evaluate(() =>
-  chrome.storage.local.get("discussionSeen").then((stored) => (stored.discussionSeen as Record<string, string>)["github/gh-stack#344"]),
-);
+const seenNow = await discussionWorker?.evaluate(async () => {
+  const saved = await chrome.storage.local.get("discussionSeen");
+  return (saved.discussionSeen as Record<string, string>)["github/gh-stack#344"];
+});
 check(Date.now() - Date.parse(seenNow ?? "") < 60_000, `opening the pull request records the visit: ${seenNow}`);
 await inlineBar(discussionPage).screenshot({ path: `${SCREENSHOTS}/discussion-light.png` });
 await discussionContext.close();
 
 const partial = await launch("light");
-await partial.route("https://api.github.com/**", (route) => createFixture({ partial: true }).handle(route));
+await partial.route("https://api.github.com/**", async (route) => createFixture({ partial: true }).handle(route));
 const partialPage = await partial.newPage();
 await partialPage.goto(`${PULL_URL}/files`);
 await inlineBar(partialPage).locator(".stack-list").waitFor();

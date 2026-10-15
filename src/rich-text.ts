@@ -43,9 +43,9 @@ const ALLOWED: Record<string, readonly string[]> = {
 const DROPPED = new Set(["script", "style", "svg", "iframe", "object", "embed", "form", "button", "select", "textarea", "template", "noscript", "math", "video", "audio"]);
 
 /** GitHub's alert boxes (`> [!WARNING]`) keep their class names, so they can be styled; every other class is dropped. */
-const KEPT_CLASS = /^markdown-alert(-(note|tip|important|warning|caution|title))?$/;
+const KEPT_CLASS = /^markdown-alert(-(note|tip|important|warning|caution|title))?$/u;
 
-const SAFE_LINK = /^(https?:|mailto:)/i;
+const SAFE_LINK = /^(https?:|mailto:)/iu;
 
 /**
  * Rebuilds GitHub's rendering of a comment from an allowlist of elements and attributes. The HTML is parsed in an
@@ -67,9 +67,9 @@ export function renderRichText(html: string): DocumentFragment | null {
   return fragment;
 }
 
-function appendSafe(parent: Node, node: Node): void {
+function appendSafe(parent: ParentNode, node: Node): void {
   if (node.nodeType === Node.TEXT_NODE) {
-    parent.appendChild(document.createTextNode(node.textContent ?? ""));
+    parent.append(document.createTextNode(node.textContent ?? ""));
     return;
   }
   if (!(node instanceof Element)) return;
@@ -101,17 +101,17 @@ function appendSafe(parent: Node, node: Node): void {
     }
   }
   if (tag === "input") copy.setAttribute("disabled", "");
-  if (tag === "img") copy.setAttribute("loading", "lazy");
+  else if (tag === "img") copy.setAttribute("loading", "lazy");
   const classes = [...node.classList].filter((name) => KEPT_CLASS.test(name));
   if (classes.length > 0) copy.className = classes.join(" ");
 
   for (const child of node.childNodes) appendSafe(copy, child);
-  parent.appendChild(copy);
+  parent.append(copy);
 }
 
 function absolute(value: string): string | null {
   try {
-    return new URL(value, "https://github.com").toString();
+    return new URL(value, "https://github.com").href;
   } catch {
     return null;
   }

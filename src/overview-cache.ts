@@ -7,7 +7,7 @@ const MAX_ENTRIES = 50;
 const MAX_AGE_MS = 7 * 24 * 3_600_000;
 
 /** What the index keeps per cached pull request, so a lookup reads one entry instead of all of them. */
-export interface IndexEntry {
+interface IndexEntry {
   savedAt: number;
   /** The repository, as "owner/repo". */
   repo: string;
@@ -51,7 +51,7 @@ export function pickCacheKey(index: CacheIndex, ref: PullRef, now: number): { ke
  * @returns The keys to drop: expired entries, then the oldest beyond the size limit.
  */
 export function keysToEvict(index: CacheIndex, now: number): string[] {
-  const byAge = Object.entries(index).sort(([, a], [, b]) => b.savedAt - a.savedAt);
+  const byAge = Object.entries(index).toSorted(([, a], [, b]) => b.savedAt - a.savedAt);
   return byAge
     .filter(([, entry], position) => position >= MAX_ENTRIES || now - entry.savedAt > MAX_AGE_MS)
     .map(([key]) => key);
@@ -80,9 +80,18 @@ let writes: Promise<void> = Promise.resolve();
  * Runs cache writes one after another. Only the service worker writes, so tabs never overwrite each other's index.
  * @param write The write to queue.
  */
-export function queueCacheWrite(write: () => Promise<void>): Promise<void> {
-  writes = writes.then(write, write);
-  return writes;
+export async function queueCacheWrite(write: () => Promise<void>): Promise<void> {
+  writes = afterPrevious(writes, write);
+  await writes;
+}
+
+async function afterPrevious(previous: Promise<void>, write: () => Promise<void>): Promise<void> {
+  try {
+    await previous;
+  } catch {
+    // A failed write doesn't hold up the ones queued after it.
+  }
+  await write();
 }
 
 /**
@@ -94,13 +103,13 @@ export async function writeCachedOverview(ref: PullRef, overview: Overview): Pro
   const pullRequest = overview.repository?.pullRequest;
   if (!pullRequest) return;
   const key = pullKey(ref);
-  const members = pullRequest.stack?.entries.nodes.flatMap((node) => (node.pullRequest ? [node.pullRequest.number] : []));
+  const members = pullRequest.stack?.entries.nodes.flatMap((node) => node.pullRequest?.number ?? []);
   try {
     const index = await readIndex();
     index[key] = { savedAt: Date.now(), repo: `${ref.owner}/${ref.repo}`, members: members ?? [ref.number] };
     const evicted = keysToEvict(index, Date.now());
-    for (const old of evicted) delete index[old];
-    await chrome.storage.local.set({ [ENTRY_PREFIX + key]: overview, [INDEX_KEY]: index });
+    const kept = Object.fromEntries(Object.entries(index).filter(([old]) => !evicted.includes(old)));
+    await chrome.storage.local.set({ [ENTRY_PREFIX + key]: overview, [INDEX_KEY]: kept });
     if (evicted.length > 0) await chrome.storage.local.remove(evicted.map((old) => ENTRY_PREFIX + old));
   } catch {
     // A full or unavailable storage only costs the next visit its head start.
@@ -120,5 +129,5 @@ export async function clearOverviewCache(): Promise<void> {
 async function readIndex(): Promise<CacheIndex> {
   const stored = await chrome.storage.local.get(INDEX_KEY);
   const index = stored[INDEX_KEY];
-  return index && typeof index === "object" ? (index as CacheIndex) : {};
+  return typeof index === "object" && index !== null ? (index as CacheIndex) : {};
 }

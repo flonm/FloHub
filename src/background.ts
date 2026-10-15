@@ -17,7 +17,7 @@ import { clearOverviewCache, queueCacheWrite, writeCachedOverview } from "./over
 import { REVIEW_SCOPES_KEY } from "./review-scope";
 
 chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) => {
-  handle(message).then(sendResponse);
+  void handle(message).then(sendResponse);
   return true;
 });
 
@@ -28,17 +28,18 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.runtime.onStartup.addListener(() => void refreshInbox().catch(() => undefined));
 chrome.runtime.onInstalled.addListener(() => void refreshInbox().catch(() => undefined));
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "sync" && REVIEW_SCOPES_KEY in changes) void refreshInboxAgain().catch(() => undefined);
+  if (area === "sync" && Object.hasOwn(changes, REVIEW_SCOPES_KEY)) void refreshInboxAgain().catch(() => undefined);
   if (area !== "local" || !("token" in changes)) return;
   void queueCacheWrite(clearOverviewCache);
-  void clearInbox().then(() => refreshInbox()).catch(() => undefined);
+  void clearInbox().then(async () => refreshInbox()).catch(() => undefined);
 });
 
 async function handle(message: Message): Promise<Reply<ReplyByType[Message["type"]]>> {
   try {
     switch (message.type) {
-      case "inbox":
+      case "inbox": {
         return { ok: true, value: await refreshInbox() };
+      }
       case "overview": {
         const token = await readToken();
         const overview = await fetchOverview(message.ref);
@@ -47,29 +48,38 @@ async function handle(message: Message): Promise<Reply<ReplyByType[Message["type
         });
         return { ok: true, value: overview };
       }
-      case "poke":
+      case "poke": {
         await pokeReviewer(message.ref, message.reviewer);
         return { ok: true, value: null };
-      case "rerequest":
+      }
+      case "rerequest": {
         await rerequestReview(message.ref, message.login);
         return { ok: true, value: null };
-      case "viewed-files":
+      }
+      case "viewed-files": {
         return { ok: true, value: await fetchViewedFiles(message.ref) };
-      case "set-viewed":
+      }
+      case "set-viewed": {
         await setFileViewed(message.pullRequestId, message.path, message.viewed);
         return { ok: true, value: null };
-      case "pending-comments":
+      }
+      case "pending-comments": {
         return { ok: true, value: await fetchPendingComments(message.ref) };
-      case "submit-review":
+      }
+      case "submit-review": {
         await submitReview(message.ref, message.event, message.body);
         return { ok: true, value: null };
-      case "versions":
+      }
+      case "versions": {
         return { ok: true, value: await fetchVersions(message.ref) };
-      case "version-patch":
+      }
+      case "version-patch": {
         return { ok: true, value: await fetchVersionPatch(message.ref, message.head, message.bases) };
-      case "open-options":
+      }
+      case "open-options": {
         await chrome.runtime.openOptionsPage();
         return { ok: true, value: null };
+      }
     }
   } catch (error) {
     if (error instanceof GitHubError) return { ok: false, code: error.code, message: error.message };

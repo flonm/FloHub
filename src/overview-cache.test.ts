@@ -42,6 +42,6 @@ describe("keysToEvict", () => {
   test("drops expired entries and the oldest beyond 50", () => {
     const index: CacheIndex = { expired: { savedAt: NOW - 8 * DAY, repo: "o/r", members: [1] } };
     for (let n = 0; n < 51; n++) index[`o/r#${n}`] = { savedAt: NOW - n * 1000, repo: "o/r", members: [n] };
-    expect(keysToEvict(index, NOW).sort()).toEqual(["expired", "o/r#50"]);
+    expect(keysToEvict(index, NOW).toSorted((a, b) => a.localeCompare(b))).toEqual(["expired", "o/r#50"]);
   });
 });

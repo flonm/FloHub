@@ -10,7 +10,7 @@ const clear = document.querySelector<HTMLButtonElement>("#clear");
 const access = document.querySelector<HTMLDivElement>("#access");
 const grant = document.querySelector<HTMLButtonElement>("#grant");
 const repoList = document.querySelector<HTMLUListElement>("#repos");
-const addRepo = document.querySelector<HTMLFormElement>("#add-repo");
+const repoForm = document.querySelector<HTMLFormElement>("#add-repo");
 const repoInput = document.querySelector<HTMLInputElement>("#repo");
 const scopeStatus = document.querySelector<HTMLParagraphElement>("#scope-status");
 const origins = requiredOrigins();
@@ -19,54 +19,67 @@ const added = new Map<string, string>();
 
 if (access && grant) {
   void showAccess(access);
-  grant.addEventListener("click", () => {
-    void chrome.permissions.request({ origins }).then(() => showAccess(access));
-  });
+  grant.addEventListener("click", () => void requestAccess(access));
 }
 
 if (form && input && status && clear) {
-  void readToken().then(async (token) => {
-    if (!token) return;
-    input.value = token;
-    await check(token);
-  });
-
-  form.addEventListener("submit", async (event) => {
+  void showToken(input);
+  form.addEventListener("submit", (event) => {
     event.preventDefault();
-    const token = input.value.trim();
-    if (!token) {
-      show("Paste a token first.", "error");
-      return;
-    }
-    if (await check(token)) await writeToken(token);
+    void saveToken(input.value.trim());
   });
+  clear.addEventListener("click", () => void removeToken(input));
+}
 
-  clear.addEventListener("click", async () => {
-    await writeToken("");
-    input.value = "";
-    show("Token removed.", "info");
+if (repoList && repoForm && repoInput && scopeStatus) {
+  void renderRepos(repoList);
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if ((area === "sync" && Object.hasOwn(changes, REVIEW_SCOPES_KEY)) || (area === "local" && "inbox" in changes)) void renderRepos(repoList);
+  });
+  repoForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void addDirectRepo(repoInput, scopeStatus);
   });
 }
 
-if (repoList && addRepo && repoInput && scopeStatus) {
-  void renderRepos(repoList);
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if ((area === "sync" && REVIEW_SCOPES_KEY in changes) || (area === "local" && "inbox" in changes)) void renderRepos(repoList);
-  });
-  addRepo.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const repo = parseRepo(repoInput.value);
-    if (!repo) {
-      scopeStatus.textContent = "Enter a repository as owner/repo.";
-      scopeStatus.dataset.tone = "error";
-      return;
-    }
-    added.set(repo.toLowerCase(), repo);
-    await writeReviewScope(repo, "direct");
-    repoInput.value = "";
-    scopeStatus.textContent = `Showing only direct requests in ${repo}.`;
-    scopeStatus.dataset.tone = "info";
-  });
+async function requestAccess(notice: HTMLElement): Promise<void> {
+  await chrome.permissions.request({ origins });
+  await showAccess(notice);
+}
+
+async function showToken(field: HTMLInputElement): Promise<void> {
+  const token = await readToken();
+  if (!token) return;
+  field.value = token;
+  await check(token);
+}
+
+async function saveToken(token: string): Promise<void> {
+  if (!token) {
+    show("Paste a token first.", "error");
+    return;
+  }
+  if (await check(token)) await writeToken(token);
+}
+
+async function removeToken(field: HTMLInputElement): Promise<void> {
+  await writeToken("");
+  field.value = "";
+  show("Token removed.", "info");
+}
+
+async function addDirectRepo(field: HTMLInputElement, notice: HTMLElement): Promise<void> {
+  const repo = parseRepo(field.value);
+  if (!repo) {
+    notice.textContent = "Enter a repository as owner/repo.";
+    notice.dataset.tone = "error";
+    return;
+  }
+  added.set(repo.toLowerCase(), repo);
+  await writeReviewScope(repo, "direct");
+  field.value = "";
+  notice.textContent = `Showing only direct requests in ${repo}.`;
+  notice.dataset.tone = "info";
 }
 
 /**
@@ -79,7 +92,7 @@ async function renderRepos(list: HTMLUListElement): Promise<void> {
   const names = new Map(added);
   for (const repo of direct) if (!names.has(repo)) names.set(repo, repo);
   for (const entry of [...(inbox?.review ?? []), ...(inbox?.mine ?? [])]) names.set(entry.repo.toLowerCase(), entry.repo);
-  const rows = [...names.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  const rows = [...names.values()].toSorted((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   const focused = list.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.repo : undefined;
   list.replaceChildren(...rows.map((repo) => renderRepo(repo, direct.has(repo.toLowerCase()) ? "direct" : "teams")));
   if (focused) list.querySelector<HTMLSelectElement>(`select[data-repo="${CSS.escape(focused)}"]`)?.focus();
@@ -117,7 +130,7 @@ function show(message: string, tone: "info" | "success" | "error"): void {
 function requiredOrigins(): string[] {
   const manifest = chrome.runtime.getManifest();
   const matches = manifest.content_scripts?.flatMap((script) => script.matches ?? []) ?? [];
-  return [...new Set([...matches, ...(manifest.host_permissions ?? [])])];
+  return [...new Set([...matches, ...((manifest.host_permissions as string[] | undefined) ?? [])])];
 }
 
 async function showAccess(notice: HTMLElement): Promise<void> {

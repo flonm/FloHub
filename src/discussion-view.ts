@@ -11,8 +11,8 @@ export interface DiscussionOptions {
   expanded: boolean;
   showBots: boolean;
   now: number;
-  toggleExpanded(): void;
-  toggleBots(): void;
+  toggleExpanded: () => void;
+  toggleBots: () => void;
 }
 
 const VERDICT_LABEL: Record<DiscussionVerdict, { label: string; tone: string }> = {
@@ -27,7 +27,7 @@ const MAX_COLLAPSED = 5;
 /** Texts longer than this, with more lines, or with block content, are clamped behind a "Show more" toggle. */
 const CLAMP_CHARACTERS = 240;
 const CLAMP_LINES = 3;
-const BLOCK_CONTENT = /<(pre|img|table|ul|ol|blockquote|details|h[1-6])\b/i;
+const BLOCK_CONTENT = /<(pre|img|table|ul|ol|blockquote|details|h[1-6])\b/iu;
 
 /** Items whose full text the viewer opened, kept across re-renders. */
 const opened = new Set<string>();
@@ -43,7 +43,7 @@ export function renderDiscussionSection(options: DiscussionOptions): HTMLElement
   const bots = options.items.filter((item) => item.bot).length;
   const visible = options.showBots ? options.items : options.items.filter((item) => !item.bot);
   const unread = visible.filter((item) => isUnread(item, options.seenAt, options.viewer));
-  const shown = options.expanded ? visible : unread.length > 0 ? unread.slice(0, MAX_COLLAPSED) : visible.slice(0, 1);
+  const shown = options.expanded ? visible : (unread.length > 0 ? unread.slice(0, MAX_COLLAPSED) : visible.slice(0, 1));
 
   const section = el("section", { class: "discussion", "aria-label": "Discussion" });
   const header = el("div", { class: "bar" });
@@ -140,7 +140,7 @@ function avatar(item: DiscussionItem): HTMLElement {
   }
   const url = new URL(item.avatarUrl, "https://github.com");
   url.searchParams.set("s", "40");
-  return el("img", { class: "avatar", src: url.toString(), alt: "", width: "20", height: "20" });
+  return el("img", { class: "avatar", src: url.href, alt: "", width: "20", height: "20" });
 }
 
 function countLabel(count: number): string {

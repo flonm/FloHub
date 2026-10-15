@@ -10,7 +10,7 @@ export interface ReviewDialogRequest {
    * Submits the review.
    * @returns An error message to show, or null on success.
    */
-  submit(body: string): Promise<string | null>;
+  submit: (body: string) => Promise<string | null>;
 }
 
 const COPY: Record<ReviewEvent, { title: string; action: string; busy: string }> = {
@@ -152,25 +152,26 @@ export class ReviewDialog {
       void send();
     });
     body.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-        event.preventDefault();
-        void send();
-      }
+      if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
+      event.preventDefault();
+      void send();
     });
     cancel.addEventListener("click", () => this.dialog.close());
 
-    void request.pendingComments.then(
-      (count) => {
-        if (run !== this.generation) return;
-        hint.textContent =
-          count === null
-            ? "No pending review comments."
-            : `Submits your pending review with its ${count} draft ${count === 1 ? "comment" : "comments"}.`;
-      },
-      () => {
+    void (async () => {
+      let count: number | null;
+      try {
+        count = await request.pendingComments;
+      } catch {
         if (run === this.generation) hint.textContent = "Could not check for pending comments.";
-      },
-    );
+        return;
+      }
+      if (run !== this.generation) return;
+      hint.textContent =
+        count === null
+          ? "No pending review comments."
+          : `Submits your pending review with its ${count} draft ${count === 1 ? "comment" : "comments"}.`;
+    })();
 
     if (!this.dialog.open) this.dialog.showModal();
     body.focus();

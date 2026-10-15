@@ -4,7 +4,7 @@ export type ReviewScope = "teams" | "direct";
 /** Repositories that count only direct requests, by lowercase `owner/name`; every other one counts team requests too. */
 export const REVIEW_SCOPES_KEY = "directReviewRepos";
 
-const REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/;
+const REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/u;
 
 /**
  * @param input What the user typed, an `owner/name` or a GitHub link to the repository.
@@ -13,8 +13,8 @@ const REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/;
 export function parseRepo(input: string): string | null {
   const trimmed = input
     .trim()
-    .replace(/^(https?:\/\/)?github\.com\//i, "")
-    .replace(/(\.git)?\/?$/i, "");
+    .replace(/^(https?:\/\/)?github\.com\//iu, "")
+    .replace(/(\.git)?\/?$/iu, "");
   const repo = trimmed.split("/").slice(0, 2).join("/");
   return REPO_PATTERN.test(repo) ? repo : null;
 }
@@ -34,5 +34,5 @@ export async function writeReviewScope(repo: string, scope: ReviewScope): Promis
   const repos = await readDirectRepos();
   if (scope === "direct") repos.add(repo.toLowerCase());
   else repos.delete(repo.toLowerCase());
-  await chrome.storage.sync.set({ [REVIEW_SCOPES_KEY]: [...repos].sort() });
+  await chrome.storage.sync.set({ [REVIEW_SCOPES_KEY]: [...repos].toSorted((a, b) => a.localeCompare(b)) });
 }

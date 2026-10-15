@@ -2,7 +2,7 @@ export type StackTone = "success" | "attention" | "accent" | "danger" | "done" |
 
 const READY_TO_MERGE = "Ready to merge";
 
-export interface RawTimelineItem {
+interface RawTimelineItem {
   __typename: string;
   createdAt?: string;
   submittedAt?: string | null;
@@ -71,15 +71,15 @@ export function deriveStack(
   pullRequest: RawStackPull & { stack: RawStack | null },
   baseRefName: string,
 ): StackView {
-  const stack = pullRequest.stack;
+  const { stack } = pullRequest;
   const nodes = stack
-    ? stack.entries.nodes.flatMap(({ position, pullRequest: entry }) => (entry ? [{ position, entry }] : []))
+    ? stack.entries.nodes.flatMap(({ position, pullRequest: entry }) => (entry ? { position, entry } : []))
     : [{ position: 1, entry: pullRequest }];
 
   const entries = markWaitingOnDownstack(
     nodes
       .map(({ position, entry }) => toEntry(entry, position, entry.number === pullRequest.number))
-      .sort((a, b) => b.position - a.position),
+      .toSorted((a, b) => b.position - a.position),
   );
 
   return {
@@ -97,12 +97,12 @@ export function deriveStack(
  * @param entries The stack, any order.
  * @returns The same entries, with ready layers above open ones marked as waiting on their downstack.
  */
-export function markWaitingOnDownstack(entries: StackEntry[]): StackEntry[] {
+function markWaitingOnDownstack(entries: StackEntry[]): StackEntry[] {
   return entries.map((entry) => {
     if (entry.label !== READY_TO_MERGE) return entry;
     const below = entries
       .filter((other) => other.position < entry.position && !other.merged)
-      .sort((a, b) => a.position - b.position)
+      .toSorted((a, b) => a.position - b.position)
       .map((other) => `#${other.number}`);
     if (below.length === 0) return entry;
     const layers = below.length === 1 ? `${below[0]} below it merges` : `${below.slice(0, -1).join(", ")} and ${below.at(-1)} below it merge`;
@@ -147,11 +147,11 @@ export function deriveStatus(pull: RawStackPull): { tone: StackTone; label: stri
   const checks = pull.statusCheckRollup?.state;
   if (checks === "FAILURE" || checks === "ERROR") return { tone: "danger", label: "Checks failed", detail: null };
 
-  const states = pull.latestOpinionatedReviews.nodes.map((review) => review.state);
-  if (pull.reviewDecision === "CHANGES_REQUESTED" || states.includes("CHANGES_REQUESTED")) {
+  const states = new Set(pull.latestOpinionatedReviews.nodes.map((review) => review.state));
+  if (pull.reviewDecision === "CHANGES_REQUESTED" || states.has("CHANGES_REQUESTED")) {
     return { tone: "attention", label: "Changes requested", detail: null };
   }
-  if (pull.reviewDecision !== "APPROVED" && !states.includes("APPROVED")) {
+  if (pull.reviewDecision !== "APPROVED" && !states.has("APPROVED")) {
     return { tone: "accent", label: "Needs review", detail: null };
   }
 
@@ -179,7 +179,9 @@ export function lastActivity(pull: RawStackPull): string {
   for (const item of pull.timelineItems.nodes) {
     timestamps.push(item.createdAt ?? null, item.submittedAt ?? null, item.commit?.committedDate ?? null);
   }
-  return timestamps.filter((timestamp): timestamp is string => !!timestamp).reduce((latest, timestamp) =>
-    Date.parse(timestamp) > Date.parse(latest) ? timestamp : latest,
-  );
+  let latest = pull.createdAt;
+  for (const timestamp of timestamps) {
+    if (timestamp && Date.parse(timestamp) > Date.parse(latest)) latest = timestamp;
+  }
+  return latest;
 }

@@ -1,0 +1,154 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  // oxlint decides every rule it implements; eslint.config.js only adds the rules oxlint doesn't have.
+  // Every category except nursery is on, so a rule is off only for a reason written down here.
+  "plugins": ["typescript", "unicorn", "oxc", "import", "promise", "jsdoc"],
+  "env": { "browser": true, "es2024": true, "webextensions": true },
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error",
+    "pedantic": "error",
+    "style": "error",
+    "restriction": "error"
+  },
+  "options": {
+    "typeAware": true,
+    "denyWarnings": true,
+    "reportUnusedDisableDirectives": "error",
+    // Each linter reads only its own disable comments, so an unused one is reported by the linter it belongs to
+    "respectEslintDisableDirectives": false
+  },
+  "ignorePatterns": ["dist", "dist-firefox", "storybook-static", "web-ext-artifacts"],
+  "rules": {
+    // Pure taste, or each other's opposite
+    "capitalized-comments": "off",
+    "curly": "off",
+    "func-style": "off",
+    "id-length": "off",
+    "init-declarations": "off",
+    "no-continue": "off",
+    "no-magic-numbers": "off",
+    "no-plusplus": "off",
+    "no-ternary": "off",
+    "no-undefined": "off",
+    "one-var": "off",
+    "prefer-named-capture-group": "off",
+    "sort-imports": "off",
+    "sort-keys": "off",
+    "import/consistent-type-specifier-style": "off",
+    "import/exports-last": "off",
+    "import/group-exports": "off",
+    "import/no-named-export": "off",
+    "import/no-relative-parent-imports": "off",
+    "import/prefer-default-export": "off",
+    "promise/avoid-new": "off",
+    "typescript/explicit-function-return-type": "off",
+    "typescript/explicit-member-accessibility": "off",
+    "typescript/parameter-properties": "off",
+    "unicorn/no-null": "off",
+
+    // Size limits that would split cohesive modules for the sake of a number
+    "complexity": "off",
+    "max-lines": "off",
+    "max-lines-per-function": "off",
+    "max-params": "off",
+    "max-statements": "off",
+    "import/max-dependencies": "off",
+
+    // Bans on language features the extension's targets have had for years
+    "oxc/no-async-await": "off",
+    "oxc/no-optional-chaining": "off",
+    "oxc/no-rest-spread-properties": "off",
+
+    // Functions are declared below their callers so a module reads top-down; hoisting makes that safe
+    "no-use-before-define": "off",
+    // `void promise` marks a promise deliberately left floating, which no-floating-promises asks for
+    "no-void": "off",
+    // The core rule flags an async function that only returns a promise, the shape promise-function-async asks for;
+    // typescript/require-await knows that case
+    "require-await": "off",
+    // Bun bundles each entry script as an iife, where top-level await doesn't exist
+    "unicorn/prefer-top-level-await": "off",
+    // unicorn/prefer-await in ESLint covers this, and lets `void promise.catch(…)` in a sync chrome listener stand
+    "promise/prefer-await-to-then": "off",
+    // Flags a function that ends in an exhaustive switch; tsconfig's noImplicitReturns checks this with types
+    "typescript/consistent-return": "off",
+    // switch-exhaustiveness-check already covers every case of a union
+    "default-case": "off",
+
+    // TypeScript already carries the types JSDoc would repeat
+    "jsdoc/require-param": "off",
+    "jsdoc/require-param-type": "off",
+    "jsdoc/require-returns": "off",
+    "jsdoc/require-returns-type": "off",
+
+    // GitHub's responses are typed by assertion; validating them at runtime is a separate decision
+    "typescript/no-unsafe-type-assertion": "off",
+    // Readonly parameter types would need Readonly<> on every DOM node and API object
+    "typescript/prefer-readonly-parameter-types": "off",
+    // no-confusing-void-expression and no-misused-promises cover what matters here
+    "typescript/strict-void-return": "off",
+
+    // Unsafe autofixes: a renamed catch binding can shadow an outer `error`, and `#${id}` is no valid selector
+    // for every id `getElementById` takes
+    "unicorn/catch-error-name": "off",
+    "unicorn/prefer-query-selector": "off",
+    // unicorn's version allows one level of nesting in parentheses
+    "no-nested-ternary": "off",
+
+    "no-underscore-dangle": ["error", { "allow": ["__typename"] }],
+    "no-unused-vars": ["error", { "ignoreRestSiblings": true }],
+    "typescript/consistent-type-imports": ["error", { "fixStyle": "inline-type-imports" }],
+    "typescript/no-confusing-void-expression": ["error", { "ignoreArrowShorthand": true }],
+    "typescript/restrict-template-expressions": ["error", { "allowNumber": true }],
+    "typescript/strict-boolean-expressions": [
+      "error",
+      { "allowString": true, "allowNumber": false, "allowNullableObject": true, "allowNullableBoolean": true, "allowNullableString": true }
+    ],
+    "unicorn/filename-case": ["error", { "case": "kebabCase" }],
+    "unicorn/no-useless-undefined": ["error", { "checkArrowFunctionBody": false }],
+
+    // Separators from five digits on, so pull request numbers like 7238 stay readable as numbers
+    "unicorn/numeric-separators-style": "error"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "src/stories/**", "e2e/**"],
+      "rules": { "typescript/no-non-null-assertion": "off", "unicorn/max-nested-calls": "off" }
+    },
+    {
+      "files": ["**/*.test.ts"],
+      "rules": { "import/no-nodejs-modules": "off" }
+    },
+    {
+      // Storybook and the tool configs are read through their default export
+      "files": ["**/*.stories.ts", ".storybook/**", "*.config.js"],
+      "rules": { "import/no-default-export": "off" }
+    },
+    {
+      // The tool configs import untyped plugins, so type-aware rules only see `any` there
+      "files": ["*.js"],
+      "rules": {
+        "typescript/no-unsafe-argument": "off",
+        "typescript/no-unsafe-assignment": "off",
+        "typescript/no-unsafe-call": "off",
+        "typescript/no-unsafe-member-access": "off",
+        "typescript/no-unsafe-return": "off"
+      }
+    },
+    {
+      "files": ["e2e/**", "build.ts", "*.js"],
+      "env": { "node": true },
+      "rules": {
+        "import/no-nodejs-modules": "off",
+        "no-await-in-loop": "off",
+        "no-console": "off",
+        // The smoke checks read `check((await locator.innerText()).includes(…))`
+        "unicorn/no-await-expression-member": "off",
+        "unicorn/no-process-exit": "off",
+        "unicorn/prefer-dom-node-text-content": "off"
+      }
+    }
+  ]
+}
