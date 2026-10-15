@@ -111,16 +111,25 @@
       main { padding-bottom: 6px; }
       section { padding: 10px 0 2px; }
       section + section { border-top: 1px solid var(--border); }
-      h2 {
+      h2 { margin: 0; padding: 0 6px 4px; font-size: 12px; font-weight: 600; }
+      .section-toggle {
         display: flex;
         align-items: center;
         gap: 6px;
-        margin: 0;
-        padding: 0 12px 4px;
+        width: 100%;
+        padding: 2px 6px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
         color: var(--fg);
-        font-size: 12px;
         font-weight: 600;
+        text-align: left;
+        cursor: pointer;
       }
+      .section-toggle:hover { background: var(--bg-muted); }
+      .section-toggle svg { width: 12px; height: 12px; color: var(--muted); stroke-width: 2; transform: rotate(180deg); transition: transform 120ms ease-out; }
+      .section-toggle[aria-expanded="false"] svg { transform: rotate(90deg); }
+      section:has(.section-toggle[aria-expanded="false"]) { padding-bottom: 8px; }
       .count {
         min-width: 18px;
         padding: 0 6px;
@@ -343,6 +352,7 @@
       @keyframes pulse { 50% { opacity: 0.5; } }
       @media (prefers-reduced-motion: reduce) {
         .spinning svg, .bone { animation: none; }
+        .section-toggle svg { transition: none; }
       }
     </style>
   </head>

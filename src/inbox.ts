@@ -6,7 +6,7 @@ export type RawInboxPull = RawStackPull & {
   deletions: number;
   repository: { nameWithOwner: string };
   author: { login: string; avatarUrl: string } | null;
-  latestReviews: { nodes: { author: { login: string } | null; submittedAt: string | null }[] };
+  latestReviews: { nodes: { state?: string; author: { login: string } | null; submittedAt: string | null }[] };
   /** Reviewers that are neither users nor teams come back as empty objects. */
   reviewRequests: { nodes: { requestedReviewer: { login?: string; combinedSlug?: string } | null }[] };
   reviewRequestedEvents: { nodes: { createdAt: string; requestedReviewer: { combinedSlug?: string } | null }[] };
@@ -21,6 +21,7 @@ export interface RawInbox {
   viewer: { login: string };
   review: { nodes: (RawInboxPull | Record<string, never>)[] };
   mine: { nodes: (RawInboxPull | Record<string, never>)[] };
+  waiting?: { nodes: (RawInboxPull | Record<string, never>)[] };
 }
 
 export interface InboxPull {
@@ -39,6 +40,10 @@ export interface InboxPull {
   /** Lines the whole pull request adds and deletes; missing in an inbox cached before they were fetched. */
   additions?: number;
   deletions?: number;
+  /** The viewer's verdict its author still has to answer, for the "Waiting for author" section. */
+  yourVerdict?: "changes_requested" | "commented" | null;
+  /** The author pushed after the viewer's latest review. */
+  pushedSinceReview?: boolean;
   /** The viewer reviewed it before and was asked again. */
   rerequested: boolean;
   /** It waits for the viewer only through a team; missing in an inbox cached before this was tracked. */
@@ -60,6 +65,8 @@ export interface Inbox {
   fetchedAt: number;
   review: InboxGroup[];
   mine: InboxGroup[];
+  /** Pull requests the viewer reviewed that wait for their author; missing from an inbox cached before it existed. */
+  waiting?: InboxGroup[];
   /** Pull requests waiting for the viewer's review, for the toolbar badge. */
   reviewCount: number;
 }
@@ -68,10 +75,12 @@ export interface Inbox {
 const URGENCY: Record<StackTone, number> = { danger: 0, attention: 1, success: 2, accent: 3, neutral: 4, done: 5 };
 
 /**
- * Turns the two inbox searches into groups: one per stack, or one per pull request outside any stack.
- * Review requests keep only non-draft pull requests that still wait for the viewer, see {@link requestedVia}.
+ * Turns the inbox searches into groups: one per stack, or one per pull request outside any stack.
+ * Review requests keep only non-draft pull requests that still wait for the viewer, see {@link requestedVia};
+ * reviewed pull requests keep only those waiting for their author, see {@link waitingVerdict}.
  * In the repositories set to count only direct requests, a request that reaches the viewer through a team is dropped.
- * Review requests are ordered by their latest activity, the viewer's own pull requests by what needs them first.
+ * Review requests and reviewed pull requests are ordered by their latest activity, the viewer's own pull requests
+ * by what needs them first.
  * @param raw The search results.
  * @param fetchedAt When they were fetched.
  * @param directRepos Repositories, lowercase `owner/name`, that count only requests naming the viewer.
@@ -87,9 +96,15 @@ export function buildInbox(raw: RawInbox, fetchedAt: number, directRepos: Readon
       return via === "user" || (via === "team" && !directRepos.has(pull.repository.nameWithOwner.toLowerCase()));
     }),
     viewer,
-    true,
+    "review",
   );
-  const mine = group(pullsOf(raw.mine.nodes), viewer, false);
+  const mine = group(pullsOf(raw.mine.nodes), viewer, "mine");
+  const waiting = group(
+    pullsOf(raw.waiting?.nodes ?? []).filter((pull) => waitingVerdict(pull, viewer) !== null),
+    viewer,
+    "waiting",
+  );
+  waiting.sort((a, b) => newest(b) - newest(a));
   review.sort((a, b) => newest(b) - newest(a));
   mine.sort((a, b) => {
     const byUrgency = urgency(a) - urgency(b);
@@ -100,6 +115,7 @@ export function buildInbox(raw: RawInbox, fetchedAt: number, directRepos: Readon
     fetchedAt,
     review,
     mine,
+    waiting,
     reviewCount: review.reduce((sum, entry) => sum + entry.pulls.length, 0),
   };
 }
@@ -131,7 +147,35 @@ function requestedVia(pull: RawInboxPull, viewer: string): "user" | "team" | nul
   return asked ? "team" : null;
 }
 
-function group(pulls: RawInboxPull[], viewer: string, review: boolean): InboxGroup[] {
+/**
+ * A pull request someone else wrote waits for its author after the viewer requested changes, or only commented,
+ * as long as the viewer isn't asked to review it again. An approval, or a review dismissed after a push, means
+ * the author isn't waited on.
+ * @param pull The pull request.
+ * @param viewer The viewer's login.
+ * @returns The viewer's verdict that the author still has to answer, or null.
+ */
+function waitingVerdict(pull: RawInboxPull, viewer: string): "changes_requested" | "commented" | null {
+  if (pull.author?.login === viewer || requestedVia(pull, viewer) !== null) return null;
+  // A later comment doesn't replace a verdict, and the verdicts only list writers, so a missing one falls back to the latest review.
+  const state =
+    pull.latestOpinionatedReviews.nodes.find((review) => review.author?.login === viewer)?.state ??
+    pull.latestReviews.nodes.find((review) => review.author?.login === viewer)?.state;
+  if (state === "CHANGES_REQUESTED") return "changes_requested";
+  return state === "COMMENTED" ? "commented" : null;
+}
+
+/** @returns Whether the head branch got a push or commit after the viewer's latest review. */
+function pushedSinceReview(pull: RawInboxPull, viewer: string): boolean {
+  const reviewedAt = pull.latestReviews.nodes.find((review) => review.author?.login === viewer)?.submittedAt;
+  if (!reviewedAt) return false;
+  return pull.timelineItems.nodes.some((item) => {
+    const pushedAt = item.__typename === "HeadRefForcePushedEvent" ? item.createdAt : item.commit?.committedDate;
+    return pushedAt !== undefined && Date.parse(pushedAt) > Date.parse(reviewedAt);
+  });
+}
+
+function group(pulls: RawInboxPull[], viewer: string, kind: "review" | "waiting" | "mine"): InboxGroup[] {
   const groups = new Map<string, InboxGroup>();
   for (const pull of pulls) {
     const repo = pull.repository.nameWithOwner;
@@ -143,14 +187,14 @@ function group(pulls: RawInboxPull[], viewer: string, review: boolean): InboxGro
       stackSize: pull.stack?.size ?? 1,
       pulls: [],
     };
-    entry.pulls.push(toInboxPull(pull, viewer, review));
+    entry.pulls.push(toInboxPull(pull, viewer, kind));
     groups.set(key, entry);
   }
   for (const entry of groups.values()) entry.pulls.sort((a, b) => (b.position ?? 0) - (a.position ?? 0));
   return [...groups.values()];
 }
 
-function toInboxPull(pull: RawInboxPull, viewer: string, review: boolean): InboxPull {
+function toInboxPull(pull: RawInboxPull, viewer: string, kind: "review" | "waiting" | "mine"): InboxPull {
   const { tone, label } = deriveStatus(pull);
   const position = pull.stack?.entries.nodes.find((node) => node.pullRequest?.number === pull.number)?.position ?? null;
   return {
@@ -168,7 +212,8 @@ function toInboxPull(pull: RawInboxPull, viewer: string, review: boolean): Inbox
     additions: pull.additions,
     deletions: pull.deletions,
     rerequested: pull.latestReviews.nodes.some((latest) => latest.author?.login === viewer),
-    viaTeam: review && pull.reviewRequests.nodes.every((request) => request.requestedReviewer?.login !== viewer),
+    viaTeam: kind === "review" && pull.reviewRequests.nodes.every((request) => request.requestedReviewer?.login !== viewer),
+    ...(kind === "waiting" && { yourVerdict: waitingVerdict(pull, viewer), pushedSinceReview: pushedSinceReview(pull, viewer) }),
   };
 }
 

@@ -7,7 +7,7 @@ import { send } from "./messages";
 import { writeReviewScope } from "./review-scope";
 import { formatDiffStat } from "./viewed";
 
-type SectionKind = "review" | "mine";
+type SectionKind = "review" | "waiting" | "mine";
 
 const TICK_MS = 15_000;
 
@@ -22,6 +22,8 @@ let problem: Problem | null = null;
 let selectedKey: string | null = null;
 /** Whether focus was placed once, so later renders never take it from where the user moved it. */
 let placedFocus = false;
+/** Sections the user folded away, kept across popups. */
+let collapsed = new Set<SectionKind>();
 
 const top = el("div", { class: "top" });
 const header = el("header");
@@ -58,8 +60,9 @@ if (app) {
 
 /** Shows the inbox the service worker stored last, until the refresh answers. */
 async function showStored(): Promise<void> {
-  const stored = await chrome.storage.local.get("inbox");
+  const stored = await chrome.storage.local.get(["inbox", "inboxCollapsed"]);
   inbox ??= (stored.inbox as Inbox | undefined) ?? null;
+  collapsed = new Set(stored.inboxCollapsed as SectionKind[] | undefined);
   loaded = true;
   render();
 }
@@ -149,6 +152,7 @@ function renderBody(): HTMLElement[] {
   }
   return [
     renderSection("Waiting for your review", inbox.review, "No review requests.", "review"),
+    renderSection("Waiting for author", inbox.waiting ?? [], "No reviews waiting for an answer.", "waiting"),
     renderSection("Your pull requests", inbox.mine, "No open pull requests.", "mine"),
   ];
 }
@@ -212,18 +216,40 @@ function renderSkeleton(): HTMLElement {
 function renderSection(title: string, groups: InboxGroup[], empty: string, kind: SectionKind): HTMLElement {
   const count = groups.reduce((sum, entry) => sum + entry.pulls.length, 0);
   const id = `section-${kind}`;
+  const bodyId = `section-body-${kind}`;
+  const open = !collapsed.has(kind);
   const section = el("section", { "aria-labelledby": id });
-  const heading = el("h2", { id }, title);
-  heading.append(el("span", { class: "count" }, String(count)));
-  section.append(heading);
+  const toggle = el("button", {
+    type: "button",
+    class: "section-toggle",
+    id,
+    "aria-expanded": String(open),
+    "aria-controls": bodyId,
+    "data-focus-key": `section:${kind}`,
+  });
+  toggle.append(icon("chevron"), el("span", { class: "section-title" }, title), el("span", { class: "count" }, String(count)));
+  toggle.addEventListener("click", () => void toggleSection(kind));
+  const heading = el("h2");
+  heading.append(toggle);
+  const body = el("div", { id: bodyId });
+  body.hidden = !open;
+  section.append(heading, body);
+  if (!open) return section;
   if (groups.length === 0) {
-    section.append(el("p", { class: "empty" }, empty));
+    body.append(el("p", { class: "empty" }, empty));
     return section;
   }
   const list = el("ul", { class: "groups" });
   for (const entry of groups) list.append(renderGroup(entry, kind));
-  section.append(list);
+  body.append(list);
   return section;
+}
+
+async function toggleSection(kind: SectionKind): Promise<void> {
+  if (collapsed.has(kind)) collapsed.delete(kind);
+  else collapsed.add(kind);
+  render();
+  await chrome.storage.local.set({ inboxCollapsed: [...collapsed] });
 }
 
 function renderGroup(entry: InboxGroup, kind: SectionKind): HTMLElement {
@@ -274,7 +300,12 @@ function renderPull(pull: InboxPull, entry: InboxGroup, kind: SectionKind): HTML
   const spoken = el("span", { class: "visually-hidden spoken-age" });
 
   const meta = el("span", { class: "meta", id: ids.meta });
-  if (kind === "review") {
+  if (kind === "waiting") {
+    if (pull.yourVerdict === "changes_requested") meta.append(el("span", { class: "tag", "data-tone": "attention" }, "You requested changes"));
+    else if (pull.yourVerdict === "commented") meta.append(el("span", { class: "tag", "data-tone": "neutral" }, "You commented"));
+    if (pull.pushedSinceReview) meta.append(el("span", { class: "tag", "data-tone": "accent" }, "New commits"));
+    if (pull.author) meta.append(el("span", { class: "item author" }, pull.author));
+  } else if (kind === "review") {
     if (pull.rerequested) meta.append(el("span", { class: "tag", "data-tone": "attention" }, "Re-requested"));
     if (pull.author) meta.append(el("span", { class: "item author" }, pull.author));
     if (pull.tone !== "accent") meta.append(renderStatus(pull));
@@ -295,7 +326,7 @@ function renderPull(pull: InboxPull, entry: InboxGroup, kind: SectionKind): HTML
   updateAge(time, spoken, Date.now());
 
   const lead = el("span", { class: "lead" });
-  lead.append(kind === "review" ? renderAvatar(pull) : el("span", { class: "node", "data-tone": pull.tone }));
+  lead.append(kind === "mine" ? el("span", { class: "node", "data-tone": pull.tone }) : renderAvatar(pull));
 
   link.append(lead, title, time, meta);
   item.append(link);

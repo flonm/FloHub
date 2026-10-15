@@ -41,8 +41,16 @@ function requestedAt(createdAt: string): Partial<RawInboxPull> {
   return { reviewRequestedEvents: { nodes: [{ createdAt, requestedReviewer: { combinedSlug: "octo-org/core" } }] } };
 }
 
-function buildRaw(review: RawInboxPull[], mine: RawInboxPull[] = []): RawInbox {
-  return { viewer: { login: "octocat" }, review: { nodes: review }, mine: { nodes: mine } };
+function buildRaw(review: RawInboxPull[], mine: RawInboxPull[] = [], waiting: RawInboxPull[] = []): RawInbox {
+  return { viewer: { login: "octocat" }, review: { nodes: review }, mine: { nodes: mine }, waiting: { nodes: waiting } };
+}
+
+function reviewedBy(login: string, state: string, opinion: string | null, submittedAt = "2026-10-11T09:00:00Z"): Partial<RawInboxPull> {
+  return {
+    reviewRequests: { nodes: [] },
+    latestReviews: { nodes: [{ state, author: { login }, submittedAt }] },
+    latestOpinionatedReviews: { nodes: opinion ? [{ state: opinion, author: { login } }] : [] },
+  };
 }
 
 describe("buildInbox", () => {
@@ -153,6 +161,74 @@ describe("buildInbox", () => {
     const inbox = buildInbox({ ...buildRaw([buildPull(1), buildPull(2)]), mine: { nodes: [{}] } }, 0);
     expect(inbox.reviewCount).toBe(2);
     expect(inbox.mine).toEqual([]);
+  });
+});
+
+function waitingNumbers(pulls: RawInboxPull[]): number[] {
+  return (buildInbox(buildRaw([], [], pulls), 0).waiting ?? []).flatMap((entry) => entry.pulls.map((pull) => pull.number));
+}
+
+describe("buildInbox waiting for author", () => {
+  test("keeps pull requests the viewer requested changes on or only commented on", () => {
+    const inbox = buildInbox(
+      buildRaw([], [], [buildPull(1, reviewedBy("octocat", "CHANGES_REQUESTED", "CHANGES_REQUESTED")), buildPull(2, reviewedBy("octocat", "COMMENTED", null))]),
+      0,
+    );
+    expect(inbox.waiting?.flatMap((entry) => entry.pulls.map((pull) => [pull.number, pull.yourVerdict]))).toEqual([
+      [1, "changes_requested"],
+      [2, "commented"],
+    ]);
+  });
+
+  test("keeps a change request the viewer followed with a comment", () => {
+    expect(waitingNumbers([buildPull(1, reviewedBy("octocat", "COMMENTED", "CHANGES_REQUESTED"))])).toEqual([1]);
+  });
+
+  test("leaves out approved and dismissed reviews, even when a comment followed", () => {
+    expect(
+      waitingNumbers([buildPull(1, reviewedBy("octocat", "COMMENTED", "APPROVED")), buildPull(2, reviewedBy("octocat", "DISMISSED", "DISMISSED"))]),
+    ).toEqual([]);
+  });
+
+  test("leaves out pull requests that ask the viewer to review again", () => {
+    expect(waitingNumbers([buildPull(1, { ...reviewedBy("octocat", "CHANGES_REQUESTED", "CHANGES_REQUESTED"), reviewRequests: { nodes: [{ requestedReviewer: { login: "octocat" } }] } })])).toEqual([]);
+  });
+
+  test("leaves out the viewer's own pull requests and those only others reviewed", () => {
+    expect(
+      waitingNumbers([
+        buildPull(1, { ...reviewedBy("octocat", "COMMENTED", null), author: { login: "octocat", avatarUrl: "https://avatars.githubusercontent.com/octocat" } }),
+        buildPull(2, reviewedBy("mojombo", "CHANGES_REQUESTED", "CHANGES_REQUESTED")),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("falls back to the latest review when the viewer has no verdict as a writer", () => {
+    expect(waitingNumbers([buildPull(1, reviewedBy("octocat", "CHANGES_REQUESTED", null))])).toEqual([1]);
+  });
+
+  test("marks pull requests the author pushed to after the viewer's review", () => {
+    const review = reviewedBy("octocat", "CHANGES_REQUESTED", "CHANGES_REQUESTED", "2026-10-11T09:00:00Z");
+    const inbox = buildInbox(
+      buildRaw(
+        [],
+        [],
+        [
+          buildPull(1, { ...review, timelineItems: { nodes: [{ __typename: "PullRequestCommit", commit: { committedDate: "2026-10-12T09:00:00Z" } }] } }),
+          buildPull(2, { ...review, timelineItems: { nodes: [{ __typename: "HeadRefForcePushedEvent", createdAt: "2026-10-10T09:00:00Z" }] } }),
+        ],
+      ),
+      0,
+    );
+    expect(inbox.waiting?.flatMap((entry) => entry.pulls.map((pull) => [pull.number, pull.pushedSinceReview]))).toEqual([
+      [1, true],
+      [2, false],
+    ]);
+  });
+
+  test("leaves the badge to review requests", () => {
+    const inbox = buildInbox(buildRaw([], [], [buildPull(1, reviewedBy("octocat", "COMMENTED", null))]), 0);
+    expect(inbox.reviewCount).toBe(0);
   });
 });
 

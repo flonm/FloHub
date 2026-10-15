@@ -24,7 +24,7 @@ fragment StackPull on PullRequest {
   lastEditedAt
   mergedAt
   statusCheckRollup { state }
-  latestOpinionatedReviews(first: 20, writersOnly: true) { nodes { state } }
+  latestOpinionatedReviews(first: 20, writersOnly: true) { nodes { state author { login } } }
   reviewThreads(first: 100) { totalCount nodes { isResolved } }
   timelineItems(last: 20, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, PULL_REQUEST_COMMIT, PULL_REQUEST_REVIEW, RENAMED_TITLE_EVENT]) {
     nodes {
@@ -102,7 +102,7 @@ fragment InboxPull on PullRequest {
   deletions
   repository { nameWithOwner }
   author { login avatarUrl }
-  latestReviews(first: 20) { nodes { author { login } submittedAt } }
+  latestReviews(first: 20) { nodes { state author { login } submittedAt } }
   reviewRequests(first: 50) {
     nodes { requestedReviewer { ... on User { login } ... on Team { combinedSlug } } }
   }
@@ -115,14 +115,16 @@ fragment InboxPull on PullRequest {
     entries(first: 50) { nodes { position pullRequest { number } } }
   }
 }
-query ($review: String!, $mine: String!) {
+query ($review: String!, $mine: String!, $waiting: String!) {
   viewer { login }
   review: search(query: $review, type: ISSUE, first: 50) { nodes { ... on PullRequest { ...InboxPull } } }
   mine: search(query: $mine, type: ISSUE, first: 50) { nodes { ... on PullRequest { ...InboxPull } } }
+  waiting: search(query: $waiting, type: ISSUE, first: 50) { nodes { ... on PullRequest { ...InboxPull } } }
 }`;
 
 const REVIEW_SEARCH = "is:pr is:open draft:false archived:false review-requested:@me";
 const MINE_SEARCH = "is:pr is:open archived:false author:@me";
+const WAITING_SEARCH = "is:pr is:open archived:false reviewed-by:@me -author:@me";
 
 const VIEWED_FILES_QUERY = `
 query ($owner: String!, $name: String!, $number: Int!, $after: String) {
@@ -499,7 +501,7 @@ function pullPath(ref: PullRef): string {
  * @returns The raw search results, 50 of each at most.
  */
 export async function fetchInbox(): Promise<RawInbox> {
-  const { data } = await graphql<RawInbox>(INBOX_QUERY, { review: REVIEW_SEARCH, mine: MINE_SEARCH });
+  const { data } = await graphql<RawInbox>(INBOX_QUERY, { review: REVIEW_SEARCH, mine: MINE_SEARCH, waiting: WAITING_SEARCH });
   return data;
 }
 
