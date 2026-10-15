@@ -2,14 +2,31 @@ import { describe, expect, test } from "bun:test";
 import { type CacheIndex, keysToEvict, pickCacheKey } from "./overview-cache";
 
 const NOW = Date.parse("2026-10-13T12:00:00Z");
-const DAY = 24 * 3_600_000;
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
 const REF = { owner: "octo-org", repo: "octo-repo", number: 7238 };
 
 describe("pickCacheKey", () => {
-  test("prefers the pull request's own overview", () => {
+  test("prefers the pull request's own overview while no later one covers its stack", () => {
     const index: CacheIndex = {
-      "octo-org/octo-repo#7238": { savedAt: NOW - DAY, repo: "octo-org/octo-repo", members: [7237, 7238] },
-      "octo-org/octo-repo#7237": { savedAt: NOW, repo: "octo-org/octo-repo", members: [7237, 7238] },
+      "octo-org/octo-repo#7238": { savedAt: NOW, repo: "octo-org/octo-repo", members: [7237, 7238] },
+      "octo-org/octo-repo#7237": { savedAt: NOW - DAY, repo: "octo-org/octo-repo", members: [7237, 7238] },
+    };
+    expect(pickCacheKey(index, REF, NOW)).toEqual({ key: "octo-org/octo-repo#7238", exact: true });
+  });
+
+  test("passes over its own overview when another layer of its stack was fetched later", () => {
+    const index: CacheIndex = {
+      "octo-org/octo-repo#7238": { savedAt: NOW - 10 * HOUR, repo: "octo-org/octo-repo", members: [7238, 7239] },
+      "octo-org/octo-repo#7242": { savedAt: NOW, repo: "octo-org/octo-repo", members: [7238, 7239, 7240, 7241, 7242] },
+    };
+    expect(pickCacheKey(index, REF, NOW)).toEqual({ key: "octo-org/octo-repo#7242", exact: false });
+  });
+
+  test("keeps its own overview when a later fetch of another stack no longer contains it", () => {
+    const index: CacheIndex = {
+      "octo-org/octo-repo#7238": { savedAt: NOW - DAY, repo: "octo-org/octo-repo", members: [7238] },
+      "octo-org/octo-repo#7300": { savedAt: NOW, repo: "octo-org/octo-repo", members: [7300, 7301] },
     };
     expect(pickCacheKey(index, REF, NOW)).toEqual({ key: "octo-org/octo-repo#7238", exact: true });
   });

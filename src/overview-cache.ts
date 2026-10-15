@@ -24,7 +24,8 @@ export interface CachedOverview {
 }
 
 /**
- * Picks the cached overview to show for a pull request: its own, or else the newest one whose stack contains it.
+ * Picks the cached overview to show for a pull request: the newest one whose stack contains it. Its own wins a tie,
+ * but loses to a later fetch of another layer, whose stack is the more recent one.
  * @param index The cache index.
  * @param ref The pull request.
  * @param now The current time.
@@ -32,17 +33,16 @@ export interface CachedOverview {
  */
 export function pickCacheKey(index: CacheIndex, ref: PullRef, now: number): { key: string; exact: boolean } | null {
   const own = pullKey(ref);
-  const fresh = (entry: IndexEntry) => now - entry.savedAt <= MAX_AGE_MS;
-  const exact = index[own];
-  if (exact && fresh(exact)) return { key: own, exact: true };
-
   const repo = `${ref.owner}/${ref.repo}`;
   let best: { key: string; savedAt: number } | null = null;
   for (const [key, entry] of Object.entries(index)) {
-    if (entry.repo !== repo || !fresh(entry) || !entry.members.includes(ref.number)) continue;
-    if (!best || entry.savedAt > best.savedAt) best = { key, savedAt: entry.savedAt };
+    if (now - entry.savedAt > MAX_AGE_MS) continue;
+    if (key !== own && (entry.repo !== repo || !entry.members.includes(ref.number))) continue;
+    if (!best || entry.savedAt > best.savedAt || (entry.savedAt === best.savedAt && key === own)) {
+      best = { key, savedAt: entry.savedAt };
+    }
   }
-  return best && { key: best.key, exact: false };
+  return best && { key: best.key, exact: best.key === own };
 }
 
 /**
