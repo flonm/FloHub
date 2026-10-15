@@ -52,7 +52,7 @@ export interface Reviewer {
   /** The verdict a re-requested reviewer gave before the new request. */
   previous: Verdict | null;
   canRerequest: boolean;
-  /** Whether the viewer can remind a currently requested reviewer by removing and re-adding the request. */
+  /** Whether the viewer can remind a currently requested reviewer who hasn't approved yet by removing and re-adding the request. */
   canPoke: boolean;
 }
 
@@ -139,7 +139,8 @@ export function deriveReviewers(pullRequest: RawPullRequest, viewerLogin: string
           pullRequest.viewerCanUpdate &&
           candidate.requested &&
           candidate.kind !== "bot" &&
-          candidate.name !== viewerLogin,
+          candidate.name !== viewerLogin &&
+          candidate.opinionated !== "approved",
       };
     })
     .toSorted((a, b) => {
