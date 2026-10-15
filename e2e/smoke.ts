@@ -960,6 +960,23 @@ check(
 );
 await inlineBar(cachedPage).getByText("Changes requested").first().waitFor({ timeout: 10_000 });
 check(true, "reviewers fill in once the fresh overview arrives");
+await cachedWorker?.evaluate(async (current) => {
+  const { overviewIndex: index } = (await chrome.storage.local.get("overviewIndex")) as {
+    overviewIndex: Record<string, { savedAt: number }>;
+  };
+  const own = index[`github/gh-stack#${current}`];
+  const other = index["github/gh-stack#999"];
+  if (own) own.savedAt = Date.now() - 10 * 3_600_000;
+  if (other) other.savedAt = Date.now();
+  await chrome.storage.local.set({ overviewIndex: index });
+}, CURRENT);
+await cachedPage.reload();
+await inlineBar(cachedPage).locator(".stack-list").waitFor({ timeout: 3000 });
+check(
+  (await inlineBar(cachedPage).getByText("Loading reviewers…").count()) === 1,
+  "a layer's own cache gives way to a later one fetched from another layer of its stack",
+);
+await inlineBar(cachedPage).getByText("Changes requested").first().waitFor({ timeout: 10_000 });
 cachedFixture.overviewDelay = 3000;
 cachedFixture.overviewFailure = 502;
 await cachedPage.reload();
