@@ -1,11 +1,11 @@
-import { formatAge } from "./age";
+import { formatAge } from "../core/age";
 import { BAR_STYLES } from "./bar-styles";
 import type { HighlightStatus } from "./diff-highlights";
 import { button, el, icon, iconButton, type IconName } from "./dom";
-import type { Reviewer, ReviewerStatus, Verdict } from "./reviewers";
-import type { StackView } from "./stack";
+import type { Reviewer, ReviewerStatus, Verdict } from "../core/reviewers";
+import type { StackView } from "../core/stack";
 import { describePosition, renderStackSection, renderStrip } from "./stack-view";
-import type { DiscussionItem } from "./discussion";
+import type { DiscussionItem } from "../core/discussion";
 import { renderDiscussionSection } from "./discussion-view";
 
 export type BarState =

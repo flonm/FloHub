@@ -1,8 +1,8 @@
-import { type FileMarks, markChanges, type RemovedLines } from "./diff-marks";
-import { send } from "./messages";
-import { isWholeFilesTab, type PullRef, pullKey } from "./pull-ref";
-import { diffAnchor } from "./viewed";
-import { baseCandidates, lastReviewedVersion, type Version } from "./versions";
+import { type FileMarks, markChanges, type RemovedLines } from "../core/diff-marks";
+import { send } from "../api/messages";
+import { isWholeFilesTab, type PullRef, pullKey } from "../core/pull-ref";
+import { diffAnchor } from "../core/viewed";
+import { baseCandidates, lastReviewedVersion, type Version } from "../core/versions";
 
 /** What the highlights show, for the overview bar. */
 export interface HighlightStatus {

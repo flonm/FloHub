@@ -1,12 +1,12 @@
-import type { RawDiscussionComment } from "./discussion";
-import type { RawInbox } from "./inbox";
-import type { PullRef } from "./pull-ref";
-import type { ReviewEvent } from "./shortcuts";
-import type { RawPullRequest } from "./reviewers";
-import type { RawStack, RawStackPull } from "./stack";
-import type { ViewedFile, ViewedFiles } from "./viewed";
-import type { VersionFile } from "./interdiff";
-import { baseBranches, deriveVersions, pickBase, type RawBasePull, type RawVersionPull, type VersionHistory } from "./versions";
+import type { RawDiscussionComment } from "../core/discussion";
+import type { RawInbox } from "../core/inbox";
+import type { PullRef } from "../core/pull-ref";
+import type { ReviewEvent } from "../core/shortcuts";
+import type { RawPullRequest } from "../core/reviewers";
+import type { RawStack, RawStackPull } from "../core/stack";
+import type { ViewedFile, ViewedFiles } from "../core/viewed";
+import type { VersionFile } from "../core/interdiff";
+import { baseBranches, deriveVersions, pickBase, type RawBasePull, type RawVersionPull, type VersionHistory } from "../core/versions";
 
 const API = "https://api.github.com";
 

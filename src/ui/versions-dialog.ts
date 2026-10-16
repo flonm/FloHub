@@ -1,8 +1,8 @@
-import { formatAge } from "./age";
+import { formatAge } from "../core/age";
 import { el } from "./dom";
-import type { VersionPatch } from "./github";
-import { type FileChange, type FileInterdiff, interdiff } from "./interdiff";
-import { defaultRange, type Version, type VersionHistory } from "./versions";
+import type { VersionPatch } from "../api/github";
+import { type FileChange, type FileInterdiff, interdiff } from "../core/interdiff";
+import { defaultRange, type Version, type VersionHistory } from "../core/versions";
 
 export interface VersionsDialogRequest {
   number: number;

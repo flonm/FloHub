@@ -1,5 +1,5 @@
 import { el } from "./dom";
-import type { ReviewEvent } from "./shortcuts";
+import type { ReviewEvent } from "../core/shortcuts";
 
 export interface ReviewDialogRequest {
   event: ReviewEvent;

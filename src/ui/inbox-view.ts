@@ -1,6 +1,6 @@
-import { formatAge } from "./age";
-import type { FailureCode } from "./github";
-import type { Inbox } from "./inbox";
+import { formatAge } from "../core/age";
+import type { FailureCode } from "../api/github";
+import type { Inbox } from "../core/inbox";
 
 /** What the popup shows instead of the inbox, or over it. */
 export interface Problem {

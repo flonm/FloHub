@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
-import { el } from "../dom";
-import { type RawStackPull, deriveStatus } from "../stack";
-import { badge } from "../stack-view";
+import { el } from "../ui/dom";
+import { type RawStackPull, deriveStatus } from "../core/stack";
+import { badge } from "../ui/stack-view";
 import { inShadow, pull } from "./shadow";
 
 /** Every status a layer can show, from the raw pull request that leads to it, most blocking first. */

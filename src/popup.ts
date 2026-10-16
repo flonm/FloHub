@@ -1,11 +1,11 @@
-import { formatAge } from "./age";
-import { el, icon, iconButton } from "./dom";
-import { type Inbox, type InboxGroup, type InboxPull, isStale } from "./inbox";
-import { INBOX_PERIOD_MINUTES } from "./inbox-sync";
-import { blocksInbox, isEmptyInbox, moveSelection, type Problem, problemFor, showsPull, updatedLabel } from "./inbox-view";
-import { send } from "./messages";
-import { writeReviewScope } from "./review-scope";
-import { formatDiffStat } from "./viewed";
+import { formatAge } from "./core/age";
+import { el, icon, iconButton } from "./ui/dom";
+import { type Inbox, type InboxGroup, type InboxPull, isStale } from "./core/inbox";
+import { INBOX_PERIOD_MINUTES } from "./api/inbox-sync";
+import { blocksInbox, isEmptyInbox, moveSelection, type Problem, problemFor, showsPull, updatedLabel } from "./ui/inbox-view";
+import { send } from "./api/messages";
+import { writeReviewScope } from "./core/review-scope";
+import { formatDiffStat } from "./core/viewed";
 
 type SectionKind = "review" | "waiting" | "mine";
 
