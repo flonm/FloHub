@@ -1,5 +1,6 @@
 import { BAR_STYLES } from "../ui/bar-styles";
 import type { RawStack, RawStackPull } from "../core/stack";
+import popupCss from "../styles/popup.css?inline";
 
 /**
  * GitHub's Primer tokens the bar reads. On github.com the page defines them, and they reach into the shadow root.
@@ -73,6 +74,24 @@ export function inShadow(content: Node): HTMLElement {
   overview.className = "overview";
   overview.append(content);
   shadow.append(style, overview);
+  return host;
+}
+
+/**
+ * Mounts content the way the popup page does: popup.css inside a shadow root of a 504px frame. The shadow keeps the
+ * page's element styles (`body`, `main`, `ul`, …) from reaching the rest of Storybook.
+ * @param content The rendered UI.
+ * @returns The shadow host.
+ */
+export function inPopup(content: Node): HTMLElement {
+  const host = document.createElement("div");
+  const shadow = host.attachShadow({ mode: "open" });
+  const style = document.createElement("style");
+  style.textContent = `:host {\n  display: block;\n  max-height: 580px;\n  overflow: auto;\n}\n${popupCss}`;
+  const page = document.createElement("div");
+  page.className = "popup";
+  page.append(content);
+  shadow.append(style, page);
   return host;
 }
 

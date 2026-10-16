@@ -1037,10 +1037,14 @@ for (const scheme of ["light", "dark"] as const) {
       (await popup.locator(".pull", { hasText: "#77" }).getByText("Re-requested").count()) === 1,
       "a review request the viewer answered before is marked as re-requested",
     );
-    const waitingTags = await popup.locator(".pull", { hasText: "#130" }).locator(".tag").allTextContents();
+    const waitingFlags = await popup.locator(".pull", { hasText: "#130" }).locator(".status").allTextContents();
     check(
-      waitingTags.join(",") === "You requested changes,New commits",
-      `a pull request waiting for its author shows the viewer's verdict and the author's push since: ${waitingTags.join(",")}`,
+      waitingFlags.join(",") === "You requested changes,New commits",
+      `a pull request waiting for its author shows the viewer's verdict and the author's push since: ${waitingFlags.join(",")}`,
+    );
+    check(
+      (await popup.locator(".pull .tag").count()) === 0,
+      "no row paints a status as a badge; every one is plain tone-coloured text",
     );
     const positions = await popup.locator(".pull").evaluateAll((pulls) =>
       pulls.map((row) => row.querySelector(":scope .position [aria-hidden]")?.textContent ?? null),
