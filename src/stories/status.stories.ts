@@ -61,9 +61,18 @@ function statusOf(scenario: Scenario) {
 
 const meta = {
   title: "Stack/Status",
+  tags: ["autodocs"],
   render: ({ scenario }) => inShadow(badge(statusOf(scenario))),
   argTypes: { scenario: { control: "select", options: Object.keys(SCENARIOS) } },
   args: { scenario: "Ready to merge" },
+  parameters: {
+    docs: {
+      description: {
+        component:
+          "The badge on every stack layer, derived from the pull request's state, reviews, checks and conversations. The order matters: a merge conflict outranks failing checks, which outrank a change request, which outranks a bot's opinion. Hover a badge for the reason it says what it says.",
+      },
+    },
+  },
 } satisfies Meta<Args>;
 
 export default meta;

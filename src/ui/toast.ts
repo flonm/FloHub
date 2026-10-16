@@ -47,6 +47,7 @@ export class Toast {
   private readonly host: HTMLElement;
   private readonly polite: HTMLElement;
   private readonly assertive: HTMLElement;
+  private active: HTMLElement | null = null;
   private timer: ReturnType<typeof setTimeout> | undefined;
 
   constructor() {
@@ -60,18 +61,28 @@ export class Toast {
   }
 
   /**
+   * Paints the message, without scheduling its removal. {@link show} is what the extension uses.
    * @param text The message.
    * @param tone Info and success are announced politely, danger interrupts.
    */
-  show(text: string, tone: ToastTone): void {
+  render(text: string, tone: ToastTone): void {
     if (!this.host.isConnected) document.body.append(this.host);
     const [active, idle] = tone === "danger" ? [this.assertive, this.polite] : [this.polite, this.assertive];
     idle.textContent = "";
     active.dataset.tone = tone;
     active.textContent = text;
+    this.active = active;
+  }
+
+  /**
+   * @param text The message.
+   * @param tone Info and success are announced politely, danger interrupts.
+   */
+  show(text: string, tone: ToastTone): void {
+    this.render(text, tone);
     clearTimeout(this.timer);
     this.timer = setTimeout(() => {
-      active.textContent = "";
+      if (this.active) this.active.textContent = "";
     }, DURATION_MS[tone]);
   }
 }

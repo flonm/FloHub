@@ -20,17 +20,12 @@ const WITHOUT_TEST = new Set([
   "ui/diff-highlights",
 ]);
 
-/** Modules that build DOM but had no story when this check came in. Write the story, then take the module off. */
-const WITHOUT_STORY = new Set([
-  "options",
-  "popup",
-  "ui/bar",
-  "ui/discussion-view",
-  "ui/file-tree",
-  "ui/review-dialog",
-  "ui/toast",
-  "ui/versions-dialog",
-]);
+/**
+ * Modules that build DOM but had no story when this check came in. Write the story, then take the module off.
+ * What is left are the two page entry points: their module bodies wire up the page on import, so a story cannot mount
+ * them the way the extension does.
+ */
+const WITHOUT_STORY = new Set(["options", "popup"]);
 
 const SRC = new URL(".", import.meta.url).pathname;
 const STORIES = `${SRC}stories/`;
