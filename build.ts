@@ -1,3 +1,6 @@
+import nodePath from "node:path";
+import type { BunPlugin } from "bun";
+
 const TARGETS = {
   chrome: "dist",
   firefox: "dist-firefox",
@@ -20,6 +23,24 @@ if (!Object.hasOwn(TARGETS, requested)) {
 const target = requested as Target;
 const OUT = TARGETS[target];
 
+/**
+ * Lets `import css from "./x.css?raw"` give the file's text, the way Vite already does. Both bundlers then share the
+ * one design system: the popup and the options page link it, the bar's shadow root injects it as a style element.
+ */
+const rawCss: BunPlugin = {
+  name: "raw-css",
+  setup(build) {
+    build.onResolve({ filter: /\.css\?raw$/u }, (args) => ({
+      path: nodePath.resolve(args.resolveDir, args.path.replace(/\?raw$/u, "")),
+      namespace: "raw-css",
+    }));
+    build.onLoad({ filter: /.*/u, namespace: "raw-css" }, async (args) => ({
+      contents: await Bun.file(args.path).text(),
+      loader: "text",
+    }));
+  },
+};
+
 await Bun.$`rm -rf ${OUT}`;
 
 const result = await Bun.build({
@@ -28,10 +49,22 @@ const result = await Bun.build({
   target: "browser",
   format: "iife",
   minify: false,
+  plugins: [rawCss],
 });
 
 if (!result.success) {
   for (const log of result.logs) console.error(log);
+  process.exit(1);
+}
+
+// The popup and the options page link their stylesheet; the bar's shadow root gets the same CSS as text at runtime.
+const styles = await Bun.build({
+  entrypoints: ["src/styles/popup.css", "src/styles/options.css"],
+  outdir: OUT,
+  target: "browser",
+});
+if (!styles.success) {
+  for (const log of styles.logs) console.error(log);
   process.exit(1);
 }
 

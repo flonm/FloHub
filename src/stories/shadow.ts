@@ -2,8 +2,37 @@ import { BAR_STYLES } from "../ui/bar-styles";
 import type { RawStack, RawStackPull } from "../core/stack";
 
 /**
- * GitHub's dark Primer tokens the bar reads. On github.com the page defines them, and they reach into the shadow root.
+ * GitHub's Primer tokens the bar reads. On github.com the page defines them, and they reach into the shadow root.
+ * Storybook sets one theme's map on the frame, so a story renders in the theme the toolbar picked whatever the
+ * machine's own color scheme is.
  */
+export const PRIMER_LIGHT: Record<string, string> = {
+  "--fgColor-default": "#1f2328",
+  "--fgColor-muted": "#59636e",
+  "--bgColor-default": "#ffffff",
+  "--bgColor-muted": "#f6f8fa",
+  "--borderColor-default": "#d1d9e0",
+  "--fgColor-success": "#1a7f37",
+  "--fgColor-danger": "#d1242f",
+  "--fgColor-attention": "#9a6700",
+  "--fgColor-accent": "#0969da",
+  "--fgColor-done": "#8250df",
+  "--focus-outlineColor": "#0969da",
+  "--bgColor-success-muted": "#dafbe1",
+  "--bgColor-attention-muted": "#fff8c5",
+  "--bgColor-accent-muted": "#ddf4ff",
+  "--bgColor-danger-muted": "#ffebe9",
+  "--bgColor-done-muted": "#fbefff",
+  "--bgColor-neutral-muted": "rgba(175, 184, 193, 0.2)",
+  "--borderColor-success-muted": "rgba(74, 194, 107, 0.4)",
+  "--borderColor-attention-muted": "rgba(212, 167, 44, 0.4)",
+  "--borderColor-accent-muted": "rgba(84, 174, 255, 0.4)",
+  "--borderColor-danger-muted": "rgba(255, 129, 130, 0.4)",
+  "--borderColor-done-muted": "rgba(194, 151, 255, 0.4)",
+  "--borderColor-neutral-muted": "rgba(175, 184, 193, 0.4)",
+};
+
+/** The same tokens with GitHub's dark values. */
 export const PRIMER_DARK: Record<string, string> = {
   "--fgColor-default": "#f0f6fc",
   "--fgColor-muted": "#9198a1",
@@ -15,6 +44,7 @@ export const PRIMER_DARK: Record<string, string> = {
   "--fgColor-attention": "#d29922",
   "--fgColor-accent": "#4493f8",
   "--fgColor-done": "#ab7df8",
+  "--focus-outlineColor": "#1f6feb",
   "--bgColor-success-muted": "rgba(46, 160, 67, 0.15)",
   "--bgColor-attention-muted": "rgba(187, 128, 9, 0.15)",
   "--bgColor-accent-muted": "rgba(56, 139, 253, 0.1)",

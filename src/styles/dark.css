@@ -1,0 +1,37 @@
+/*
+ * The dark side of the tokens, for the extension's own pages only. The popup and the options page follow the
+ * operating system, so they import this; the bar on github.com does not, because GitHub's own theme decides there.
+ * Each token still prefers a Primer variable, so a story that sets them (see .storybook/preview.ts) overrides the
+ * operating system and the toolbar's theme decides instead.
+ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --flo-fg: var(--fgColor-default, #f0f6fc);
+    --flo-muted: var(--fgColor-muted, #9198a1);
+    --flo-bg: var(--bgColor-default, #0d1117);
+    --flo-bg-muted: var(--bgColor-muted, #151b23);
+    --flo-border: var(--borderColor-default, #3d444d);
+    --flo-accent: var(--fgColor-accent, #4493f8);
+    --flo-focus: var(--focus-outlineColor, #1f6feb);
+    --flo-success: var(--fgColor-success, #3fb950);
+    --flo-attention: var(--fgColor-attention, #d29922);
+    --flo-danger: var(--fgColor-danger, #f85149);
+    --flo-done: var(--fgColor-done, #ab7df8);
+
+    --flo-success-bg: var(--bgColor-success-muted, rgba(46, 160, 67, 0.15));
+    --flo-attention-bg: var(--bgColor-attention-muted, rgba(187, 128, 9, 0.15));
+    --flo-accent-bg: var(--bgColor-accent-muted, rgba(56, 139, 253, 0.15));
+    --flo-danger-bg: var(--bgColor-danger-muted, rgba(248, 81, 73, 0.1));
+    --flo-done-bg: var(--bgColor-done-muted, rgba(171, 125, 248, 0.15));
+    --flo-neutral-bg: var(--bgColor-neutral-muted, rgba(101, 108, 118, 0.2));
+
+    --flo-success-border: var(--borderColor-success-muted, rgba(46, 160, 67, 0.4));
+    --flo-attention-border: var(--borderColor-attention-muted, rgba(187, 128, 9, 0.4));
+    --flo-accent-border: var(--borderColor-accent-muted, rgba(56, 139, 253, 0.4));
+    --flo-danger-border: var(--borderColor-danger-muted, rgba(248, 81, 73, 0.4));
+    --flo-done-border: var(--borderColor-done-muted, rgba(171, 125, 248, 0.4));
+    --flo-neutral-border: var(--borderColor-neutral-muted, rgba(101, 108, 118, 0.4));
+
+    --flo-avatar-border: rgba(255, 255, 255, 0.15);
+  }
+}
