@@ -1,5 +1,5 @@
-import { BAR_STYLES } from "../bar-styles";
-import type { RawStack, RawStackPull } from "../stack";
+import { BAR_STYLES } from "../ui/bar-styles";
+import type { RawStack, RawStackPull } from "../core/stack";
 
 /**
  * GitHub's dark Primer tokens the bar reads. On github.com the page defines them, and they reach into the shadow root.

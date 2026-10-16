@@ -1,7 +1,7 @@
-import { formatAge } from "./age";
+import { formatAge } from "../core/age";
 import { el, icon } from "./dom";
-import { pullTab } from "./pull-ref";
-import type { StackEntry, StackView } from "./stack";
+import { pullTab } from "../core/pull-ref";
+import type { StackEntry, StackView } from "../core/stack";
 
 export interface StackSectionOptions {
   collapsed: boolean;

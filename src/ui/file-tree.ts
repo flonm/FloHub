@@ -1,7 +1,7 @@
 import { icon } from "./dom";
-import { send } from "./messages";
-import { type PullRef, pullKey } from "./pull-ref";
-import { type DiffStat, diffAnchor, formatDiffStat, matchPath, stateFromCheckbox, type ViewedState } from "./viewed";
+import { send } from "../api/messages";
+import { type PullRef, pullKey } from "../core/pull-ref";
+import { type DiffStat, diffAnchor, formatDiffStat, matchPath, stateFromCheckbox, type ViewedState } from "../core/viewed";
 
 const TREE = '[role="tree"][aria-label*="file" i]';
 const ITEM = '[role="treeitem"]';

@@ -1,9 +1,9 @@
 import type { FailureCode, Overview, VersionPatch } from "./github";
-import type { PullRef } from "./pull-ref";
-import type { Inbox } from "./inbox";
-import type { ViewedFiles } from "./viewed";
-import type { ReviewEvent } from "./shortcuts";
-import type { VersionHistory } from "./versions";
+import type { PullRef } from "../core/pull-ref";
+import type { Inbox } from "../core/inbox";
+import type { ViewedFiles } from "../core/viewed";
+import type { ReviewEvent } from "../core/shortcuts";
+import type { VersionHistory } from "../core/versions";
 
 export type Message =
   | { type: "overview"; ref: PullRef }

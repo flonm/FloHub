@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { missingScopes } from "./github";
+import { missingScopes } from "../api/github";
 import { blocksInbox, isEmptyInbox, moveSelection, problemFor, showsPull, updatedLabel } from "./inbox-view";
 
 describe("problemFor", () => {
