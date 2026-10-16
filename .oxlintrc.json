@@ -122,6 +122,11 @@
       "rules": { "import/no-nodejs-modules": "off" }
     },
     {
+      // A .d.ts may be a global script: declaring a wildcard module, like "*.css" below, is how its imports get a type
+      "files": ["**/*.d.ts"],
+      "rules": { "import/unambiguous": "off" }
+    },
+    {
       // Storybook and the tool configs are read through their default export
       "files": ["**/*.stories.ts", ".storybook/**", "*.config.js"],
       "rules": { "import/no-default-export": "off" }

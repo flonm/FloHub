@@ -1,0 +1,77 @@
+/*
+ * Primitives every FloHub surface shares: the box model, how icons are drawn, how a button inherits type, the focus
+ * ring and the tone palette. A tone is set on an element with data-tone (the extension's pages) or data-stack-tone
+ * (the bar on github.com); both define --tone, --tone-bg and --tone-border for whatever the element styles itself.
+ */
+* {
+  box-sizing: border-box;
+}
+
+svg {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+svg .fill {
+  fill: currentColor;
+  stroke: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--flo-focus);
+  outline-offset: 1px;
+}
+
+[data-tone="success"],
+[data-stack-tone="success"] {
+  --tone: var(--flo-success);
+  --tone-bg: var(--flo-success-bg);
+  --tone-border: var(--flo-success-border);
+}
+[data-tone="attention"],
+[data-stack-tone="attention"] {
+  --tone: var(--flo-attention);
+  --tone-bg: var(--flo-attention-bg);
+  --tone-border: var(--flo-attention-border);
+}
+[data-tone="accent"],
+[data-stack-tone="accent"] {
+  --tone: var(--flo-accent);
+  --tone-bg: var(--flo-accent-bg);
+  --tone-border: var(--flo-accent-border);
+}
+[data-tone="danger"],
+[data-stack-tone="danger"] {
+  --tone: var(--flo-danger);
+  --tone-bg: var(--flo-danger-bg);
+  --tone-border: var(--flo-danger-border);
+}
+[data-tone="done"],
+[data-stack-tone="done"] {
+  --tone: var(--flo-done);
+  --tone-bg: var(--flo-done-bg);
+  --tone-border: var(--flo-done-border);
+}
+[data-tone="neutral"],
+[data-stack-tone="neutral"] {
+  --tone: var(--flo-muted);
+  --tone-bg: var(--flo-neutral-bg);
+  --tone-border: var(--flo-neutral-border);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

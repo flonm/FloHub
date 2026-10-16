@@ -107,7 +107,8 @@ Firefox updates FloHub on its own, starting with the first release that includes
 - `src/background.ts`, `src/content.ts`, `src/options.ts`, `src/popup.ts`: the four entry points `build.ts` bundles. They stay at the top, so the manifest and the built file names don't move.
 - `src/core/`: pure logic with a return value, no browser API and no DOM: reviewer states, layer statuses, ages, diff marks, the interdiff, version bases, URL parsing, review scope, the raw-tree inbox.
 - `src/api/`: everything that talks to GitHub or to the extension's own storage: the service worker's client, the typed messages, the overview cache, the inbox alarm.
-- `src/ui/`: the DOM the user sees, in the page, the shadow root and the popup: the bar and its styles, the stack, discussion, inbox, review, versions and toast views, and the page helpers (anchor, file tree, diff highlights, favicon).
+- `src/ui/`: the DOM the user sees, in the page, the shadow root and the popup: the bar, the stack, discussion, inbox, review, versions and toast views, and the page helpers (anchor, file tree, diff highlights, favicon).
+- `src/styles/`: the design system. `tokens.css` holds every color, font, radius and shadow once (each reading GitHub's Primer variable with a fallback), `base.css` the primitives and the tone palette, and one file per surface: `bar.css`, `popup.css`, `options.css`. `dark.css` adds the pages' dark fallbacks and is deliberately not part of the bar, which follows GitHub's own theme rather than the machine's.
 - `src/stories/`: the Storybook stories. `src/test-gaps.test.ts` walks every folder and fails when a module that builds DOM appears in no story, or another module has no test of its own.
 
 By feature:
@@ -118,5 +119,5 @@ By feature:
 - `src/ui/file-tree.ts`, `src/core/viewed.ts`: the Viewed checkboxes in the file tree. A tree item is matched to its file by the `#diff-<sha256(path)>` anchor or, failing that, by its labels from the root down. Viewed marks and line counts come from `PullRequest.files` (`viewerViewedState`, `additions`, `deletions`), and marks change through `markFileAsViewed`/`unmarkFileAsViewed`.
 - `src/content.ts`: follows GitHub's in-page navigation, mounts the bars, and refreshes on focus and on visibility changes.
 - `src/core/reviewers.ts`, `src/core/stack.ts`, `src/core/age.ts`: pure derivation of reviewer states, layer statuses and ages from the raw query.
-- `src/ui/bar.ts`, `src/ui/stack-view.ts`, `src/ui/dom.ts`, `src/ui/bar-styles.ts`: the Shadow DOM UI, themed through GitHub's Primer CSS variables.
+- `src/ui/bar.ts`, `src/ui/stack-view.ts`, `src/ui/dom.ts`, `src/ui/bar-styles.ts`: the Shadow DOM UI. `bar-styles.ts` composes the design system's `tokens.css`, `base.css` and `bar.css` into the style the shadow root injects, themed through GitHub's Primer CSS variables.
 - `src/core/shortcuts.ts`, `src/ui/review-dialog.ts`, `src/ui/toast.ts`: the key sequences, the review dialog, and the feedback toast.
