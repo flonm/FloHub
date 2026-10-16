@@ -124,10 +124,11 @@ function ready(overrides: Partial<Inbox> = {}): Inbox {
 /**
  * Mounts the inbox and re-renders it when a section is folded, as the popup does.
  * @param state What to show, without the folded sections, which the story keeps itself.
+ * @param initial The sections to start folded.
  * @returns The shadow host.
  */
-function mount(state: Omit<InboxViewState, "collapsed">): HTMLElement {
-  const collapsed = new Set<SectionKind>();
+function mount(state: Omit<InboxViewState, "collapsed">, initial: SectionKind[] = []): HTMLElement {
+  const collapsed = new Set<SectionKind>(initial);
   const box = el("div");
   const draw = () => box.replaceChildren(...renderInbox({ ...state, collapsed }, actions));
   const actions: InboxViewActions = {
@@ -147,7 +148,18 @@ function mount(state: Omit<InboxViewState, "collapsed">): HTMLElement {
   return host;
 }
 
-const meta = { title: "Inbox/Overview" } satisfies Meta;
+const meta = {
+  title: "Inbox/Overview",
+  tags: ["autodocs"],
+  parameters: {
+    docs: {
+      description: {
+        component:
+          "The popup's inbox, mounted with the real `renderInbox` inside a shadow root carrying popup.css. Review requests are grouped by stack, top layer first; every status is plain tone-coloured text rather than a badge. Click a section heading to fold it.",
+      },
+    },
+  },
+} satisfies Meta;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -190,4 +202,34 @@ export const TeamRequest: Story = {
       }),
       problem: null,
     }),
+};
+
+/** One lone pull request per status, so the whole tone palette is side by side. */
+export const EveryStatus: Story = {
+  render: () =>
+    mount({
+      inbox: ready({
+        review: [
+          group("octo-org/api", null, [pull({ number: 11, title: "fix(auth): stop the retry loop", tone: "danger", label: "Checks failed" })]),
+          group("octo-org/api", null, [pull({ number: 12, title: "feat(api): page through the stack entries", tone: "attention", label: "Changes requested" })]),
+          group("octo-org/api", null, [pull({ number: 13, title: "feat(ui): render the stack in the inbox", tone: "success", label: "Ready to merge" })]),
+          group("octo-org/api", null, [pull({ number: 14, title: "docs: explain the stack badge", tone: "done", label: "Merged" })]),
+          group("octo-org/api", null, [pull({ number: 15, title: "chore(styles): tidy the tokens", tone: "neutral", label: "Draft" })]),
+          group("octo-org/api", null, [pull({ number: 16, title: "feat(auth): scope the token to one repository", tone: "accent", label: "Needs review" })]),
+        ],
+        waiting: [],
+        mine: [],
+      }),
+      problem: null,
+    }),
+};
+
+/** All three sections folded to their headings, as the popup remembers them. */
+export const Collapsed: Story = {
+  render: () => mount({ inbox: ready(), problem: null }, ["review", "waiting", "mine"]),
+};
+
+/** A section with nothing in it still keeps its line. */
+export const EmptySections: Story = {
+  render: () => mount({ inbox: ready({ review: [], waiting: [] }), problem: null }),
 };

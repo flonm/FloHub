@@ -79,7 +79,7 @@ After `bun run build`, click the reload icon on the extension's card in `chrome:
 | `bun run check` | Typecheck, lint, knip and unit tests. The pre-commit hook runs it on what's staged, for `git commit --amend` too, and CI runs it on every pull request. |
 | `bun run lint:firefox` | Builds `dist-firefox/` and runs Mozilla's `web-ext lint` on it |
 | `bun run sign:firefox` | Builds `dist-firefox/` and has addons.mozilla.org sign it as an unlisted add-on. The signed `.xpi` lands in `web-ext-artifacts/`. Needs `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` from [your AMO API keys](https://addons.mozilla.org/developers/addon/api/key/). |
-| `bun run storybook` | Storybook at http://localhost:6008 with the stack section and every layer status, in light and dark (toolbar). Stories live in `src/stories/`. `bun run build-storybook` builds it into `storybook-static/`. |
+| `bun run storybook` | Storybook at http://localhost:6008: the bar, the inbox, the status badge, the stack section, the discussion, the review and versions dialogs, the toast and the viewed file tree, each with its own Docs page (`@storybook/addon-docs`). Use the **Theme** toolbar item for GitHub light and dark. `bun run build-storybook` builds it into `storybook-static/`. |
 | `bun run e2e` | Builds, loads `dist/` into Playwright's Chromium, mocks `api.github.com`, and drives a public PR (`PULL_URL` overrides it). Screenshots go to `e2e/screenshots/`. |
 
 Every change brings its unit tests and stories, as the `tests-and-stories` skill in `.claude/skills/` spells out. `src/test-gaps.test.ts` fails when a module that builds DOM appears in no story, or another module has no test of its own.
