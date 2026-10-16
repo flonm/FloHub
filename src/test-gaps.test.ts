@@ -27,7 +27,6 @@ const WITHOUT_STORY = new Set([
   "ui/bar",
   "ui/discussion-view",
   "ui/file-tree",
-  "ui/inbox-view",
   "ui/review-dialog",
   "ui/toast",
   "ui/versions-dialog",
