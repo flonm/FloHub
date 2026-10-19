@@ -88,7 +88,8 @@ interface Candidate {
  *
  * A reviewer's verdict is their latest approval, change request or dismissed review; a later
  * plain comment never overrides it. A requested reviewer who already reviewed is re-requested.
- * The pull request's author, unsubmitted reviews and bots that only commented are left out.
+ * A bot's approval or change request, such as an AI reviewer's, reads as a comment, so it never looks like a person's verdict.
+ * The pull request's author, unsubmitted reviews and bots that nobody requested are left out.
  * @param pullRequest The pull request as returned by the reviewer query.
  * @param viewerLogin The login of the token's owner, who is never offered a re-request of themselves.
  * @returns The reviewers, most actionable status first.
@@ -110,7 +111,7 @@ export function deriveReviewers(pullRequest: RawPullRequest, viewerLogin: string
     const key = actorKey(review.author);
     const candidate = candidates.get(key) ?? toCandidate(review.author);
     candidates.set(key, candidate);
-    if (verdict === "commented") candidate.commented = true;
+    if (verdict === "commented" || candidate.kind === "bot") candidate.commented = true;
     else candidate.opinionated = verdict;
   }
 
