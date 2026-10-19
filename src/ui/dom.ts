@@ -11,7 +11,9 @@ export type IconName =
   | "branch"
   | "pointer"
   | "gear"
-  | "external";
+  | "external"
+  | "copy"
+  | "unfold";
 
 type Shape = ["path", { d: string; class?: string }] | ["circle", { cx: string; cy: string; r: string; class?: string }];
 
@@ -20,6 +22,8 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const ICONS: Record<IconName, Shape[]> = {
   external: [["path", { d: "M9.5 2.75h3.75V6.5M13.25 2.75 7.75 8.25M11.5 9.25v3.25a.75.75 0 0 1-.75.75h-7.5a.75.75 0 0 1-.75-.75v-7.5a.75.75 0 0 1 .75-.75H6.5" }]],
   check: [["path", { d: "M3 8.5l3.25 3.25L13 5" }]],
+  copy: [["path", { d: "M5.75 5.75h7.5v7.5h-7.5zM10.25 5.75v-3h-7.5v7.5h3" }]],
+  unfold: [["path", { d: "M8 1.75v4M5.75 3.75 8 1.75l2.25 2M8 14.25v-4M5.75 12.25 8 14.25l2.25-2M2.5 8h1M6.5 8h1M10.5 8h1M14 8h-.5" }]],
   cross: [["path", { d: "M4.25 4.25l7.5 7.5M11.75 4.25l-7.5 7.5" }]],
   slash: [
     ["circle", { cx: "8", cy: "8", r: "5.75" }],

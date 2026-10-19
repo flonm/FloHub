@@ -23,7 +23,14 @@ const V1 = version({ oid: "1111111", number: 1, at: new Date(NOW - 8 * HOUR).toI
 const V2 = version({ oid: "2222222", number: 2, at: new Date(NOW - 3 * HOUR).toISOString(), viewerLatestReview: true });
 const V3 = version({ oid: "3333333", number: 3, at: new Date(NOW - HOUR).toISOString(), current: true });
 
-/** Two versions of one file, and one the newer version adds. */
+/** A renamed file's patch: a change in the middle of enough context that each side folds away. */
+function retryPatch(delay: string): string {
+  const before = Array.from({ length: 12 }, (_, index) => ` export const STEP_${index} = ${index};`);
+  const after = Array.from({ length: 10 }, (_, index) => ` export const TAIL_${index} = ${index};`);
+  return ["@@ -1,22 +1,23 @@ // Retry policy", ...before, `+export const DELAY_MS = ${delay}; // between attempts`, ...after].join("\n");
+}
+
+/** Two versions of one file, one the newer versions add, and one renamed differently in each. */
 const PATCHES: Record<string, VersionPatch> = {
   "1111111": {
     mergeBase: "0000000",
@@ -55,6 +62,13 @@ const PATCHES: Record<string, VersionPatch> = {
         sha: "ccc",
         patch: "@@ -0,0 +1,3 @@\n+export const layer = 1;\n+export const trunk = 0;\n+export const gap = 8;\n",
       },
+      {
+        filename: "src/core/retry.ts",
+        previousFilename: "src/core/backoff.ts",
+        status: "renamed",
+        sha: "eee",
+        patch: retryPatch("500"),
+      },
     ],
   },
   "3333333": {
@@ -73,6 +87,13 @@ const PATCHES: Record<string, VersionPatch> = {
         status: "added",
         sha: "ccc",
         patch: "@@ -0,0 +1,3 @@\n+export const layer = 1;\n+export const trunk = 0;\n+export const gap = 8;\n",
+      },
+      {
+        filename: "src/core/retry-policy.ts",
+        previousFilename: "src/core/backoff.ts",
+        status: "renamed",
+        sha: "fff",
+        patch: retryPatch("250"),
       },
     ],
   },
@@ -148,7 +169,11 @@ export const Loading: Story = { render: () => dialog("loading") };
 /** A pull request with a single head: force pushes and reviews leave no second version to compare. */
 export const SingleVersion: Story = { render: () => dialog(1) };
 
-/** Defaults to the viewer's last reviewed version against the current head. */
+/**
+ * Defaults to the viewer's last reviewed version against the current head. Lines only in the newer version get an
+ * amber bar, lines only in the older one a red bar and a strike, and a replaced line highlights the words that differ.
+ * The renamed file's header says where each version renamed it to; its folded context expands on click.
+ */
 export const SinceTheViewersReview: Story = { render: () => dialog(3) };
 
 /** The history could not be read. */

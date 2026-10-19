@@ -5,9 +5,33 @@ export interface DiffLine {
   text: string;
 }
 
-interface Hunk {
-  lines: DiffLine[];
+/** A run of text in a line, and whether it differs from the line it pairs with in the other version. */
+export interface Segment {
+  text: string;
+  changed: boolean;
 }
+
+/** A line of the pull request's patch, marked by how it changed between the versions. */
+export interface InterdiffLine extends DiffLine {
+  /** The line as the version it comes from has it: hunk headers keep their line numbers. */
+  display: string;
+  /** The line's number in the base side of the file, as GitHub's diff numbers it; null where it has none. */
+  left: number | null;
+  /** The line's number in the head side of the file; null where it has none. */
+  right: number | null;
+  /** For a line that replaced, or was replaced by, a similar one: its code split by what differs from the other. */
+  segments?: Segment[];
+}
+
+/** A run of changed lines with their context, as a slice of the file's lines. */
+interface Hunk {
+  /** Where the hunk starts in the file's lines. */
+  start: number;
+  lines: InterdiffLine[];
+}
+
+/** What a line of a patch is: a kept, added or removed line, the no-newline note, or a hunk header. */
+export type LineKind = " " | "+" | "-" | "\\" | "hunk";
 
 /** A file in one version of a pull request, as GitHub's compare API lists it. */
 export interface VersionFile {
@@ -34,15 +58,29 @@ export interface FileInterdiff {
   /** The file's path in the older version, when it differs. */
   oldPath: string | null;
   change: FileChange;
-  /** Each line is a line of the pull request's patch, marked by how it changed between the versions. */
+  /** The lines that say the file is new, deleted or renamed, marked by how they changed between the versions. */
+  header: DiffLine[];
+  /** Every line of the patch, of either version, marked by how it changed between the versions. */
+  lines: InterdiffLine[];
+  /** The changed lines with their context. */
   hunks: Hunk[];
   added: number;
   removed: number;
+  /** GitHub shows no diff for the file in a version that touches it (binary, or too large). */
+  diffless: boolean;
+  /** The file's status in each version, like "modified" or "added"; null for a version that doesn't touch it. */
+  status: { before: string | null; after: string | null };
 }
 
 const CONTEXT = 3;
 const MAX_EDITS = 2000;
 const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@ ?/u;
+const MARKERS: Record<string, LineKind> = { " ": " ", "+": "+", "-": "-", "\\": "\\" };
+const HUNK_NUMBERS = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/u;
+/** Below this share of unchanged text, two lines are too different for word highlights to help. */
+const MIN_WORD_OVERLAP = 0.5;
+/** How many added lines a removed line looks ahead for its most similar replacement. */
+const PAIR_WINDOW = 8;
 
 /**
  * Compares the changes two versions of a pull request make, file by file: a diff of their diffs, like
@@ -98,27 +136,175 @@ function sameOrigin(old: VersionFile, current: VersionFile): boolean {
 export function compareFile(old: VersionFile | null, current: VersionFile | null): FileInterdiff {
   const file = current ?? old;
   if (!file) throw new Error("compareFile needs a file from at least one version");
-  const path = file.filename;
-  const oldPath = old && current && old.filename !== current.filename ? old.filename : null;
-  const result = (change: FileChange, lines: DiffLine[] = []): FileInterdiff => ({
-    path,
-    oldPath,
-    change,
-    hunks: toHunks(lines),
-    added: lines.filter((line) => line.mark === "+").length,
-    removed: lines.filter((line) => line.mark === "-").length,
-  });
+  const header = diffLines(old ? patchHeader(old) : [], current ? patchHeader(current) : []);
+  const result = (change: FileChange, lines: InterdiffLine[] = []): FileInterdiff => {
+    const marked = [...header, ...lines].filter((line) => line.mark !== " ");
+    return {
+      path: file.filename,
+      oldPath: old && current && old.filename !== current.filename ? old.filename : null,
+      change,
+      header,
+      lines,
+      hunks: toHunks(lines),
+      added: marked.filter((line) => line.mark === "+").length,
+      removed: marked.filter((line) => line.mark === "-").length,
+      diffless: [old, current].some((side) => side !== null && side.patch === undefined),
+      status: { before: old?.status ?? null, after: current?.status ?? null },
+    };
+  };
 
   if (!old || !current) {
     const mark: Mark = old ? "-" : "+";
-    return result(old ? "dropped" : "added", file.patch === undefined ? [] : patchLines(file).map((text) => ({ mark, text })));
+    return result(
+      old ? "dropped" : "added",
+      patchRows(patchBody(file)).map((row) => Object.assign(row, { mark })),
+    );
   }
   if (old.patch === undefined || current.patch === undefined) {
     const same = old.patch === current.patch && old.sha === current.sha && old.status === current.status;
     return result(same ? "unchanged" : "opaque");
   }
-  const lines = diffLines(patchLines(old), patchLines(current));
-  return result(lines.some((line) => line.mark !== " ") ? "changed" : "unchanged", lines);
+  const lines = interdiffLines(patchBody(old), patchBody(current));
+  return result([...header, ...lines].some((line) => line.mark !== " ") ? "changed" : "unchanged", lines);
+}
+
+/**
+ * Diffs two versions' patch lines, numbered as each version's diff numbers them, with word highlights where a line
+ * replaced a similar one.
+ * @param before The older version's raw patch lines.
+ * @param after The newer version's raw patch lines.
+ * @returns Every line of both, marked as kept, removed or added.
+ */
+function interdiffLines(before: string[], after: string[]): InterdiffLine[] {
+  const oldRows = patchRows(before);
+  const newRows = patchRows(after);
+  let x = 0;
+  let y = 0;
+  const lines: InterdiffLine[] = [];
+  const diff = diffLines(
+    oldRows.map((row) => row.text),
+    newRows.map((row) => row.text),
+  );
+  for (const { mark } of diff) {
+    // A kept line shows as the newer version has it.
+    const row = mark === "-" ? oldRows[x++] : newRows[y++];
+    if (mark === " ") x++;
+    if (row) lines.push(Object.assign(row, { mark }));
+  }
+  pairReplacements(lines);
+  return lines;
+}
+
+/**
+ * @param body A file's raw patch lines.
+ * @returns Each line normalized for comparing, as shown, and numbered.
+ */
+function patchRows(body: string[]): Omit<InterdiffLine, "mark">[] {
+  const numbers = lineNumbers(body);
+  return body.map((line, index) => ({
+    text: normalizeLine(line),
+    display: clean(line),
+    left: numbers[index]?.left ?? null,
+    right: numbers[index]?.right ?? null,
+  }));
+}
+
+/**
+ * @param text A raw line of a patch.
+ * @returns What kind of line it is, and its code without the leading marker. A hunk header is all code.
+ */
+export function splitLine(text: string): { kind: LineKind; code: string } {
+  const kind = MARKERS[text.slice(0, 1)];
+  return kind ? { kind, code: text.slice(1) } : { kind: "hunk", code: text };
+}
+
+/**
+ * Splits two similar lines into runs of what they share and what differs, word by word.
+ * @param before The older line's code.
+ * @param after The newer line's code.
+ * @returns The runs of each, or null when they share too little for highlights to help.
+ */
+export function wordDiff(before: string, after: string): [Segment[], Segment[]] | null {
+  return wordRuns(before, after)?.segments ?? null;
+}
+
+/**
+ * @param before The older line's code.
+ * @param after The newer line's code.
+ * @returns The runs of each and how much text they share, or null when they share too little.
+ */
+function wordRuns(before: string, after: string): { segments: [Segment[], Segment[]]; shared: number } | null {
+  const diff = diffLines(tokens(before), tokens(after));
+  const shared = diff.filter((token) => token.mark === " ").reduce((length, token) => length + token.text.length, 0);
+  if (shared < MIN_WORD_OVERLAP * Math.max(before.length, after.length)) return null;
+  const runs = (skip: Mark) => {
+    const segments: Segment[] = [];
+    for (const token of diff) {
+      if (token.mark === skip) continue;
+      const changed = token.mark !== " ";
+      const last = segments.at(-1);
+      if (last?.changed === changed) last.text += token.text;
+      else segments.push({ text: token.text, changed });
+    }
+    return segments;
+  };
+  return { segments: [runs("+"), runs("-")], shared };
+}
+
+function tokens(text: string): string[] {
+  return text.match(/\w+|\s+|[^\w\s]/gu) ?? [];
+}
+
+/**
+ * @param body A file's raw patch lines.
+ * @returns For each line, its number on the base and on the head side of the file, as GitHub's diff numbers them.
+ */
+export function lineNumbers(body: string[]): { left: number | null; right: number | null }[] {
+  let left = 0;
+  let right = 0;
+  return body.map((line) => {
+    const hunk = HUNK_NUMBERS.exec(line);
+    if (hunk) {
+      left = Number(hunk[1]);
+      right = Number(hunk[2]);
+      return { left: null, right: null };
+    }
+    if (line.startsWith("+")) return { left: null, right: right++ };
+    if (line.startsWith("-")) return { left: left++, right: null };
+    if (line.startsWith("\\")) return { left: null, right: null };
+    return { left: left++, right: right++ };
+  });
+}
+
+/**
+ * Describes a file's header lines for its file header: what makes it new, deleted or renamed.
+ * @param header The header lines, marked by how they changed between the versions.
+ * @returns A label per line worth showing; a rename's target is already the file's path unless it changed.
+ */
+export function headerLabels(header: DiffLine[]): { label: string; mark: Mark }[] {
+  const labels: { label: string; mark: Mark }[] = [];
+  for (const { mark, text } of header) {
+    if (text === "new file") labels.push({ label: "New file", mark });
+    else if (text === "deleted file") labels.push({ label: "Deleted file", mark });
+    else if (text.startsWith("rename from ")) labels.push({ label: `Renamed from ${text.slice("rename from ".length)}`, mark });
+    else if (text.startsWith("rename to ") && mark !== " ") labels.push({ label: `Renamed to ${text.slice("rename to ".length)}`, mark });
+  }
+  return labels;
+}
+
+/**
+ * Splits a file's line counts into GitHub's five diffstat squares.
+ * @param added Lines added.
+ * @param removed Lines removed.
+ * @returns Five squares, added ones first, then removed ones, then neutral ones.
+ */
+export function diffstat(added: number, removed: number): ("add" | "del" | "none")[] {
+  const total = added + removed;
+  const scale = total <= 5 ? 1 : 5 / total;
+  let adds = added > 0 ? Math.max(1, Math.round(added * scale)) : 0;
+  const dels = removed > 0 ? Math.max(1, Math.min(5 - adds, Math.round(removed * scale))) : 0;
+  adds = Math.min(adds, 5 - dels);
+  return [...Array.from({ length: adds }, () => "add" as const), ...Array.from({ length: dels }, () => "del" as const), ...Array.from({ length: 5 - adds - dels }, () => "none" as const)];
 }
 
 /**
@@ -150,9 +336,13 @@ export function patchBody(file: VersionFile): string[] {
   return (file.patch ?? "").split("\n").filter((line, index, lines) => line !== "" || index < lines.length - 1);
 }
 
+function clean(line: string): string {
+  return line.replace(/\r$/u, "");
+}
+
 function normalizeLine(line: string): string {
-  const clean = line.replace(/\r$/u, "");
-  return HUNK_HEADER.test(clean) ? clean.replace(HUNK_HEADER, "@@ ").trimEnd() : clean;
+  const text = clean(line);
+  return HUNK_HEADER.test(text) ? text.replace(HUNK_HEADER, "@@ ").trimEnd() : text;
 }
 
 /**
@@ -231,7 +421,7 @@ function backtrack(a: string[], b: string[], trace: Int32Array[], edits: number)
   return lines.toReversed();
 }
 
-function toHunks(lines: DiffLine[]): Hunk[] {
+function toHunks(lines: InterdiffLine[]): Hunk[] {
   const hunks: Hunk[] = [];
   const changed = lines.flatMap((line, index) => (line.mark === " " ? [] : index));
   let index = 0;
@@ -240,8 +430,42 @@ function toHunks(lines: DiffLine[]): Hunk[] {
     let last = first;
     while (index + 1 < changed.length && changed[index + 1]! - last <= 2 * CONTEXT + 1) last = changed[++index]!;
     index++;
-    hunks.push({ lines: lines.slice(Math.max(0, first - CONTEXT), Math.min(lines.length, last + CONTEXT + 1)) });
+    const start = Math.max(0, first - CONTEXT);
+    hunks.push({ start, lines: lines.slice(start, Math.min(lines.length, last + CONTEXT + 1)) });
   }
   return hunks;
+}
+/**
+ * Gives each removed line that's followed by added ones word highlights against the most similar of them, keeping
+ * the pairs in order.
+ * @param lines The lines, changed in place.
+ */
+function pairReplacements(lines: InterdiffLine[]): void {
+  let index = 0;
+  while (index < lines.length) {
+    if (lines[index]!.mark !== "-") {
+      index++;
+      continue;
+    }
+    const removedStart = index;
+    while (index < lines.length && lines[index]!.mark === "-") index++;
+    const addedStart = index;
+    while (index < lines.length && lines[index]!.mark === "+") index++;
+    let next = addedStart;
+    for (let removed = removedStart; removed < addedStart && next < index; removed++) {
+      const before = splitLine(lines[removed]!.display);
+      if (before.kind === "hunk") continue;
+      let best: { at: number; segments: [Segment[], Segment[]]; shared: number } | null = null;
+      for (let added = next; added < Math.min(index, next + PAIR_WINDOW); added++) {
+        const after = splitLine(lines[added]!.display);
+        if (after.kind === "hunk") continue;
+        const words = wordRuns(before.code, after.code);
+        if (words && (!best || words.shared > best.shared)) best = { at: added, ...words };
+      }
+      if (!best) continue;
+      [lines[removed]!.segments, lines[best.at]!.segments] = best.segments;
+      next = best.at + 1;
+    }
+  }
 }
 /* oxlint-enable typescript/no-non-null-assertion */
