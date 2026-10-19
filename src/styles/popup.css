@@ -9,7 +9,8 @@
 :root {
   color-scheme: light dark;
 }
-body {
+body,
+.popup {
   width: 504px;
   max-height: 580px;
   margin: 0;
@@ -129,15 +130,9 @@ section:has(.section-toggle[aria-expanded="false"]) {
   padding-bottom: 8px;
 }
 .count {
-  min-width: 18px;
-  padding: 0 6px;
-  border-radius: var(--flo-radius-pill);
-  background: var(--flo-neutral-bg);
-  color: var(--flo-fg);
-  font-size: 11px;
+  color: var(--flo-muted);
+  font-size: 12px;
   font-weight: 500;
-  line-height: 18px;
-  text-align: center;
 }
 ul {
   margin: 0;
@@ -277,19 +272,6 @@ ul {
   color: var(--tone);
   font-weight: 600;
 }
-.tag {
-  display: inline-flex;
-  align-items: center;
-  height: 18px;
-  margin-right: 6px;
-  padding: 0 6px;
-  border: 1px solid var(--tone-border);
-  border-radius: var(--flo-radius-pill);
-  background: var(--tone-bg);
-  color: var(--tone);
-  font-size: 11px;
-  font-weight: 600;
-}
 .threads {
   display: inline-flex;
   align-items: center;
@@ -319,16 +301,13 @@ ul {
 .hide-teams {
   position: absolute;
   right: 12px;
-  bottom: 6px;
-  height: 18px;
-  padding: 0 6px;
-  border: 1px solid var(--flo-border);
-  border-radius: var(--flo-radius-pill);
-  background: var(--flo-bg);
+  bottom: 4px;
+  padding: 0 2px;
+  border: 0;
+  background: none;
   color: var(--flo-muted);
   font-size: 11px;
   font-weight: 600;
-  line-height: 16px;
   cursor: pointer;
   opacity: 0;
 }
@@ -336,12 +315,9 @@ ul {
 .hide-teams:focus {
   opacity: 1;
 }
-.layer:hover .hide-teams {
-  background: var(--flo-bg-muted);
-}
 .hide-teams:hover {
-  border-color: var(--flo-muted);
   color: var(--flo-fg);
+  text-decoration: underline;
 }
 .hide-teams:disabled {
   cursor: default;

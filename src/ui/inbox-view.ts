@@ -1,11 +1,36 @@
 import { formatAge } from "../core/age";
+import { INBOX_PERIOD_MINUTES } from "../api/inbox-sync";
 import type { FailureCode } from "../api/github";
-import type { Inbox } from "../core/inbox";
+import { type Inbox, type InboxGroup, type InboxPull, isStale } from "../core/inbox";
+import { formatDiffStat } from "../core/viewed";
+import { el, icon } from "./dom";
+
+/** The three sections the popup draws. */
+export type SectionKind = "review" | "waiting" | "mine";
 
 /** What the popup shows instead of the inbox, or over it. */
 export interface Problem {
   kind: "no-token" | "unauthorized" | "scopes" | "error";
   message: string;
+}
+
+/** Everything the inbox needs to draw itself. */
+export interface InboxViewState {
+  inbox: Inbox | null;
+  problem: Problem | null;
+  /** The sections the user folded away. */
+  collapsed: ReadonlySet<SectionKind>;
+}
+
+/** What the popup does when the user acts on the inbox. */
+export interface InboxViewActions {
+  openPull: (url: string, background: boolean) => void;
+  /** A row took focus; the popup keeps the list's single tab stop on it. */
+  focusRow: (key: string) => void;
+  toggleSection: (kind: SectionKind) => void;
+  hideTeamRequests: (repo: string) => void;
+  retryRefresh: () => void;
+  openSettings: () => void;
 }
 
 /**
@@ -88,4 +113,286 @@ export function showsPull(tabUrl: string, pullUrl: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Draws the inbox: the problem that replaces it, the skeleton while it loads, one combined empty state, or the three
+ * sections of pull requests.
+ * @param state What to show.
+ * @param actions What to do when the user acts on it.
+ * @returns The children for the popup's main element.
+ */
+export function renderInbox(state: InboxViewState, actions: InboxViewActions): HTMLElement[] {
+  const { inbox, problem } = state;
+  if (problem && (blocksInbox(problem) || !inbox)) return [renderProblem(problem, actions)];
+  if (!inbox) return [renderSkeleton()];
+  if (isEmptyInbox(inbox)) {
+    return [
+      blank(
+        "check",
+        "Nothing to review",
+        `No review requests and no open pull requests. FloHub checks again every ${INBOX_PERIOD_MINUTES} minutes.`,
+      ),
+    ];
+  }
+  return [
+    renderSection("Waiting for your review", inbox.review, "No review requests.", "review", state, actions),
+    renderSection("Waiting for author", inbox.waiting ?? [], "No reviews waiting for an answer.", "waiting", state, actions),
+    renderSection("Your pull requests", inbox.mine, "No open pull requests.", "mine", state, actions),
+  ];
+}
+
+function renderProblem(current: Problem, actions: InboxViewActions): HTMLElement {
+  switch (current.kind) {
+    case "no-token": {
+      return blank("people", "Add a GitHub token", "The inbox needs a token to find your review requests and pull requests.", [
+        "Set up token",
+        actions.openSettings,
+      ]);
+    }
+    case "unauthorized": {
+      return blank("cross", "GitHub rejected the token", "It may have expired or been revoked. Add a new one in the settings.", [
+        "Open settings",
+        actions.openSettings,
+      ]);
+    }
+    case "scopes": {
+      return blank("cross", "The token needs more access", `${current.message} Create one with the repo and read:org scopes.`, [
+        "Open settings",
+        actions.openSettings,
+      ]);
+    }
+    case "error": {
+      return blank("cross", "Could not load the inbox", current.message, ["Try again", actions.retryRefresh]);
+    }
+  }
+}
+
+function blank(name: "check" | "cross" | "people", title: string, text: string, action?: [string, () => void]): HTMLElement {
+  const box = el("div", { class: "blank", "data-kind": name });
+  const badge = el("span", { class: "blank-icon" });
+  badge.append(icon(name));
+  box.append(badge, el("p", { class: "blank-title" }, title), el("p", { class: "blank-text" }, text));
+  if (action) {
+    const [label, onClick] = action;
+    const button = el("button", { type: "button", class: "text-button", "data-focus-key": `action:${label}` }, label);
+    button.addEventListener("click", onClick);
+    box.append(button);
+  }
+  return box;
+}
+
+function renderSkeleton(): HTMLElement {
+  const box = el("div", { class: "skeleton" });
+  box.append(el("span", { class: "visually-hidden" }, "Loading pull requests"));
+  for (const rowCount of [3, 2]) {
+    const section = el("div", { class: "skeleton-section", "aria-hidden": "true" });
+    section.append(el("span", { class: "bone heading" }));
+    for (let index = 0; index < rowCount; index++) {
+      const row = el("div", { class: "skeleton-row" });
+      row.append(el("span", { class: "bone dot" }), el("span", { class: "bone line" }), el("span", { class: "bone line short" }));
+      section.append(row);
+    }
+    box.append(section);
+  }
+  return box;
+}
+
+function renderSection(
+  title: string,
+  groups: InboxGroup[],
+  empty: string,
+  kind: SectionKind,
+  state: InboxViewState,
+  actions: InboxViewActions,
+): HTMLElement {
+  const count = groups.reduce((sum, entry) => sum + entry.pulls.length, 0);
+  const id = `section-${kind}`;
+  const bodyId = `section-body-${kind}`;
+  const open = !state.collapsed.has(kind);
+  const section = el("section", { "aria-labelledby": id });
+  const toggle = el("button", {
+    type: "button",
+    class: "section-toggle",
+    id,
+    "aria-expanded": String(open),
+    "aria-controls": bodyId,
+    "data-focus-key": `section:${kind}`,
+  });
+  toggle.append(icon("chevron"), el("span", { class: "section-title" }, title), el("span", { class: "count" }, String(count)));
+  toggle.addEventListener("click", () => actions.toggleSection(kind));
+  const heading = el("h2");
+  heading.append(toggle);
+  const body = el("div", { id: bodyId });
+  body.hidden = !open;
+  section.append(heading, body);
+  if (!open) return section;
+  if (groups.length === 0) {
+    body.append(el("p", { class: "empty" }, empty));
+    return section;
+  }
+  const list = el("ul", { class: "groups" });
+  for (const entry of groups) list.append(renderGroup(entry, kind, actions));
+  body.append(list);
+  return section;
+}
+
+function renderGroup(entry: InboxGroup, kind: SectionKind, actions: InboxViewActions): HTMLElement {
+  // Layers of one stack stay adjacent; a rail joins them only when the inbox holds more than one.
+  const joined = entry.stackNumber !== null && entry.pulls.length > 1;
+  const item = el("li", { class: joined ? "group joined" : "group" });
+  const list = el("ul", { class: "layers" });
+  if (entry.stackNumber !== null) list.setAttribute("aria-label", `Stack of ${entry.stackSize} in ${entry.repo}`);
+  for (const pull of entry.pulls) list.append(renderPull(pull, entry, kind, actions));
+  item.append(list);
+  return item;
+}
+
+function renderPull(pull: InboxPull, entry: InboxGroup, kind: SectionKind, actions: InboxViewActions): HTMLElement {
+  const item = el("li", { class: "layer" });
+  const key = `${kind}:${pull.url}`;
+  const ids = { title: `title-${kind}-${pull.number}-${entry.repo}`, meta: `meta-${kind}-${pull.number}-${entry.repo}` };
+  const link = el("a", {
+    class: "pull",
+    href: pull.url,
+    tabindex: "-1",
+    "data-focus-key": key,
+    "aria-labelledby": ids.title,
+    "aria-describedby": ids.meta,
+  });
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    actions.openPull(pull.url, event.metaKey || event.ctrlKey);
+  });
+  link.addEventListener("mousedown", (event) => {
+    if (event.button === 1) event.preventDefault();
+  });
+  link.addEventListener("auxclick", (event) => {
+    if (event.button !== 1) return;
+    event.preventDefault();
+    actions.openPull(pull.url, true);
+  });
+  link.addEventListener("focus", () => actions.focusRow(key));
+
+  const title = el("span", { class: "title", id: ids.title, title: `#${pull.number} ${pull.title}` });
+  title.append(el("span", { class: "number" }, `#${pull.number} `), pull.title);
+
+  const time = el("time", { class: "age", datetime: pull.lastActivity, "aria-hidden": "true" });
+  if (kind === "review") time.dataset.flagStale = "";
+  const spoken = el("span", { class: "visually-hidden spoken-age" });
+
+  const meta = el("span", { class: "meta", id: ids.meta });
+  if (kind === "waiting") {
+    if (pull.yourVerdict === "changes_requested") meta.append(flag("You requested changes", "attention"));
+    else if (pull.yourVerdict === "commented") meta.append(flag("You commented", "neutral"));
+    if (pull.pushedSinceReview) meta.append(flag("New commits", "accent"));
+    if (pull.author) meta.append(el("span", { class: "item author" }, pull.author));
+  } else if (kind === "review") {
+    if (pull.tone !== "accent") meta.append(renderStatus(pull));
+    if (pull.rerequested) meta.append(flag("Re-requested", "attention"));
+    if (pull.author) meta.append(el("span", { class: "item author" }, pull.author));
+  } else {
+    meta.append(renderStatus(pull));
+  }
+  meta.append(el("span", { class: "item repo" }, entry.repo));
+  if (entry.stackNumber !== null && pull.position !== null) {
+    const position = `Layer ${pull.position} of ${entry.stackSize} in its stack, counted from the base`;
+    const layer = el("span", { class: "item position", title: position });
+    layer.append(el("span", { "aria-hidden": "true" }, `${pull.position}/${entry.stackSize}`), el("span", { class: "visually-hidden" }, position));
+    meta.append(layer);
+  }
+  if (pull.totalThreads > 0) meta.append(renderThreads(pull));
+  const diffStat = renderDiffStat(pull);
+  if (diffStat) meta.append(diffStat);
+  meta.append(spoken);
+  updateAge(time, spoken, Date.now());
+
+  const lead = el("span", { class: "lead" });
+  lead.append(kind === "mine" ? el("span", { class: "node", "data-tone": pull.tone }) : renderAvatar(pull));
+
+  link.append(lead, title, time, meta);
+  item.append(link);
+  if (kind === "review" && pull.viaTeam) item.append(renderHideTeams(entry.repo, pull, actions));
+  return item;
+}
+
+/** A tone-coloured note in a row's meta line, like a verdict or a fresh push. */
+function flag(text: string, tone: "attention" | "accent" | "neutral"): HTMLElement {
+  return el("span", { class: "item status", "data-tone": tone }, text);
+}
+
+/** Sets the repository to count only direct requests, for a row that reached the viewer through a team. */
+function renderHideTeams(repo: string, pull: InboxPull, actions: InboxViewActions): HTMLElement {
+  const hide = el(
+    "button",
+    {
+      type: "button",
+      class: "hide-teams",
+      tabindex: "-1",
+      title: `Show only pull requests that request you by name in ${repo}. Undo it in the settings.`,
+      "aria-label": `Hide team requests in ${repo}`,
+      "data-focus-key": `hide-teams:${pull.url}`,
+    },
+    "Hide team requests",
+  );
+  hide.addEventListener("click", () => {
+    hide.disabled = true;
+    actions.hideTeamRequests(repo);
+  });
+  return hide;
+}
+
+function renderStatus(pull: InboxPull): HTMLElement {
+  return el("span", { class: "item status", "data-tone": pull.tone }, pull.label);
+}
+
+function renderThreads(pull: InboxPull): HTMLElement {
+  const done = pull.resolvedThreads === pull.totalThreads;
+  const label = `${pull.resolvedThreads} of ${pull.totalThreads} conversations resolved`;
+  const threads = el("span", { class: done ? "item threads done" : "item threads", title: label });
+  threads.append(icon("comment"), el("span", { "aria-hidden": "true" }, `${pull.resolvedThreads}/${pull.totalThreads}`));
+  threads.append(el("span", { class: "visually-hidden" }, label));
+  return threads;
+}
+
+/** The pull request's added and deleted lines, like the counts in the Files changed tree. */
+function renderDiffStat(pull: InboxPull): HTMLElement | null {
+  const stat = formatDiffStat(pull.additions ?? 0, pull.deletions ?? 0);
+  if (!stat) return null;
+  const element = el("span", { class: "item diffstat", title: stat.label });
+  const visible = el("span", { "aria-hidden": "true" });
+  if (stat.added) visible.append(el("span", { class: "added" }, stat.added));
+  if (stat.deleted) visible.append(el("span", { class: "deleted" }, stat.deleted));
+  element.append(visible, el("span", { class: "visually-hidden" }, stat.label));
+  return element;
+}
+
+function renderAvatar(pull: InboxPull): HTMLElement {
+  if (!pull.avatarUrl) return avatarPlaceholder();
+  const url = new URL(pull.avatarUrl);
+  url.searchParams.set("s", "40");
+  const image = el("img", { class: "avatar", src: url.href, alt: "", width: "20", height: "20" });
+  image.addEventListener("error", () => image.replaceWith(avatarPlaceholder()));
+  return image;
+}
+
+function avatarPlaceholder(): HTMLElement {
+  const span = el("span", { class: "avatar placeholder" });
+  span.append(icon("people"));
+  return span;
+}
+
+/**
+ * Writes a row's relative time, and marks it when a review request has waited too long.
+ * @param time The time element.
+ * @param spoken The hidden element that says the same thing out loud.
+ * @param now The current time in epoch milliseconds.
+ */
+export function updateAge(time: HTMLTimeElement, spoken: Element | null, now: number): void {
+  const age = formatAge(time.dateTime, now);
+  const stale = time.dataset.flagStale !== undefined && isStale({ lastActivity: time.dateTime }, now);
+  time.textContent = age.short;
+  time.classList.toggle("stale", stale);
+  time.title = stale ? `Last activity ${age.spoken}, waiting for a while` : `Last activity ${age.spoken}`;
+  if (spoken) spoken.textContent = `, ${time.title.toLowerCase()}`;
 }
