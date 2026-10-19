@@ -1288,6 +1288,13 @@ check((await pageKeys()) === "", `GitHub's own y shortcut never sees the Y of Râ
 await keyPage.keyboard.press("y");
 check((await pageKeys()) === "keydown,keyup", "a plain Y still reaches GitHub's own shortcut");
 
+// A page script can dispatch the very keys the shortcuts listen for; they must not review for the viewer.
+await keyPage.evaluate(() => {
+  for (const key of ["r", "y"]) dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+});
+await keyPage.waitForTimeout(500);
+check(keyFixture.submissions.length === 1, "keydown events a page script fakes submit no review");
+
 await keys.grantPermissions(["clipboard-read", "clipboard-write"], { origin: "https://github.com" });
 await keyPage.keyboard.press("c");
 await keyPage.keyboard.press("c");

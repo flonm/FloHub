@@ -390,7 +390,8 @@ async function rerequest(reviewer: Reviewer): Promise<void> {
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  if (!current || dialog.isOpen || versionsDialog.isOpen) return;
+  // A page script can dispatch keydown events of its own; only a real press may review, navigate or copy.
+  if (!event.isTrusted || !current || dialog.isOpen || versionsDialog.isOpen) return;
   const { action, claim } = matchShortcut({
     key: event.key,
     metaKey: event.metaKey,

@@ -11,10 +11,8 @@ import nodePath from "node:path";
 /** Modules that had no unit test when this check came in. Write the test, then take the module off the list. */
 const WITHOUT_TEST = new Set([
   "api/github",
-  "api/messages",
   "background",
   "content",
-  "core/rich-text",
   "ui/anchor",
   "ui/bar-styles",
   "ui/diff-highlights",

@@ -246,6 +246,8 @@ export class ViewedTree {
       toggle.append(icon("check"));
       toggle.addEventListener("pointerdown", (event) => event.stopPropagation());
       toggle.addEventListener("click", (event) => {
+        // The toggle lives in the page's own tree, where a page script could click it; only a real click counts.
+        if (!event.isTrusted) return;
         event.preventDefault();
         event.stopPropagation();
         const current = toggle?.dataset.path;
