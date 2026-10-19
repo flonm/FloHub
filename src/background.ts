@@ -38,7 +38,7 @@ async function handle(message: Message): Promise<Reply<ReplyByType[Message["type
   try {
     switch (message.type) {
       case "inbox": {
-        return { ok: true, value: await refreshInbox() };
+        return { ok: true, value: await refreshInbox(message.maxAgeMs) };
       }
       case "overview": {
         const token = await readToken();

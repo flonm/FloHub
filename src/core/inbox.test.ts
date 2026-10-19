@@ -1,8 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { buildInbox, isStale, type RawInbox, type RawInboxPull, STALE_AFTER_MS } from "./inbox";
+import {
+  assembleRawInbox,
+  buildInbox,
+  chunk,
+  inboxIds,
+  isStale,
+  type RawInbox,
+  type RawInboxIds,
+  type RawInboxPull,
+  STALE_AFTER_MS,
+} from "./inbox";
 
 function buildPull(number: number, overrides: Partial<RawInboxPull> = {}): RawInboxPull {
   return {
+    id: `PR_${number}`,
     number,
     title: `feat: layer ${number}`,
     url: `https://github.com/octo-org/octo-repo/pull/${number}`,
@@ -242,5 +253,60 @@ describe("isStale", () => {
 
   test("leaves a recently active pull request alone", () => {
     expect(isStale({ lastActivity }, then + STALE_AFTER_MS - 1)).toBe(false);
+  });
+});
+
+/** An issue the searches found, which comes back as an empty object. */
+const ISSUE: Record<string, never> = {};
+
+function idNodes(numbers: (number | null)[] = []): RawInboxIds["review"] {
+  return { nodes: numbers.map((number) => (number === null ? ISSUE : { id: `PR_${number}` })) };
+}
+
+function idsOf(sections: Partial<Record<"review" | "mine" | "waiting", (number | null)[]>>): RawInboxIds {
+  return { viewer: { login: "octocat" }, review: idNodes(sections.review), mine: idNodes(sections.mine), waiting: idNodes(sections.waiting) };
+}
+
+function numbersOf(section: RawInbox["review"] | undefined): (number | undefined)[] | undefined {
+  return section?.nodes.map((node) => node.number);
+}
+
+describe("inboxIds", () => {
+  test("lists a pull request two searches found once, and skips issues", () => {
+    expect(inboxIds(idsOf({ review: [1, null, 2], mine: [3], waiting: [2] }))).toEqual(["PR_1", "PR_2", "PR_3"]);
+  });
+
+  test("is empty when every search is", () => {
+    expect(inboxIds(idsOf({}))).toEqual([]);
+  });
+});
+
+describe("chunk", () => {
+  test.each<{ items: number[]; chunks: number[][] }>([
+    { items: [], chunks: [] },
+    { items: [1, 2, 3, 4], chunks: [[1, 2], [3, 4]] },
+    { items: [1, 2, 3], chunks: [[1, 2], [3]] },
+  ])("cuts $items into $chunks", ({ items, chunks }) => {
+    expect(chunk(items, 2)).toEqual(chunks);
+  });
+});
+
+describe("assembleRawInbox", () => {
+  const details = new Map([1, 2, 3].map((number) => [`PR_${number}`, buildPull(number)]));
+
+  test("keeps each search's order and puts a pull request into every search that found it", () => {
+    const raw = assembleRawInbox(idsOf({ review: [3, 1], mine: [2], waiting: [1] }), details);
+
+    expect(raw.viewer.login).toBe("octocat");
+    expect(numbersOf(raw.review)).toEqual([3, 1]);
+    expect(numbersOf(raw.mine)).toEqual([2]);
+    expect(numbersOf(raw.waiting)).toEqual([1]);
+  });
+
+  test("leaves out issues and pull requests whose details didn't come back", () => {
+    const raw = assembleRawInbox(idsOf({ review: [1, null, 4] }), details);
+
+    expect(numbersOf(raw.review)).toEqual([1]);
+    expect(raw.mine.nodes).toEqual([]);
   });
 });

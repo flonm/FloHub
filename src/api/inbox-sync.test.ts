@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { ensureInboxAlarm, INBOX_ALARM, INBOX_PERIOD_MINUTES } from "./inbox-sync";
+import type { Inbox } from "../core/inbox";
+import { ensureInboxAlarm, INBOX_ALARM, INBOX_PERIOD_MINUTES, isFresh } from "./inbox-sync";
 
 interface Alarm {
   name: string;
@@ -50,5 +51,25 @@ describe("ensureInboxAlarm", () => {
     await ensureInboxAlarm();
 
     expect(alarms.get(INBOX_ALARM)?.periodInMinutes).toBe(INBOX_PERIOD_MINUTES);
+  });
+});
+
+describe("isFresh", () => {
+  const inbox: Inbox = { viewer: "octocat", fetchedAt: 1_000_000, review: [], mine: [], waiting: [], reviewCount: 0 };
+
+  test.each([
+    { age: 59_999, fresh: true },
+    { age: 60_000, fresh: false },
+    { age: 120_000, fresh: false },
+  ])("an inbox fetched $age ms ago is fresh: $fresh", ({ age, fresh }) => {
+    expect(isFresh(inbox, inbox.fetchedAt + age, 60_000)).toBe(fresh);
+  });
+
+  test("no stored inbox is fresh", () => {
+    expect(isFresh(undefined, 0, 60_000)).toBe(false);
+  });
+
+  test("without a maximum age, even a brand-new inbox is fetched again", () => {
+    expect(isFresh(inbox, inbox.fetchedAt)).toBe(false);
   });
 });

@@ -2,6 +2,7 @@ import { deriveStatus, lastActivity, type RawStackPull, type StackTone } from ".
 
 /** A pull request as the inbox search returns it. */
 export type RawInboxPull = RawStackPull & {
+  id: string;
   additions: number;
   deletions: number;
   repository: { nameWithOwner: string };
@@ -22,6 +23,48 @@ export interface RawInbox {
   review: { nodes: (RawInboxPull | Record<string, never>)[] };
   mine: { nodes: (RawInboxPull | Record<string, never>)[] };
   waiting?: { nodes: (RawInboxPull | Record<string, never>)[] };
+}
+
+const SECTIONS = ["review", "mine", "waiting"] as const;
+
+/** What the inbox searches return before the details are fetched: each hit's node id, or an empty object for an issue. */
+export type RawInboxIds = { viewer: { login: string } } & Record<(typeof SECTIONS)[number], { nodes: (Record<string, never> | { id: string })[] }>;
+
+/**
+ * @param ids The search results.
+ * @returns Every pull request's node id, each once, though several searches found it.
+ */
+export function inboxIds(ids: RawInboxIds): string[] {
+  return [...new Set(SECTIONS.flatMap((section) => hitsOf(ids[section].nodes).map((node) => node.id)))];
+}
+
+/**
+ * @param items The items.
+ * @param size The most items a chunk holds.
+ * @returns The items in order, cut into chunks of `size`, the last one shorter.
+ */
+export function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let start = 0; start < items.length; start += size) chunks.push(items.slice(start, start + size));
+  return chunks;
+}
+
+/**
+ * Puts the fetched details back into the searches that found them, in the order GitHub ranked them.
+ * A pull request whose details didn't come back, because it was deleted or the token lost access since the search, is left out.
+ * @param ids The search results.
+ * @param details Each pull request's details, by node id.
+ * @returns The inbox searches as {@link buildInbox} takes them.
+ */
+export function assembleRawInbox(ids: RawInboxIds, details: ReadonlyMap<string, RawInboxPull>): RawInbox {
+  const section = (key: (typeof SECTIONS)[number]) => ({
+    nodes: hitsOf(ids[key].nodes).flatMap((node) => details.get(node.id) ?? []),
+  });
+  return { viewer: ids.viewer, review: section("review"), mine: section("mine"), waiting: section("waiting") };
+}
+
+function hitsOf(nodes: RawInboxIds["review"]["nodes"]): { id: string }[] {
+  return nodes.filter((node): node is { id: string } => typeof node.id === "string");
 }
 
 export interface InboxPull {

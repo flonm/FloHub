@@ -13,7 +13,8 @@ export type Message =
   | { type: "set-viewed"; pullRequestId: string; path: string; viewed: boolean }
   | { type: "pending-comments"; ref: PullRef }
   | { type: "submit-review"; ref: PullRef; event: ReviewEvent; body: string }
-  | { type: "inbox" }
+  /** `maxAgeMs` lets a stored inbox that young answer without asking GitHub. */
+  | { type: "inbox"; maxAgeMs?: number }
   | { type: "versions"; ref: PullRef }
   | { type: "version-patch"; ref: PullRef; head: string; bases: string[] }
   | { type: "open-options" };

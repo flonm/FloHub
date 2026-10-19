@@ -1,5 +1,5 @@
 import type { RawDiscussionComment } from "../core/discussion";
-import type { RawInbox } from "../core/inbox";
+import { assembleRawInbox, chunk, inboxIds, type RawInbox, type RawInboxIds, type RawInboxPull } from "../core/inbox";
 import type { PullRef } from "../core/pull-ref";
 import type { ReviewEvent } from "../core/shortcuts";
 import type { RawPullRequest } from "../core/reviewers";
@@ -94,9 +94,10 @@ query ($owner: String!, $name: String!, $number: Int!) {
   }
 }`;
 
-const INBOX_QUERY = `
+const INBOX_DETAILS_QUERY = `
 ${STACK_PULL_FRAGMENT}
 fragment InboxPull on PullRequest {
+  id
   ...StackPull
   additions
   deletions
@@ -115,12 +116,24 @@ fragment InboxPull on PullRequest {
     entries(first: 50) { nodes { position pullRequest { number } } }
   }
 }
+query ($ids: [ID!]!) {
+  nodes(ids: $ids) { ... on PullRequest { ...InboxPull } }
+}`;
+
+/**
+ * The searches return only node ids: GitHub resolves a search's fields one pull request after the other, so asking
+ * for the details here takes about ten seconds for 70 hits, at the edge of its timeout. The details come in chunks
+ * of {@link INBOX_CHUNK}, fetched side by side: smaller chunks finish in about two seconds, larger ones vary more.
+ */
+const INBOX_IDS_QUERY = `
 query ($review: String!, $mine: String!, $waiting: String!) {
   viewer { login }
-  review: search(query: $review, type: ISSUE, first: 50) { nodes { ... on PullRequest { ...InboxPull } } }
-  mine: search(query: $mine, type: ISSUE, first: 50) { nodes { ... on PullRequest { ...InboxPull } } }
-  waiting: search(query: $waiting, type: ISSUE, first: 50) { nodes { ... on PullRequest { ...InboxPull } } }
+  review: search(query: $review, type: ISSUE, first: 50) { nodes { ... on PullRequest { id } } }
+  mine: search(query: $mine, type: ISSUE, first: 50) { nodes { ... on PullRequest { id } } }
+  waiting: search(query: $waiting, type: ISSUE, first: 50) { nodes { ... on PullRequest { id } } }
 }`;
+
+const INBOX_CHUNK = 5;
 
 const REVIEW_SEARCH = "is:pr is:open draft:false archived:false review-requested:@me";
 const MINE_SEARCH = "is:pr is:open archived:false author:@me";
@@ -501,8 +514,15 @@ function pullPath(ref: PullRef): string {
  * @returns The raw search results, 50 of each at most.
  */
 export async function fetchInbox(): Promise<RawInbox> {
-  const { data } = await graphql<RawInbox>(INBOX_QUERY, { review: REVIEW_SEARCH, mine: MINE_SEARCH, waiting: WAITING_SEARCH });
-  return data;
+  const { data: ids } = await graphql<RawInboxIds>(INBOX_IDS_QUERY, { review: REVIEW_SEARCH, mine: MINE_SEARCH, waiting: WAITING_SEARCH });
+  const chunks = await Promise.all(
+    chunk(inboxIds(ids), INBOX_CHUNK).map(async (chunkIds) => {
+      const { data } = await graphql<{ nodes: (RawInboxPull | null)[] }>(INBOX_DETAILS_QUERY, { ids: chunkIds });
+      return data.nodes;
+    }),
+  );
+  const details = new Map(chunks.flat().flatMap((pull) => (pull ? [[pull.id, pull] as const] : [])));
+  return assembleRawInbox(ids, details);
 }
 
 /**
