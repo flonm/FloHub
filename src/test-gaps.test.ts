@@ -39,7 +39,9 @@ const STORIES = `${SRC}stories/`;
 /** @param dir A directory under src/. @returns Every .ts file below it, but nothing from stories/. */
 function walk(dir: string): string[] {
   const entries = readdirSync(dir, { withFileTypes: true });
-  const files = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".ts")).map((entry) => `${dir}${entry.name}`);
+  const files = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts"))
+    .map((entry) => `${dir}${entry.name}`);
   const folders = entries.filter((entry) => entry.isDirectory() && entry.name !== "stories");
   return [...files, ...folders.flatMap((entry) => walk(`${dir}${entry.name}/`))];
 }

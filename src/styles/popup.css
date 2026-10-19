@@ -1,0 +1,510 @@
+@import "./tokens.css";
+@import "./dark.css";
+@import "./base.css";
+
+/*
+ * The popup: a 504px list of sections, each a stack or a lone pull request. It follows the operating system's color
+ * scheme through dark.css, since no Primer variables are on the page.
+ */
+:root {
+  color-scheme: light dark;
+}
+body {
+  width: 504px;
+  max-height: 580px;
+  margin: 0;
+  background: var(--flo-bg);
+  color: var(--flo-fg);
+  font: 13px/1.5 var(--flo-font);
+}
+:focus-visible {
+  outline-offset: -2px;
+  border-radius: var(--flo-radius-sm);
+}
+
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--flo-bg);
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--flo-border);
+  background: var(--flo-bg);
+}
+h1 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.updated {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--flo-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--flo-radius-sm);
+  background: transparent;
+  color: var(--flo-muted);
+  cursor: pointer;
+}
+.icon-button svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+}
+.icon-button:hover {
+  background: var(--flo-bg-muted);
+  color: var(--flo-fg);
+}
+.spinning svg {
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+main {
+  padding-bottom: 6px;
+}
+section {
+  padding: 10px 0 2px;
+}
+section + section {
+  border-top: 1px solid var(--flo-border);
+}
+h2 {
+  margin: 0;
+  padding: 0 6px 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--flo-radius-sm);
+  background: transparent;
+  color: var(--flo-fg);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.section-toggle:hover {
+  background: var(--flo-bg-muted);
+}
+.section-toggle svg {
+  width: 12px;
+  height: 12px;
+  color: var(--flo-muted);
+  stroke-width: 2;
+  transform: rotate(180deg);
+  transition: transform 120ms ease-out;
+}
+.section-toggle[aria-expanded="false"] svg {
+  transform: rotate(90deg);
+}
+section:has(.section-toggle[aria-expanded="false"]) {
+  padding-bottom: 8px;
+}
+.count {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: var(--flo-radius-pill);
+  background: var(--flo-neutral-bg);
+  color: var(--flo-fg);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  text-align: center;
+}
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.layer {
+  position: relative;
+}
+.joined .layer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 21px;
+  width: 2px;
+  background: var(--flo-border);
+}
+.joined .layer:first-child::before {
+  top: 16px;
+}
+.joined .layer:last-child::before {
+  bottom: calc(100% - 16px);
+}
+
+.pull {
+  --row-bg: var(--flo-bg);
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) max-content;
+  grid-template-areas: "lead title age" "lead meta meta";
+  column-gap: 10px;
+  padding: 6px 12px;
+  background: var(--row-bg);
+  color: inherit;
+  text-decoration: none;
+}
+.pull:hover,
+.pull:focus {
+  --row-bg: var(--flo-bg-muted);
+}
+.pull:focus,
+.pull:focus-visible {
+  outline: none;
+  border-radius: 0;
+  box-shadow: inset 2px 0 0 var(--flo-focus);
+}
+.pull:hover .title {
+  color: var(--flo-accent);
+}
+.lead {
+  position: relative;
+  grid-area: lead;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+}
+.avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--flo-bg-muted);
+  box-shadow:
+    0 0 0 1px var(--flo-avatar-border),
+    0 0 0 2.5px var(--row-bg);
+}
+.avatar.placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--flo-muted);
+}
+.avatar.placeholder svg {
+  width: 12px;
+  height: 12px;
+}
+.node {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--tone);
+  box-shadow: 0 0 0 3px var(--row-bg);
+}
+.title {
+  grid-area: title;
+  overflow: hidden;
+  font-weight: 600;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.number {
+  color: var(--flo-muted);
+  font-weight: 400;
+}
+.age {
+  grid-area: age;
+  color: var(--flo-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+  text-align: right;
+}
+.age.stale {
+  color: var(--flo-attention);
+  font-weight: 600;
+}
+.meta {
+  grid-area: meta;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  color: var(--flo-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+.meta .item + .item::before {
+  content: "·";
+  padding: 0 6px;
+  color: var(--flo-muted);
+  font-weight: 400;
+}
+.author {
+  color: var(--flo-fg);
+}
+.repo {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.position {
+  font-variant-numeric: tabular-nums;
+}
+.status {
+  color: var(--tone);
+  font-weight: 600;
+}
+.tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  margin-right: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--tone-border);
+  border-radius: var(--flo-radius-pill);
+  background: var(--tone-bg);
+  color: var(--tone);
+  font-size: 11px;
+  font-weight: 600;
+}
+.threads {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--flo-fg);
+  font-variant-numeric: tabular-nums;
+}
+.threads.done {
+  color: var(--flo-muted);
+}
+.diffstat span[aria-hidden] {
+  display: inline-flex;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.diffstat .added {
+  color: var(--flo-success);
+}
+.diffstat .deleted {
+  color: var(--flo-danger);
+}
+.threads svg {
+  width: 12px;
+  height: 12px;
+}
+
+.hide-teams {
+  position: absolute;
+  right: 12px;
+  bottom: 6px;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--flo-border);
+  border-radius: var(--flo-radius-pill);
+  background: var(--flo-bg);
+  color: var(--flo-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  cursor: pointer;
+  opacity: 0;
+}
+.layer:hover .hide-teams,
+.hide-teams:focus {
+  opacity: 1;
+}
+.layer:hover .hide-teams {
+  background: var(--flo-bg-muted);
+}
+.hide-teams:hover {
+  border-color: var(--flo-muted);
+  color: var(--flo-fg);
+}
+.hide-teams:disabled {
+  cursor: default;
+}
+
+.empty {
+  margin: 0;
+  padding: 2px 12px 8px;
+  color: var(--flo-muted);
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--flo-danger-border);
+  background: var(--flo-danger-bg);
+  color: var(--flo-danger);
+  font-size: 12px;
+}
+.notice[hidden] {
+  display: none;
+}
+.notice svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2;
+}
+.notice-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.link-button {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--flo-radius-sm);
+  background: transparent;
+  color: var(--flo-danger);
+  font-weight: 600;
+  cursor: pointer;
+}
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.blank {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 32px 44px;
+  text-align: center;
+}
+.blank-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: 10px;
+  border-radius: 50%;
+  background: var(--flo-neutral-bg);
+  color: var(--flo-muted);
+}
+.blank[data-kind="check"] .blank-icon {
+  background: var(--flo-success-bg);
+  color: var(--flo-success);
+}
+.blank[data-kind="cross"] .blank-icon {
+  background: var(--flo-danger-bg);
+  color: var(--flo-danger);
+}
+.blank-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.blank-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.blank-text {
+  max-width: 300px;
+  margin: 4px 0 0;
+  color: var(--flo-muted);
+  overflow-wrap: anywhere;
+}
+.text-button {
+  margin-top: 14px;
+  padding: 4px 12px;
+  font-weight: 600;
+  line-height: 20px;
+  border: 1px solid var(--flo-border);
+  border-radius: var(--flo-radius-sm);
+  background: var(--flo-bg-muted);
+  cursor: pointer;
+}
+.text-button:hover {
+  border-color: var(--flo-muted);
+}
+
+.skeleton-section {
+  padding: 10px 0 2px;
+}
+.skeleton-section + .skeleton-section {
+  border-top: 1px solid var(--flo-border);
+}
+.bone {
+  display: block;
+  border-radius: 4px;
+  background: var(--flo-neutral-bg);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.bone.heading {
+  width: 140px;
+  height: 12px;
+  margin: 3px 12px 9px;
+}
+.skeleton-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-areas: "dot line" "dot short";
+  column-gap: 10px;
+  row-gap: 6px;
+  padding: 8px 12px 9px;
+}
+.bone.dot {
+  grid-area: dot;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+}
+.bone.line {
+  grid-area: line;
+  width: 72%;
+  height: 12px;
+}
+.bone.line.short {
+  grid-area: short;
+  width: 44%;
+  height: 10px;
+}
+.skeleton-row:nth-child(3n) .bone.line:not(.short) {
+  width: 58%;
+}
+.skeleton-row:nth-child(3n + 1) .bone.line.short {
+  width: 36%;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinning svg,
+  .bone {
+    animation: none;
+  }
+  .section-toggle svg {
+    transition: none;
+  }
+}
