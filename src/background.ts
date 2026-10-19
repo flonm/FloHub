@@ -10,11 +10,11 @@ import {
   rerequestReview,
   setFileViewed,
   submitReview,
-} from "./github";
-import { clearInbox, ensureInboxAlarm, INBOX_ALARM, refreshInbox, refreshInboxAgain } from "./inbox-sync";
-import type { Message, Reply, ReplyByType } from "./messages";
-import { clearOverviewCache, queueCacheWrite, writeCachedOverview } from "./overview-cache";
-import { REVIEW_SCOPES_KEY } from "./review-scope";
+} from "./api/github";
+import { clearInbox, ensureInboxAlarm, INBOX_ALARM, refreshInbox, refreshInboxAgain } from "./api/inbox-sync";
+import type { Message, Reply, ReplyByType } from "./api/messages";
+import { clearOverviewCache, queueCacheWrite, writeCachedOverview } from "./api/overview-cache";
+import { REVIEW_SCOPES_KEY } from "./core/review-scope";
 
 chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) => {
   void handle(message).then(sendResponse);

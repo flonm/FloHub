@@ -1,5 +1,5 @@
 import type { Overview } from "./github";
-import { type PullRef, pullKey } from "./pull-ref";
+import { type PullRef, pullKey } from "../core/pull-ref";
 
 const INDEX_KEY = "overviewIndex";
 const ENTRY_PREFIX = "overview:";

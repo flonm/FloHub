@@ -1,7 +1,7 @@
-import { el } from "./dom";
-import { fetchViewerLogin, GitHubError, readToken, writeToken } from "./github";
-import type { Inbox } from "./inbox";
-import { parseRepo, readDirectRepos, REVIEW_SCOPES_KEY, type ReviewScope, writeReviewScope } from "./review-scope";
+import { el } from "./ui/dom";
+import { fetchViewerLogin, GitHubError, readToken, writeToken } from "./api/github";
+import type { Inbox } from "./core/inbox";
+import { parseRepo, readDirectRepos, REVIEW_SCOPES_KEY, type ReviewScope, writeReviewScope } from "./core/review-scope";
 
 const form = document.querySelector<HTMLFormElement>("#token-form");
 const input = document.querySelector<HTMLInputElement>("#token");

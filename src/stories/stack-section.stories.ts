@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
-import { type RawStackPull, deriveStack } from "../stack";
-import { renderStackSection } from "../stack-view";
+import { type RawStackPull, deriveStack } from "../core/stack";
+import { renderStackSection } from "../ui/stack-view";
 import { inShadow, NOW, pull, stack } from "./shadow";
 
 interface Args {

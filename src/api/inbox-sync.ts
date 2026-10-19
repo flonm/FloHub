@@ -1,6 +1,6 @@
 import { fetchInbox, GitHubError, readToken } from "./github";
-import { buildInbox, type Inbox, type RawInbox } from "./inbox";
-import { readDirectRepos } from "./review-scope";
+import { buildInbox, type Inbox, type RawInbox } from "../core/inbox";
+import { readDirectRepos } from "../core/review-scope";
 
 const STORAGE_KEY = "inbox";
 export const INBOX_ALARM = "inbox";

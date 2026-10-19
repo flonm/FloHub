@@ -1,7 +1,7 @@
-import { formatAge } from "./age";
-import { type DiscussionItem, type DiscussionVerdict, isUnread } from "./discussion";
+import { formatAge } from "../core/age";
+import { type DiscussionItem, type DiscussionVerdict, isUnread } from "../core/discussion";
 import { el, icon } from "./dom";
-import { renderRichText } from "./rich-text";
+import { renderRichText } from "../core/rich-text";
 
 export interface DiscussionOptions {
   items: DiscussionItem[];
