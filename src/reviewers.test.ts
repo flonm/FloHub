@@ -116,14 +116,20 @@ describe("deriveReviewers", () => {
     expect(statuses(pullRequest)).toEqual([{ name: "mojombo", status: "commented", previous: null }]);
   });
 
-  test("keeps a bot that requested changes or is requested", () => {
+  test.each(["CHANGES_REQUESTED", "APPROVED"] as const)("drops an unrequested bot whose review is %s, like a comment", (state) => {
+    const pullRequest = buildPullRequest({ reviews: [[bot("coderabbitai"), state], [user("mojombo"), "COMMENTED"]] });
+
+    expect(statuses(pullRequest)).toEqual([{ name: "mojombo", status: "commented", previous: null }]);
+  });
+
+  test("keeps a requested bot, reading its earlier verdict as a comment", () => {
     const pullRequest = buildPullRequest({
-      requested: [bot("copilot-pull-request-reviewer")],
+      requested: [bot("copilot-pull-request-reviewer"), bot("coderabbitai")],
       reviews: [[bot("coderabbitai"), "CHANGES_REQUESTED"]],
     });
 
     expect(statuses(pullRequest)).toEqual([
-      { name: "coderabbitai", status: "changes_requested", previous: null },
+      { name: "coderabbitai", status: "rerequested", previous: "commented" },
       { name: "copilot-pull-request-reviewer", status: "pending", previous: null },
     ]);
   });
