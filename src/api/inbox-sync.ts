@@ -20,11 +20,27 @@ export async function ensureInboxAlarm(): Promise<void> {
 }
 
 /**
+ * @param inbox The stored inbox, if any.
+ * @param now The current time.
+ * @param maxAgeMs How old the inbox may be; without it, no inbox is fresh enough.
+ * @returns Whether the inbox can be shown without fetching it again.
+ */
+export function isFresh(inbox: Inbox | undefined, now: number, maxAgeMs?: number): inbox is Inbox {
+  return inbox !== undefined && maxAgeMs !== undefined && now - inbox.fetchedAt < maxAgeMs;
+}
+
+/**
  * Fetches the inbox, stores it for the popup and shows the review count on the toolbar icon.
  * Calls that arrive while a fetch runs share it.
+ * @param maxAgeMs How old a stored inbox may be to be returned instead of fetching; omit it to always fetch.
  * @returns The fresh inbox.
  */
-export async function refreshInbox(): Promise<Inbox> {
+export async function refreshInbox(maxAgeMs?: number): Promise<Inbox> {
+  if (maxAgeMs !== undefined && !running) {
+    const stored = await chrome.storage.local.get(STORAGE_KEY);
+    const inbox = stored[STORAGE_KEY] as Inbox | undefined;
+    if (isFresh(inbox, Date.now(), maxAgeMs)) return inbox;
+  }
   running ??= (async () => {
     try {
       return await fetchAndStore();

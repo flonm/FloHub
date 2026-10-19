@@ -16,6 +16,8 @@ import { send } from "./api/messages";
 import { writeReviewScope } from "./core/review-scope";
 
 const TICK_MS = 15_000;
+/** How old the stored inbox may be for opening the popup to skip asking GitHub; the alarm refreshes it every few minutes. */
+const FRESH_MS = 60_000;
 
 const app = document.querySelector<HTMLElement>("#app");
 let inbox: Inbox | null = null;
@@ -72,7 +74,7 @@ if (app) {
     }
   });
   setInterval(tick, TICK_MS);
-  void refresh();
+  void refresh(false, FRESH_MS);
   void showStored();
 }
 
@@ -85,7 +87,11 @@ async function showStored(): Promise<void> {
   render();
 }
 
-async function refresh(announce = false): Promise<void> {
+/**
+ * @param announce Whether to tell a screen reader once the inbox is updated.
+ * @param maxAgeMs How old a stored inbox may be to answer instead of fetching; omit it to always fetch.
+ */
+async function refresh(announce = false, maxAgeMs?: number): Promise<void> {
   if (refreshing) {
     // The token or the stored inbox changed under a running refresh, so its answer may be outdated.
     again = true;
@@ -94,7 +100,7 @@ async function refresh(announce = false): Promise<void> {
   refreshing = true;
   again = false;
   render();
-  const reply = await send({ type: "inbox" });
+  const reply = await send({ type: "inbox", maxAgeMs });
   refreshing = false;
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- a storage change may set it while `send` runs
   if (again) {

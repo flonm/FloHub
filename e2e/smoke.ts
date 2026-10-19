@@ -157,7 +157,25 @@ const CHANGE_STATS: Record<string, { additions: number; deletions: number }> = {
   "skills/gh-stack/SKILL.md": { additions: 0, deletions: 0 },
 };
 
-const EMPTY_INBOX = { viewer: { login: "octocat" }, review: { nodes: [] }, mine: { nodes: [] } };
+type InboxFixture = Record<string, { nodes: { url?: string }[] } | { login: string }>;
+
+/** What the inbox searches answer: each pull request's node id, which the fixtures take from its URL. */
+function inboxIds(inbox: InboxFixture): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(inbox).map(([key, value]) => [
+      key,
+      "nodes" in value ? { nodes: value.nodes.map((node) => (node.url ? { id: node.url } : {})) } : value,
+    ]),
+  );
+}
+
+/** What the details query answers for the node ids it asks for. */
+function inboxDetails(inbox: InboxFixture, ids: string[]): { nodes: object[] } {
+  const pulls = Object.values(inbox).flatMap((value) => ("nodes" in value ? value.nodes : []));
+  return { nodes: ids.map((id) => ({ id, ...pulls.find((pull) => pull.url === id) })) };
+}
+
+const EMPTY_INBOX = { viewer: { login: "octocat" }, review: { nodes: [] }, mine: { nodes: [] }, waiting: { nodes: [] } };
 
 const README_FIRST_HUNK = [
   " gh stack rebase [flags] [branch]",
@@ -297,7 +315,7 @@ function createFixture(
     async handle(route: Route): Promise<void> {
       const request = route.request();
       const graphql = request.url().endsWith("/graphql")
-        ? (request.postDataJSON() as { query: string; variables: { path?: string } })
+        ? (request.postDataJSON() as { query: string; variables: { path?: string; ids?: string[] } })
         : null;
       const mutation = graphql?.query.match(/\b(markFileAsViewed|unmarkFileAsViewed)\b/u)?.[1];
       if (graphql && mutation) {
@@ -328,7 +346,11 @@ function createFixture(
       }
       if (graphql?.query.includes("review: search(")) {
         await options.inboxGate;
-        await route.fulfill({ json: { data: options.inbox ?? INBOX } });
+        await route.fulfill({ json: { data: inboxIds((options.inbox ?? INBOX) as InboxFixture) } });
+        return;
+      }
+      if (graphql?.query.includes("nodes(ids:")) {
+        await route.fulfill({ json: { data: inboxDetails((options.inbox ?? INBOX) as InboxFixture, graphql.variables.ids ?? []) } });
         return;
       }
       if (graphql?.query.includes("BaseRefChangedEvent")) {
