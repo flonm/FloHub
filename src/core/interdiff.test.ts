@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { diffLines, interdiff, patchLines, type VersionFile } from "./interdiff";
+import { diffLines, diffstat, headerLabels, interdiff, type LineKind, lineNumbers, patchLines, splitLine, type VersionFile, wordDiff } from "./interdiff";
 
 const file = (filename: string, patch: string | undefined, extra: Partial<VersionFile> = {}): VersionFile => ({
   filename,
@@ -78,6 +78,7 @@ describe("interdiff", () => {
       [file("a.ts", "@@ -40,3 +40,4 @@ class A\n a\n+b\n c")],
     );
     expect(result).toMatchObject({ path: "a.ts", change: "unchanged", hunks: [], added: 0, removed: 0 });
+    expect(result?.lines.map((line) => line.display)).toEqual(["@@ -40,3 +40,4 @@ class A", " a", "+b", " c"]);
   });
 
   test("shows how a file's change changed", () => {
@@ -86,12 +87,12 @@ describe("interdiff", () => {
       [file("a.ts", "@@ -1,3 +1,4 @@\n a\n+B\n c")],
     );
     expect(result?.change).toBe("changed");
-    expect(result?.hunks[0]?.lines).toEqual([
-      { mark: " ", text: "@@" },
-      { mark: " ", text: " a" },
-      { mark: "-", text: "+b" },
-      { mark: "+", text: "+B" },
-      { mark: " ", text: " c" },
+    expect(result?.hunks[0]?.lines.map(({ mark, text, left, right }) => ({ mark, text, left, right }))).toEqual([
+      { mark: " ", text: "@@", left: null, right: null },
+      { mark: " ", text: " a", left: 1, right: 1 },
+      { mark: "-", text: "+b", left: null, right: 2 },
+      { mark: "+", text: "+B", left: null, right: 2 },
+      { mark: " ", text: " c", left: 2, right: 3 },
     ]);
     expect(result).toMatchObject({ added: 1, removed: 1 });
   });
@@ -102,6 +103,58 @@ describe("interdiff", () => {
       ["new.ts", "added", 3, 0],
       ["old.ts", "dropped", 0, 3],
     ]);
+    expect(results.map((result) => result.status)).toEqual([
+      { before: null, after: "modified" },
+      { before: "modified", after: null },
+    ]);
+  });
+
+  test("keeps the new, deleted and renamed lines out of the diff, but counts them", () => {
+    const [result] = interdiff([file("a.ts", "@@ -1 +1 @@\n-x\n+y")], [file("a.ts", "@@ -0,0 +1 @@\n+y", { status: "added" })]);
+    expect(result?.header).toEqual([{ mark: "+", text: "new file" }]);
+    expect(result?.lines.map((line) => line.text)).toEqual(["@@", "-x", "+y"]);
+    expect(result).toMatchObject({ change: "changed", added: 1, removed: 1 });
+  });
+
+  test("a header that changed alone still changes the file", () => {
+    const [result] = interdiff([file("a.ts", "@@ -1 +1 @@\n+y")], [file("a.ts", "@@ -1 +1 @@\n+y", { status: "added" })]);
+    expect(result).toMatchObject({ change: "changed", hunks: [], added: 1, removed: 0 });
+  });
+
+  test("highlights the words that differ between a replaced line and its replacement", () => {
+    const [result] = interdiff(
+      [file("a.ts", "@@ -1,1 +1,1 @@\n+adopt(branch)\n+keep()")],
+      [file("a.ts", "@@ -1,1 +1,1 @@\n+adopt(branch, equivalent)\n+keep()")],
+    );
+    const [removed, added] = result?.hunks[0]?.lines.filter((line) => line.mark !== " ") ?? [];
+    expect(removed?.segments).toEqual([{ text: "adopt(branch)", changed: false }]);
+    expect(added?.segments).toEqual([
+      { text: "adopt(branch", changed: false },
+      { text: ", equivalent", changed: true },
+      { text: ")", changed: false },
+    ]);
+  });
+
+  test("pairs a replaced line with the most similar replacement, not the next one", () => {
+    const [result] = interdiff(
+      [file("a.ts", "@@ -1,2 +1,3 @@\n-const RETRIES = 1;\n+const RETRIES = 3;\n+const BACKOFF_MS = 500;")],
+      [file("a.ts", "@@ -1,3 +1,3 @@\n const RETRIES = 3;\n-const BACKOFF_MS = 500;\n+const BACKOFF_MS = 250;")],
+    );
+    const words = (result?.lines ?? []).map((line) => [line.text, line.segments?.filter((segment) => segment.changed).map((segment) => segment.text)]);
+    expect(words).toEqual([
+      ["@@", undefined],
+      ["-const RETRIES = 1;", ["1"]],
+      ["+const RETRIES = 3;", undefined],
+      ["+const BACKOFF_MS = 500;", []],
+      [" const RETRIES = 3;", ["3"]],
+      ["-const BACKOFF_MS = 500;", []],
+      ["+const BACKOFF_MS = 250;", undefined],
+    ]);
+  });
+
+  test("marks files GitHub shows no diff for", () => {
+    expect(interdiff([blob("1")], [blob("2")])[0]?.diffless).toBe(true);
+    expect(interdiff([file("a.ts", "@@ -1 +1 @@\n+x")], [file("a.ts", "@@ -1 +1 @@\n+y")])[0]?.diffless).toBe(false);
   });
 
   test("pairs a file renamed differently in each version", () => {
@@ -123,6 +176,8 @@ describe("interdiff", () => {
     const changed = body.map((line, index) => (index === 10 ? "+changed" : line));
     const [result] = interdiff([file("a.ts", ["@@ -1 +1 @@", ...body].join("\n"))], [file("a.ts", ["@@ -1 +1 @@", ...changed].join("\n"))]);
     expect(result?.hunks).toHaveLength(1);
+    expect(result?.hunks[0]?.start).toBe(8);
+    expect(result?.lines).toHaveLength(22);
     expect(result?.hunks[0]?.lines.map((line) => line.text)).toEqual([" line7", " line8", " line9", " line10", "+changed", " line11", " line12", " line13"]);
   });
 });
@@ -130,5 +185,90 @@ describe("interdiff", () => {
 describe("patchLines whitespace", () => {
   test("keeps blank context lines and drops carriage returns", () => {
     expect(patchLines(file("a.ts", "@@ -1,3 +1,3 @@\n a\r\n \n-b\n+c"))).toEqual(["@@", " a", " ", "-b", "+c"]);
+  });
+});
+
+describe("lineNumbers", () => {
+  test("numbers each side from the hunk header, as GitHub's diff does", () => {
+    expect(lineNumbers(["@@ -10,3 +20,3 @@ f()", " a", "-b", "+c", String.raw`\ No newline at end of file`, " d"])).toEqual([
+      { left: null, right: null },
+      { left: 10, right: 20 },
+      { left: 11, right: null },
+      { left: null, right: 21 },
+      { left: null, right: null },
+      { left: 12, right: 22 },
+    ]);
+  });
+});
+
+describe("splitLine", () => {
+  test.each<[string, LineKind, string]>([
+    [" a", " ", "a"],
+    ["+b", "+", "b"],
+    ["-c", "-", "c"],
+    [String.raw`\ No newline at end of file`, "\\", " No newline at end of file"],
+    ["@@ -1 +1 @@ f()", "hunk", "@@ -1 +1 @@ f()"],
+  ])("%p is a %p line", (text, kind, code) => {
+    expect(splitLine(text)).toEqual({ kind, code });
+  });
+});
+
+describe("wordDiff", () => {
+  test("splits two similar lines into shared and differing runs", () => {
+    expect(wordDiff("const a = 1;", "const a = 2;")).toEqual([
+      [
+        { text: "const a = ", changed: false },
+        { text: "1", changed: true },
+        { text: ";", changed: false },
+      ],
+      [
+        { text: "const a = ", changed: false },
+        { text: "2", changed: true },
+        { text: ";", changed: false },
+      ],
+    ]);
+  });
+
+  test("gives up on lines that share too little", () => {
+    expect(wordDiff("return nil", "log.Printf(branch, err)")).toBeNull();
+  });
+
+  test("an identical line has no changed runs", () => {
+    expect(wordDiff("x()", "x()")).toEqual([[{ text: "x()", changed: false }], [{ text: "x()", changed: false }]]);
+  });
+});
+
+describe("headerLabels", () => {
+  test("names new, deleted and renamed files, and a rename's target only when it changed", () => {
+    expect(
+      headerLabels([
+        { mark: " ", text: "rename from a.ts" },
+        { mark: " ", text: "rename to b.ts" },
+      ]),
+    ).toEqual([{ label: "Renamed from a.ts", mark: " " }]);
+    expect(
+      headerLabels([
+        { mark: "-", text: "rename to b.ts" },
+        { mark: "+", text: "rename to c.ts" },
+      ]),
+    ).toEqual([
+      { label: "Renamed to b.ts", mark: "-" },
+      { label: "Renamed to c.ts", mark: "+" },
+    ]);
+    expect(headerLabels([{ mark: "+", text: "new file" }])).toEqual([{ label: "New file", mark: "+" }]);
+    expect(headerLabels([{ mark: "-", text: "deleted file" }])).toEqual([{ label: "Deleted file", mark: "-" }]);
+  });
+});
+
+describe("diffstat", () => {
+  test.each([
+    [0, 0, ["none", "none", "none", "none", "none"]],
+    [1, 1, ["add", "del", "none", "none", "none"]],
+    [4, 0, ["add", "add", "add", "add", "none"]],
+    [100, 1, ["add", "add", "add", "add", "del"]],
+    [1, 100, ["add", "del", "del", "del", "del"]],
+    [30, 20, ["add", "add", "add", "del", "del"]],
+  ])("%p added and %p removed fill the squares in proportion", (added, removed, squares) => {
+    expect(diffstat(added, removed)).toEqual(squares as ReturnType<typeof diffstat>);
   });
 });

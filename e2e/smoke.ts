@@ -643,12 +643,21 @@ const fileRows = (await versions.locator("details.file > summary").allInnerTexts
 check(
   JSON.stringify(fileRows) ===
     JSON.stringify([
-      "README.md Changed +1 −1",
-      "cmd/adopt_test.go Newly changed +4",
-      "cmd/legacy.go No longer changed −3",
-      "cmd/rebase.go Changed +2 −1",
+      "README.md Changed +1 −1 View file at v3",
+      "cmd/adopt_test.go Newly changed Only in v3: New file +4 View file at v3",
+      "cmd/legacy.go No longer changed −3 View file at v1",
+      "cmd/rebase.go Changed +2 −1 View file at v3",
     ]),
   `interdiff lists files whose change differs, ignoring moved hunks: ${JSON.stringify(fileRows)}`,
+);
+const rebaseFile = versions.locator("details.file", { hasText: "cmd/rebase.go" });
+check(
+  (await rebaseFile.locator(".line[data-outer='+'] .word").allInnerTexts()).join("|") === ", equivalent",
+  "a line that replaced a similar one highlights only the words that differ",
+);
+check(
+  (await rebaseFile.locator(".line[data-outer='+'] .num").allInnerTexts()).join(",") === ",43,,44",
+  "lines are numbered as the version they come from numbers them",
 );
 check(
   (await versions.locator("details.unchanged > summary").innerText()).startsWith("1 file makes the same change"),
@@ -656,6 +665,13 @@ check(
 );
 await page.waitForTimeout(250);
 await page.screenshot({ path: `${SCREENSHOTS}/versions-light.png` });
+const readmeFile = versions.locator("details.file", { hasText: "README.md" });
+const readmeLines = await readmeFile.locator(".line").count();
+await readmeFile.locator(".expander").first().click();
+check(
+  (await readmeFile.locator(".line").count()) > readmeLines,
+  "expanding a gap shows the unchanged lines around a change",
+);
 await versions.getByLabel("From").selectOption("3");
 await versions.getByText("No differences.").waitFor();
 check(true, "picking the same version on both sides shows no differences");

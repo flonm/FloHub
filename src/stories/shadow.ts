@@ -31,6 +31,12 @@ export const PRIMER_LIGHT: Record<string, string> = {
   "--borderColor-danger-muted": "rgba(255, 129, 130, 0.4)",
   "--borderColor-done-muted": "rgba(194, 151, 255, 0.4)",
   "--borderColor-neutral-muted": "rgba(175, 184, 193, 0.4)",
+  "--diffBlob-additionLine-bgColor": "#dafbe1",
+  "--diffBlob-additionNum-bgColor": "#d1f8d9",
+  "--diffBlob-deletionLine-bgColor": "#ffebe9",
+  "--diffBlob-deletionNum-bgColor": "#ffcecb",
+  "--diffBlob-hunkLine-bgColor": "#ddf4ff",
+  "--diffBlob-hunkNum-bgColor-rest": "#b6e3ff",
 };
 
 /** The same tokens with GitHub's dark values. */
@@ -58,6 +64,12 @@ export const PRIMER_DARK: Record<string, string> = {
   "--borderColor-danger-muted": "rgba(248, 81, 73, 0.4)",
   "--borderColor-done-muted": "rgba(171, 125, 248, 0.4)",
   "--borderColor-neutral-muted": "rgba(61, 68, 77, 0.7)",
+  "--diffBlob-additionLine-bgColor": "rgba(46, 160, 67, 0.15)",
+  "--diffBlob-additionNum-bgColor": "rgba(63, 185, 80, 0.3)",
+  "--diffBlob-deletionLine-bgColor": "rgba(248, 81, 73, 0.1)",
+  "--diffBlob-deletionNum-bgColor": "rgba(248, 81, 73, 0.3)",
+  "--diffBlob-hunkLine-bgColor": "rgba(56, 139, 253, 0.1)",
+  "--diffBlob-hunkNum-bgColor-rest": "rgba(56, 139, 253, 0.4)",
 };
 
 /**

@@ -15,7 +15,10 @@ const preview: Preview = {
       document.body.style.background = tokens["--bgColor-default"] ?? "#ffffff";
       const frame = document.createElement("div");
       frame.style.padding = "16px";
-      for (const [name, value] of Object.entries(tokens)) frame.style.setProperty(name, value);
+      // The root too, for what mounts on <body> itself, like the versions dialog.
+      for (const target of [frame, document.documentElement]) {
+        for (const [name, value] of Object.entries(tokens)) target.style.setProperty(name, value);
+      }
       const content = story();
       // eslint-disable-next-line no-unsanitized/property -- a story's own markup, written in this repository
       if (typeof content === "string") frame.innerHTML = content;

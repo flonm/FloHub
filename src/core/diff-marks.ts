@@ -1,4 +1,4 @@
-import { compareFile, diffLines, type FileChange, pairFiles, patchBody, patchHeader, patchLines, type VersionFile } from "./interdiff";
+import { compareFile, diffLines, type FileChange, lineNumbers, pairFiles, patchBody, patchHeader, patchLines, type VersionFile } from "./interdiff";
 
 /** A line of GitHub's diff, the way its line anchors name it: `L` for the base side, `R` for the head side. */
 export interface LineRef {
@@ -20,8 +20,6 @@ export interface FileMarks {
   changed: LineRef[];
   removed: RemovedLines[];
 }
-
-const HUNK_NUMBERS = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/u;
 
 /**
  * Works out what to highlight in GitHub's own diff of the current version: which of its lines changed since an older
@@ -66,20 +64,9 @@ export function markChanges(before: VersionFile[], after: VersionFile[]): FileMa
  * @returns For each of {@link patchLines}' lines, the diff line GitHub shows for it, or null for headers.
  */
 export function patchPositions(file: VersionFile): (LineRef | null)[] {
-  let left = 0;
-  let right = 0;
-  const body = patchBody(file).map((line): LineRef | null => {
-    const hunk = HUNK_NUMBERS.exec(line);
-    if (hunk) {
-      left = Number(hunk[1]);
-      right = Number(hunk[2]);
-      return null;
-    }
-    if (line.startsWith("+")) return { side: "R", line: right++ };
-    if (line.startsWith("-")) return { side: "L", line: left++ };
-    if (line.startsWith("\\")) return null;
-    left++;
-    return { side: "R", line: right++ };
+  const body = lineNumbers(patchBody(file)).map(({ left, right }): LineRef | null => {
+    if (right !== null) return { side: "R", line: right };
+    return left === null ? null : { side: "L", line: left };
   });
   return [...patchHeader(file).map(() => null), ...body];
 }
