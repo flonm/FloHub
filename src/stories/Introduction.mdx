@@ -1,0 +1,33 @@
+import { Meta } from "@storybook/addon-docs/blocks";
+
+<Meta title="Introduction" />
+
+# FloHub
+
+FloHub is a browser extension that puts a pull request's stack and its reviewers on every GitHub tab, and an inbox of
+everything waiting for you in the toolbar. It has three surfaces, all built from one design system:
+
+| Surface | Where | Story group |
+|---|---|---|
+| The bar | a shadow root on github.com, inline under the header or floating as a pill | **Stack** |
+| The inbox | the toolbar popup | **Inbox** |
+| The options page | its own tab, for the token and review scopes | **Files**, **Feedback** |
+
+## What the stories cover
+
+- **Stack** — `Status`, `Section`, `Bar`, `Discussion`, `Review dialog`, `Versions dialog`. These run inside a shadow
+  root with the same stylesheet the extension injects, and read GitHub's Primer variables, so the toolbar's theme
+  switches them the way GitHub's own theme would.
+- **Inbox** — the popup, mounted with the real renderer inside a shadow root carrying `popup.css`. Every section plus
+  the loading, empty, error and token states.
+- **Files** — the Viewed checkbox and line counts FloHub draws onto GitHub's file tree.
+- **Feedback** — the toast, and the two modals.
+
+## The design system
+
+`src/styles/tokens.css` holds every color, font, radius and shadow once. Each token reads a GitHub Primer variable and
+falls back to a Primer value, so one file serves the shadow root, where GitHub's theme wins, and the extension's own
+pages, where `dark.css` follows the operating system. `base.css` adds the primitives and the tone palette; `bar.css`,
+`popup.css` and `options.css` style the three surfaces.
+
+Use the **Theme** toolbar item on any story to see it in GitHub light and dark. The bar and the pages both follow it.

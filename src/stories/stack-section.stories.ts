@@ -53,9 +53,18 @@ const EVERY_STATUS = [
 
 const meta = {
   title: "Stack/Section",
+  tags: ["autodocs"],
   render,
   args: { pulls: EVERY_STATUS, current: 344, stacked: true, collapsed: false, showMerged: true },
   argTypes: { pulls: { control: false } },
+  parameters: {
+    docs: {
+      description: {
+        component:
+          "The stack list in the bar, top layer first down to the base branch, with a rail joining the layers and a badge on each. Collapsed it becomes a strip of coloured segments; merged layers can be folded away. Click the heading or a toggle to see it move.",
+      },
+    },
+  },
 } satisfies Meta<Args>;
 
 export default meta;
