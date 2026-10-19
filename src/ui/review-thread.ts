@@ -2,7 +2,7 @@ import { formatAge } from "../core/age";
 import { renderRichText } from "../core/rich-text";
 import type { PostingMode, ReviewThread, ThreadComment } from "../core/threads";
 import { progressLabel, type ThreadProgress } from "../core/addressed";
-import { el, icon } from "./dom";
+import { el, icon, press } from "./dom";
 
 /**
  * The thread's styles, for the shadow root it's drawn in. They read the versions view's `--vd-` tokens. They share that
@@ -326,7 +326,8 @@ function writeBox(options: { title: string | null; placeholder: string; submits:
       options.cancel();
     } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
-      (posts.find((post) => post.classList.contains("primary")) ?? posts[0])?.click();
+      const post = posts.find((each) => each.classList.contains("primary")) ?? posts[0];
+      if (post) press(post);
     }
   });
   buttons.append(...posts);

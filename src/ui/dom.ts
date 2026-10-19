@@ -174,6 +174,54 @@ export function icon(name: IconName, className?: string): SVGSVGElement {
   return svg;
 }
 
+/** The input a page script could fake to drive FloHub's controls. */
+const DRIVEN = ["click", "submit", "keydown", "input", "change"];
+
+/** Events FloHub dispatches on its own controls, which the guard lets through. */
+const OWN_EVENTS = new WeakSet<Event>();
+
+/**
+ * Attaches an open shadow root that refuses input a page script fakes. The root is open, so a script on GitHub can
+ * reach in and click a button, dispatch keys or submit a form; with the token behind those controls, that would
+ * review, comment or close on the viewer's behalf. Only input the browser marks as trusted, or FloHub's own
+ * {@link press}, gets past the root.
+ * @param host The element to attach it to.
+ * @returns The shadow root.
+ */
+export function guardedShadow(host: HTMLElement): ShadowRoot {
+  const shadow = host.attachShadow({ mode: "open" });
+  for (const type of DRIVEN) {
+    shadow.addEventListener(
+      type,
+      (event) => {
+        if (event.isTrusted || OWN_EVENTS.has(event)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      { capture: true },
+    );
+  }
+  return shadow;
+}
+
+/**
+ * Clicks a control in a {@link guardedShadow} for FloHub itself, as a shortcut picking a menu item does.
+ * @param element The control.
+ */
+export function press(element: HTMLElement): void {
+  dispatchOwn(element, new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }));
+}
+
+/**
+ * Dispatches an event FloHub made itself past a {@link guardedShadow}'s guard.
+ * @param target Where to dispatch it.
+ * @param event The event.
+ */
+export function dispatchOwn(target: EventTarget, event: Event): void {
+  OWN_EVENTS.add(event);
+  target.dispatchEvent(event);
+}
+
 /**
  * @param className The button's class.
  * @param label The visible label.

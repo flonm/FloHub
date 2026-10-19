@@ -5,6 +5,7 @@ import { deriveStack } from "../core/stack";
 import type { Version } from "../core/versions";
 import { type BarActions, type BarState, PULL_STATE_BUSY, ReviewBar } from "../ui/bar";
 import { type PullState, stateAfter } from "../core/pull-state";
+import { press } from "../ui/dom";
 import { NOW, pull, stack } from "./shadow";
 
 const HOUR = 3_600_000;
@@ -215,7 +216,7 @@ function floating(state: BarState, options: { expanded?: boolean; minimized?: bo
   const instance = new ReviewBar("floating", NOOP);
   instance.render(state);
   if (options.minimized) instance.setMinimized(true);
-  else if (options.expanded) instance.host.shadowRoot!.querySelector<HTMLElement>(".pill")!.click();
+  else if (options.expanded) press(instance.host.shadowRoot!.querySelector<HTMLElement>(".pill")!);
   return instance.host;
 }
 
@@ -392,7 +393,7 @@ export const InlineVersionsOpen: Story = {
 export const InlineShortcuts: Story = {
   render: () => {
     const host = interactive(ready());
-    host.shadowRoot!.querySelector<HTMLButtonElement>('[data-focus-key="shortcuts"]')!.click();
+    press(host.shadowRoot!.querySelector<HTMLButtonElement>('[data-focus-key="shortcuts"]')!);
     return host;
   },
 };
@@ -400,7 +401,8 @@ export const InlineShortcuts: Story = {
 /** @returns The bar for a pull request in the state, with its state menu open and its moves live. */
 function stateMenu(state: PullState, canUpdate = true): HTMLElement {
   const host = interactive(ready({ pull: { state, canUpdate, id: "PR_344" } }));
-  host.shadowRoot!.querySelector<HTMLElement>('[data-focus-key="pull-state"]')?.click();
+  const pullState = host.shadowRoot!.querySelector<HTMLElement>('[data-focus-key="pull-state"]');
+  if (pullState) press(pullState);
   return host;
 }
 

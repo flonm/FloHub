@@ -2419,6 +2419,13 @@ check((await pageKeys()) === "", `GitHub's own y shortcut never sees the Y of R�
 await keyPage.keyboard.press("y");
 check((await pageKeys()) === "keydown,keyup", "a plain Y still reaches GitHub's own shortcut");
 
+// A page script can dispatch the very keys the shortcuts listen for; they must not review for the viewer.
+await keyPage.evaluate(() => {
+  for (const key of ["r", "y"]) dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+});
+await keyPage.waitForTimeout(500);
+check(keyFixture.submissions.length === 1, "keydown events a page script fakes submit no review");
+
 await keys.grantPermissions(["clipboard-read", "clipboard-write"], { origin: "https://github.com" });
 await keyPage.keyboard.press("c");
 await keyPage.keyboard.press("c");
@@ -2463,6 +2470,18 @@ check(keyFixture.submissions.length === 2, "Escape closes the request-changes di
 await keyPage.keyboard.press("r");
 await keyPage.keyboard.press("n");
 await reviewDialog.getByText("No pending review comments.").waitFor();
+// The dialog's shadow root is open: a page script can reach its form, its button and its text box.
+await keyPage.evaluate(() => {
+  const root = document.querySelector("flohub-dialog")?.shadowRoot;
+  root?.querySelector<HTMLButtonElement>("button.submit")?.click();
+  root?.querySelector("form")?.requestSubmit();
+  root?.querySelector("textarea")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true, cancelable: true }));
+});
+await keyPage.waitForTimeout(500);
+check(
+  keyFixture.submissions.length === 2 && (await reviewDialog.isVisible()),
+  "a page script clicking, submitting or pressing ⌘↵ in the review dialog submits nothing",
+);
 await keyPage.keyboard.press("Meta+Enter");
 await toast.getByText(`Requested changes on #${CURRENT}.`).waitFor();
 check(

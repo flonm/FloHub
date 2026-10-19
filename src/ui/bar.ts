@@ -1,7 +1,7 @@
 import { formatAge } from "../core/age";
 import { BAR_STYLES } from "./bar-styles";
 import type { HighlightStatus } from "./diff-highlights";
-import { button, el, icon, iconButton } from "./dom";
+import { button, el, guardedShadow, icon, iconButton } from "./dom";
 import type { DismissedVerdict, Reviewer, ReviewerStatus } from "../core/reviewers";
 import type { StackView } from "../core/stack";
 import { describePosition, renderStackSection, renderStrip } from "./stack-view";
@@ -133,7 +133,7 @@ export class ReviewBar {
   ) {
     this.host = document.createElement("flohub-bar");
     this.host.dataset.mode = mode;
-    this.shadow = this.host.attachShadow({ mode: "open" });
+    this.shadow = guardedShadow(this.host);
     const style = document.createElement("style");
     style.textContent = BAR_STYLES;
     this.root = document.createElement("div");
