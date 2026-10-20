@@ -74,7 +74,7 @@ jobs:
 
   safari:
     needs: version
-    runs-on: macos-26
+    runs-on: xcode-27
     env:
       FLOHUB_VERSION: ${{ needs.version.outputs.version || '0.0.0' }}
     steps:
