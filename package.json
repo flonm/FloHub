@@ -19,7 +19,8 @@
     "build-storybook": "storybook build",
     "prepare": "husky",
     "build:safari": "bun build.ts safari",
-    "install:safari": "bun run build:safari && xcodebuild -quiet -project safari/FloHub/FloHub.xcodeproj -scheme FloHub -configuration Release -derivedDataPath safari/build MARKETING_VERSION=$(bun -p \"require('./dist-safari/manifest.json').version\") CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= build && rm -rf ~/Applications/FloHub.app && cp -R safari/build/Build/Products/Release/FloHub.app ~/Applications/ && open ~/Applications/FloHub.app"
+    "install:safari": "bun run build:safari:app && rm -rf ~/Applications/FloHub.app && cp -R safari/build/Build/Products/Release/FloHub.app ~/Applications/ && open ~/Applications/FloHub.app",
+    "build:safari:app": "bun run build:safari && xcodebuild -quiet -project safari/FloHub/FloHub.xcodeproj -scheme FloHub -configuration Release -derivedDataPath safari/build MARKETING_VERSION=$(bun -p \"require('./dist-safari/manifest.json').version\") CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= build"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
