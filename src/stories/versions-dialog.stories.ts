@@ -30,7 +30,21 @@ function retryPatch(delay: string): string {
   return ["@@ -1,22 +1,23 @@ // Retry policy", ...before, `+export const DELAY_MS = ${delay}; // between attempts`, ...after].join("\n");
 }
 
-/** Two versions of one file, one the newer versions add, and one renamed differently in each. */
+/** A migration's patch: a table, then the index each version builds on it. */
+function migrationPatch(index: string[]): string {
+  return [
+    "@@ -0,0 +1,9 @@",
+    "+-- Pull requests the inbox has seen, and when it last fetched them.",
+    "+CREATE TABLE inbox_pulls (",
+    "+  id bigint PRIMARY KEY,",
+    "+  title text NOT NULL,",
+    "+  fetched_at timestamptz NOT NULL DEFAULT now()",
+    "+);",
+    ...index.map((line) => `+${line}`),
+  ].join("\n");
+}
+
+/** Two versions of one file, one the newer versions add, a migration, and one renamed differently in each. */
 const PATCHES: Record<string, VersionPatch> = {
   "1111111": {
     mergeBase: "0000000",
@@ -57,6 +71,26 @@ const PATCHES: Record<string, VersionPatch> = {
         patch: "@@ -1,4 +1,5 @@\n import { el } from \"./dom\";\n \n-const RETRIES = 1;\n+const RETRIES = 3;\n+const BACKOFF_MS = 500;\n export const bar = RETRIES;\n",
       },
       {
+        filename: "src/core/retry-budget.ts",
+        status: "added",
+        sha: "a99",
+        patch: [
+          "@@ -0,0 +1,6 @@",
+          "+/** How many retries a session may spend before it gives up. */",
+          "+export const RETRY_BUDGET = 12;",
+          "+",
+          "+export function spend(used: number): boolean {",
+          "+  return used < RETRY_BUDGET;",
+          "+}",
+        ].join("\n"),
+      },
+      {
+        filename: "db/migrations/0042_inbox_pulls.sql",
+        status: "added",
+        sha: "a42",
+        patch: migrationPatch(["", "CREATE INDEX inbox_pulls_fetched ON inbox_pulls (fetched_at);"]),
+      },
+      {
         filename: "src/ui/stack-view.ts",
         status: "added",
         sha: "ccc",
@@ -80,7 +114,23 @@ const PATCHES: Record<string, VersionPatch> = {
         filename: "src/ui/bar.ts",
         status: "modified",
         sha: "ddd",
-        patch: "@@ -1,5 +1,5 @@\n import { el } from \"./dom\";\n \n const RETRIES = 3;\n-const BACKOFF_MS = 500;\n+const BACKOFF_MS = 250;\n export const bar = RETRIES;\n",
+        patch: [
+          "@@ -1,5 +1,8 @@",
+          ' import { el } from "./dom";',
+          " ",
+          " const RETRIES = 3;",
+          "-const BACKOFF_MS = 500;",
+          "+/** Waits between attempts, doubling each time. */",
+          "+const BACKOFF_MS = 250;",
+          `+const label = (attempt: number): string => \`retry \${attempt + 1} of \${RETRIES}\`;`,
+          " export const bar = RETRIES;",
+        ].join("\n"),
+      },
+      {
+        filename: "db/migrations/0042_inbox_pulls.sql",
+        status: "added",
+        sha: "b42",
+        patch: migrationPatch(["", "CREATE INDEX inbox_pulls_fetched ON inbox_pulls (fetched_at DESC)", "  WHERE title <> '';"]),
       },
       {
         filename: "src/ui/stack-view.ts",
@@ -209,10 +259,13 @@ export const Loading: Story = { render: () => dialog("loading") };
 export const SingleVersion: Story = { render: () => dialog(1) };
 
 /**
- * Defaults to the viewer's last reviewed version against the current head. Lines only in the newer version get an
- * amber bar, lines only in the older one a red bar and a strike, and a replaced line highlights the words that differ.
- * The renamed file's header says where each version renamed it to; its folded context expands on click. The file
- * tree on the left lists the compared files with their version-diff totals; a row jumps to its file.
+ * Defaults to the viewer's last reviewed version against the current head. Like any diff, a line only in the newer
+ * version is green and a line only in the older one red, and a replaced line highlights the words that differ. The
+ * +/− beside the code is what the pull request itself does to the line, so a line the pull request adds but that's the
+ * same in both versions stays white. TypeScript and SQL get syntax colors. A file the older version created and the
+ * newer one drops reads as Deleted, without the markers a whole-file patch would only repeat. The renamed file's path
+ * shows where each version renamed it to; its folded context expands on click. The file tree on the left lists the
+ * compared files with their version-diff totals; a row jumps to its file.
  */
 export const SinceTheViewersReview: Story = { render: () => dialog(3) };
 

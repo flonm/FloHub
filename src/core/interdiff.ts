@@ -276,20 +276,73 @@ export function lineNumbers(body: string[]): { left: number | null; right: numbe
   });
 }
 
+/** How a file's verdict reads: as an addition, a removal, a change, or neither. */
+export type Tone = "success" | "danger" | "accent" | "muted";
+
 /**
- * Describes a file's header lines for its file header: what makes it new, deleted or renamed.
+ * Says what happened to a file between the versions, from where it ends up: a file the older version added and the
+ * newer one leaves alone is deleted, not merely "no longer changed".
+ * @param file The file's interdiff.
+ * @returns Its verdict and how it reads.
+ */
+export function fileVerdict(file: Pick<FileInterdiff, "change" | "status">): { label: string; tone: Tone } {
+  const { before, after } = file.status;
+  switch (file.change) {
+    case "added": {
+      if (after === "added") return { label: "New file", tone: "success" };
+      if (after === "removed") return { label: "Deleted", tone: "danger" };
+      return { label: "Newly changed", tone: "success" };
+    }
+    case "dropped": {
+      if (before === "added") return { label: "Deleted", tone: "danger" };
+      if (before === "removed") return { label: "Restored", tone: "success" };
+      return { label: "No longer changed", tone: "danger" };
+    }
+    case "changed": {
+      if (after === "removed" && before !== "removed") return { label: "Deleted", tone: "danger" };
+      if (before === "removed" && after !== "removed") return { label: "Restored", tone: "success" };
+      return { label: "Changed", tone: "accent" };
+    }
+    case "opaque": {
+      return { label: "Can't compare", tone: "muted" };
+    }
+    case "unchanged": {
+      return { label: "Unchanged", tone: "muted" };
+    }
+  }
+}
+
+/**
+ * Describes where a renamed file came from, for its file header. That a file is new or deleted is its verdict's to
+ * say, and where each version renamed it to its path's to show (`old → new`).
  * @param header The header lines, marked by how they changed between the versions.
- * @returns A label per line worth showing; a rename's target is already the file's path unless it changed.
+ * @returns A label per rename origin.
  */
 export function headerLabels(header: DiffLine[]): { label: string; mark: Mark }[] {
   const labels: { label: string; mark: Mark }[] = [];
   for (const { mark, text } of header) {
-    if (text === "new file") labels.push({ label: "New file", mark });
-    else if (text === "deleted file") labels.push({ label: "Deleted file", mark });
-    else if (text.startsWith("rename from ")) labels.push({ label: `Renamed from ${text.slice("rename from ".length)}`, mark });
-    else if (text.startsWith("rename to ") && mark !== " ") labels.push({ label: `Renamed to ${text.slice("rename to ".length)}`, mark });
+    if (text.startsWith("rename from ")) labels.push({ label: `Renamed from ${text.slice("rename from ".length)}`, mark });
   }
   return labels;
+}
+
+/**
+ * @param lines A file's lines.
+ * @returns The one kind every code line of the pull request's patch has, when it's all added or all removed lines,
+ * like a new file's; null when the patch mixes them.
+ */
+export function uniformKind(lines: InterdiffLine[]): "+" | "-" | null {
+  const kinds = new Set(lines.map((line) => splitLine(line.display).kind).filter((kind) => kind !== "hunk" && kind !== "\\"));
+  const [only] = kinds;
+  return kinds.size === 1 && (only === "+" || only === "-") ? only : null;
+}
+
+/**
+ * @param display A hunk header.
+ * @returns Whether it only says the file is new or deleted, like `@@ -0,0 +1,59 @@`, which tells nothing.
+ */
+export function isWholeFileHunk(display: string): boolean {
+  return /^@@ -0,0 \+\d+(?:,\d+)? @@|^@@ -\d+(?:,\d+)? \+0,0 @@/u.test(display);
 }
 
 /**

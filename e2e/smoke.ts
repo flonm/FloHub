@@ -643,7 +643,7 @@ const fileRows = (await versions.locator("details.file > summary").allInnerTexts
 check(
   JSON.stringify(fileRows) ===
     JSON.stringify([
-      "cmd/adopt_test.go Newly changed Only in v3: New file +4 View file at v3",
+      "cmd/adopt_test.go New file +4 View file at v3",
       "cmd/legacy.go No longer changed −3 View file at v1",
       "cmd/rebase.go Changed +2 −1 View file at v3",
       "README.md Changed +1 −1 View file at v3",

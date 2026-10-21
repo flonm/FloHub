@@ -1,8 +1,19 @@
 import { formatAge } from "../core/age";
 import { el, icon } from "./dom";
 import type { VersionPatch } from "../api/github";
-import { diffstat, type FileChange, type FileInterdiff, headerLabels, type InterdiffLine, interdiff, splitLine } from "../core/interdiff";
+import {
+  diffstat,
+  type FileInterdiff,
+  fileVerdict,
+  headerLabels,
+  type InterdiffLine,
+  interdiff,
+  isWholeFileHunk,
+  splitLine,
+  uniformKind,
+} from "../core/interdiff";
 import { buildPathTree, filesInOrder, type PathNode } from "../core/path-tree";
+import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
 import { defaultRange, type Version, type VersionHistory } from "../core/versions";
 
 export interface VersionsDialogRequest {
@@ -15,13 +26,6 @@ export interface VersionsDialogRequest {
   patch: (history: VersionHistory, version: Version) => Promise<VersionPatch>;
 }
 
-const CHANGE: Record<FileChange, { label: string; tone: string }> = {
-  changed: { label: "Changed", tone: "attention" },
-  added: { label: "Newly changed", tone: "success" },
-  dropped: { label: "No longer changed", tone: "danger" },
-  opaque: { label: "Can't compare", tone: "muted" },
-  unchanged: { label: "Unchanged", tone: "muted" },
-};
 
 const DIALOG_STYLES = `
 :host {
@@ -32,7 +36,6 @@ const DIALOG_STYLES = `
   --vd-border: var(--borderColor-default, #d1d9e0);
   --vd-success: var(--fgColor-success, #1a7f37);
   --vd-danger: var(--fgColor-danger, #d1242f);
-  --vd-attention: var(--fgColor-attention, #9a6700);
   --vd-accent: var(--fgColor-accent, #0969da);
   --vd-add-bg: var(--diffBlob-additionLine-bgColor, #dafbe1);
   --vd-add-num-bg: var(--diffBlob-additionNum-bgColor, #d1f8d9);
@@ -40,8 +43,15 @@ const DIALOG_STYLES = `
   --vd-del-num-bg: var(--diffBlob-deletionNum-bgColor, #ffcecb);
   --vd-hunk-bg: var(--diffBlob-hunkLine-bgColor, #ddf4ff);
   --vd-hunk-num-bg: var(--diffBlob-hunkNum-bgColor-rest, #b6e3ff);
-  --vd-new-word: var(--borderColor-attention-muted, rgba(212, 167, 44, 0.4));
-  --vd-gone-word: var(--borderColor-danger-muted, rgba(255, 129, 130, 0.4));
+  --vd-add-word: var(--diffBlob-additionWord-bgColor, #aceebb);
+  --vd-del-word: var(--diffBlob-deletionWord-bgColor, rgba(255, 129, 130, 0.4));
+  --vd-syntax-keyword: var(--color-prettylights-syntax-keyword, #cf222e);
+  --vd-syntax-string: var(--color-prettylights-syntax-string, #0a3069);
+  --vd-syntax-comment: var(--color-prettylights-syntax-comment, #59636e);
+  --vd-syntax-constant: var(--color-prettylights-syntax-constant, #0550ae);
+  --vd-syntax-entity: var(--color-prettylights-syntax-entity, #6639ba);
+  --vd-syntax-variable: var(--color-prettylights-syntax-variable, #953800);
+  --vd-syntax-regexp: var(--color-prettylights-syntax-string-regexp, #116329);
   --vd-neutral-square: var(--borderColor-neutral-muted, rgba(175, 184, 193, 0.4));
   --vd-mono: var(--fontStack-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
   --vd-focus: var(--focus-outlineColor, #0969da);
@@ -160,9 +170,8 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 .copy:hover { color: var(--vd-accent); }
 .badge { padding: 0 8px; border: 1px solid currentColor; border-radius: 999px; font-size: 12px; font-weight: 600; }
 .chip { padding: 0 6px; border-radius: 6px; background: var(--vd-bg); font-size: 12px; color: var(--vd-muted); }
-.chip[data-mark="+"], .chip[data-mark="-"] { border-left: 3px solid; border-radius: 0 6px 6px 0; }
-.chip[data-mark="+"] { border-left-color: var(--vd-attention); color: var(--vd-fg); }
-.chip[data-mark="-"] { border-left-color: var(--vd-danger); text-decoration: line-through; }
+.chip[data-mark="+"] { background: var(--vd-add-word); color: var(--vd-fg); }
+.chip[data-mark="-"] { background: var(--vd-del-word); color: var(--vd-fg); }
 .stat { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font: 600 12px var(--vd-mono); }
 .stat .add { color: var(--vd-success); }
 .stat .del { color: var(--vd-danger); }
@@ -174,21 +183,22 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 .view:hover { text-decoration: underline; }
 [data-tone="success"] { color: var(--vd-success); }
 [data-tone="danger"] { color: var(--vd-danger); }
-[data-tone="attention"] { color: var(--vd-attention); }
+[data-tone="accent"] { color: var(--vd-accent); }
 [data-tone="muted"] { color: var(--vd-muted); }
 .note { margin: 0; padding: 8px 12px; color: var(--vd-muted); font-size: 12px; }
 
 .legend:empty { display: none; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; color: var(--vd-muted); font-size: 12px; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
-.legend i { width: 3px; height: 14px; border-radius: 1px; }
-.legend .new i { background: var(--vd-attention); }
-.legend .gone i { background: var(--vd-danger); }
-.legend .gone s { color: inherit; }
+.legend i { width: 12px; height: 12px; border-radius: 3px; }
+.legend .new i { background: var(--vd-add-word); }
+.legend .gone i { background: var(--vd-del-word); }
+.legend kbd { font: 600 12px var(--vd-mono); }
 .wrap-toggle { margin-left: auto; font-weight: 400 !important; font-size: 12px; }
 
 .diff { overflow-x: auto; font: 12px/20px var(--vd-mono); }
 .line { display: flex; min-width: max-content; }
+.line[hidden] { display: none; }
 .num {
   flex: none;
   width: 48px;
@@ -197,22 +207,31 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
   color: var(--vd-muted);
   user-select: none;
 }
-.marker { flex: none; width: 22px; padding-left: 8px; user-select: none; }
+.sign { flex: none; width: 20px; text-align: center; user-select: none; }
+.marker { flex: none; width: 22px; padding-left: 8px; font-weight: 600; user-select: none; }
+.marker { color: var(--vd-muted); }
+.diff[data-uniform] .marker { display: none; }
+.diff[data-uniform="+"] .num:nth-child(2), .diff[data-uniform="-"] .num:nth-child(3) { display: none; }
+.diff[data-uniform] .expander .num { width: 68px; }
 .code { flex: 1; padding-right: 16px; white-space: pre; }
 .wrap .line { min-width: 0; }
 .wrap .code { white-space: pre-wrap; overflow-wrap: anywhere; }
-.line[data-kind="+"] { background: var(--vd-add-bg); }
-.line[data-kind="+"] .num { background: var(--vd-add-num-bg); }
-.line[data-kind="-"] { background: var(--vd-del-bg); }
-.line[data-kind="-"] .num { background: var(--vd-del-num-bg); }
-.line[data-kind="hunk"] { background: var(--vd-hunk-bg); color: var(--vd-muted); }
-.line[data-kind="hunk"] .num { background: var(--vd-hunk-num-bg); }
-.line[data-outer="+"] .num:first-child { box-shadow: inset 3px 0 0 var(--vd-attention); }
-.line[data-outer="-"] .num:first-child { box-shadow: inset 3px 0 0 var(--vd-danger); }
-.line[data-outer="-"] .code, .line[data-outer="-"] .marker { color: var(--vd-muted); }
-.line[data-outer="-"]:not([data-words]) .text { text-decoration: line-through; }
-.line[data-outer="+"] .word { border-radius: 3px; background: var(--vd-new-word); }
-.line[data-outer="-"] .word { border-radius: 3px; background: var(--vd-gone-word); text-decoration: line-through; }
+.line[data-kind="hunk"] .code, .line[data-kind="\\\\"] .code { color: var(--vd-muted); }
+.line[data-kind="hunk"][data-outer=" "] { background: var(--vd-hunk-bg); }
+.line[data-kind="hunk"][data-outer=" "] :is(.sign, .num) { background: var(--vd-hunk-num-bg); }
+.line[data-outer="+"] { background: var(--vd-add-bg); }
+.line[data-outer="+"] :is(.sign, .num) { background: var(--vd-add-num-bg); }
+.line[data-outer="-"] { background: var(--vd-del-bg); }
+.line[data-outer="-"] :is(.sign, .num) { background: var(--vd-del-num-bg); }
+.line[data-outer="+"] .word { border-radius: 3px; background: var(--vd-add-word); }
+.line[data-outer="-"] .word { border-radius: 3px; background: var(--vd-del-word); }
+.tok-keyword { color: var(--vd-syntax-keyword); }
+.tok-string { color: var(--vd-syntax-string); }
+.tok-comment { color: var(--vd-syntax-comment); }
+.tok-number, .tok-constant { color: var(--vd-syntax-constant); }
+.tok-function { color: var(--vd-syntax-entity); }
+.tok-type { color: var(--vd-syntax-variable); }
+.tok-regexp { color: var(--vd-syntax-regexp); }
 .expander {
   display: flex;
   width: 100%;
@@ -226,7 +245,7 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
   font-weight: 400;
   text-align: left;
 }
-.expander .num { display: flex; justify-content: center; align-items: center; width: 96px; background: var(--vd-hunk-num-bg); }
+.expander .num { display: flex; justify-content: center; align-items: center; width: 116px; background: var(--vd-hunk-num-bg); }
 .expander .code { padding-left: 8px; }
 .expander:hover, .expander:hover .num { background: var(--vd-accent); color: var(--vd-bg); }
 
@@ -416,10 +435,14 @@ function renderResult({ main, summary, legend, files: nav, signal }: Slots, file
     ` Shows the pull request's own changes, and how they differ between v${context.older.number} and v${context.newer.number}, ignoring what the base branch gained.`,
   );
   if (differing.length > 0) {
-    legend.replaceChildren(
-      legendEntry("new", `Only in v${context.newer.number}`),
-      legendEntry("gone", el("s", {}, `Only in v${context.older.number}`)),
+    const marks = el("span");
+    marks.append(
+      el("kbd", {}, "+"),
+      " ",
+      el("kbd", {}, "−"),
+      " beside the code: what the pull request does to the line",
     );
+    legend.replaceChildren(legendEntry("new", `Only in v${context.newer.number}`), legendEntry("gone", `Only in v${context.older.number}`), marks);
   }
 
   const content: Node[] = [];
@@ -558,7 +581,7 @@ function renderFileTree(
 }
 
 function fileRow(file: FileInterdiff, name: string, depth: number): HTMLButtonElement {
-  const change = CHANGE[file.change];
+  const change = fileVerdict(file);
   const row = el("button", { type: "button", class: "file", title: file.oldPath ? `${file.oldPath} → ${file.path}` : file.path });
   row.style.setProperty("--depth", String(depth));
   row.append(el("span", { class: "mark", "data-tone": change.tone, "aria-hidden": "true" }), el("span", { class: "name" }, name));
@@ -575,14 +598,14 @@ function counts(added: number, removed: number): HTMLElement {
   return element;
 }
 
-function legendEntry(className: string, text: Node | string): HTMLElement {
+function legendEntry(className: string, text: string): HTMLElement {
   const item = el("span", { class: className });
   item.append(el("i", { "aria-hidden": "true" }), text);
   return item;
 }
 
 function renderFile(file: FileInterdiff, context: Context): HTMLDetailsElement {
-  const change = CHANGE[file.change];
+  const change = fileVerdict(file);
   const details = el("details", { class: "file", open: "" });
   const head = el("summary");
   const path = el("span", { class: "path" });
@@ -609,13 +632,19 @@ function renderFile(file: FileInterdiff, context: Context): HTMLDetailsElement {
     return details;
   }
   const diff = el("div", { class: "diff" });
+  const language = languageFor(file.path);
+  const syntax = language ? highlightLines(file.lines, language) : [];
+  // A new file's patch is all added lines: its markers and its empty base-side numbers would only repeat that.
+  const uniform = uniformKind(file.lines);
+  if (uniform) diff.dataset.uniform = uniform;
+  const rows = (start: number, end: number) => file.lines.slice(start, end).map((line, index) => renderLine(line, context, syntax[start + index]));
   let shown = 0;
   for (const hunk of file.hunks) {
-    if (hunk.start > shown) diff.append(expander(file.lines.slice(shown, hunk.start), context));
-    for (const line of hunk.lines) diff.append(renderLine(line, context));
+    if (hunk.start > shown) diff.append(expander(hunk.start - shown, rows.bind(null, shown, hunk.start)));
+    diff.append(...rows(hunk.start, hunk.start + hunk.lines.length));
     shown = hunk.start + hunk.lines.length;
   }
-  if (shown < file.lines.length) diff.append(expander(file.lines.slice(shown), context));
+  if (shown < file.lines.length) diff.append(expander(file.lines.length - shown, rows.bind(null, shown, file.lines.length)));
   details.append(diff);
   return details;
 }
@@ -666,14 +695,18 @@ function exists(status: string | null): boolean {
   return status !== null && status !== "removed";
 }
 
-function expander(lines: InterdiffLine[], context: Context): HTMLButtonElement {
-  const count = lines.length;
+/**
+ * @param count How many lines the expander folds away.
+ * @param rows Renders them.
+ * @returns A button that replaces itself with the lines.
+ */
+function expander(count: number, rows: () => HTMLElement[]): HTMLButtonElement {
   const button = el("button", { type: "button", class: "expander", title: "Expand" });
   const gutter = el("span", { class: "num" });
   gutter.append(icon("unfold"));
   button.append(gutter, el("span", { class: "code" }, `${count} unchanged ${count === 1 ? "line" : "lines"}`));
   button.addEventListener("click", () => {
-    button.replaceWith(...lines.map((line) => renderLine(line, context)));
+    button.replaceWith(...rows());
   });
   return button;
 }
@@ -682,22 +715,35 @@ function outerLabel(mark: "+" | "-", context: Context): string {
   return mark === "+" ? `Only in v${context.newer.number}` : `Only in v${context.older.number}`;
 }
 
-function renderLine(line: InterdiffLine, context: Context): HTMLElement {
+/**
+ * A line of the diff. Its background says how it changed between the versions, like any diff's; the marker beside the
+ * code says what the pull request does to it.
+ * @param line The line.
+ * @param context The versions compared.
+ * @param tokens The line's syntax, when its language is known.
+ * @returns The row.
+ */
+function renderLine(line: InterdiffLine, context: Context, tokens?: Token[] | null): HTMLElement {
   const { kind, code } = splitLine(line.display);
   const row = el("div", { class: "line", "data-outer": line.mark, "data-kind": kind });
+  if (kind === "hunk" && isWholeFileHunk(code)) row.hidden = true;
   const marker = kind === "+" || kind === "-" ? kind : "";
   const text = el("span", { class: "code" });
   if (line.mark !== " ") text.append(el("span", { class: "visually-hidden" }, `${outerLabel(line.mark, context)}: `));
-  if (line.segments?.some((segment) => segment.changed)) {
-    row.dataset.words = "";
-    for (const segment of line.segments) text.append(segment.changed ? el("span", { class: "word" }, segment.text) : segment.text);
-  } else {
-    text.append(el("span", { class: "text" }, code));
+  const segments = line.segments ?? [{ text: code, changed: false }];
+  let word: HTMLElement | null = null;
+  const pieces = overlay(tokens ?? [{ text: code, kind: null }], segments);
+  for (const piece of pieces) {
+    const run = piece.kind ? el("span", { class: `tok-${piece.kind}` }, piece.text) : document.createTextNode(piece.text);
+    if (!piece.changed) word = null;
+    else if (!word) text.append((word = el("span", { class: "word" })));
+    (word ?? text).append(run);
   }
   row.append(
+    el("span", { class: "sign", "aria-hidden": "true" }, line.mark === " " ? "" : (line.mark === "+" ? "+" : "−")),
     el("span", { class: "num" }, line.left === null ? "" : String(line.left)),
     el("span", { class: "num" }, line.right === null ? "" : String(line.right)),
-    el("span", { class: "marker" }, marker),
+    el("span", { class: "marker", "data-kind": kind }, marker === "-" ? "−" : marker),
     text,
   );
   return row;
