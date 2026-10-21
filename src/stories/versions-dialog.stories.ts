@@ -71,6 +71,20 @@ const PATCHES: Record<string, VersionPatch> = {
         patch: "@@ -1,4 +1,5 @@\n import { el } from \"./dom\";\n \n-const RETRIES = 1;\n+const RETRIES = 3;\n+const BACKOFF_MS = 500;\n export const bar = RETRIES;\n",
       },
       {
+        filename: "src/core/retry-budget.ts",
+        status: "added",
+        sha: "a99",
+        patch: [
+          "@@ -0,0 +1,6 @@",
+          "+/** How many retries a session may spend before it gives up. */",
+          "+export const RETRY_BUDGET = 12;",
+          "+",
+          "+export function spend(used: number): boolean {",
+          "+  return used < RETRY_BUDGET;",
+          "+}",
+        ].join("\n"),
+      },
+      {
         filename: "db/migrations/0042_inbox_pulls.sql",
         status: "added",
         sha: "a42",
@@ -248,9 +262,10 @@ export const SingleVersion: Story = { render: () => dialog(1) };
  * Defaults to the viewer's last reviewed version against the current head. Like any diff, a line only in the newer
  * version is green and a line only in the older one red, and a replaced line highlights the words that differ. The
  * +/− beside the code is what the pull request itself does to the line, so a line the pull request adds but that's the
- * same in both versions stays white. TypeScript and SQL get syntax colors. The renamed file's header says where each
- * version renamed it to; its folded context expands on click. The file tree on the left lists the compared files with
- * their version-diff totals; a row jumps to its file.
+ * same in both versions stays white. TypeScript and SQL get syntax colors. A file the older version created and the
+ * newer one drops reads as Deleted, without the markers a whole-file patch would only repeat. The renamed file's path
+ * shows where each version renamed it to; its folded context expands on click. The file tree on the left lists the
+ * compared files with their version-diff totals; a row jumps to its file.
  */
 export const SinceTheViewersReview: Story = { render: () => dialog(3) };
 

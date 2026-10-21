@@ -1,7 +1,17 @@
 import { formatAge } from "../core/age";
 import { el, icon } from "./dom";
 import type { VersionPatch } from "../api/github";
-import { diffstat, type FileChange, type FileInterdiff, headerLabels, type InterdiffLine, interdiff, splitLine } from "../core/interdiff";
+import {
+  diffstat,
+  type FileInterdiff,
+  fileVerdict,
+  headerLabels,
+  type InterdiffLine,
+  interdiff,
+  isWholeFileHunk,
+  splitLine,
+  uniformKind,
+} from "../core/interdiff";
 import { buildPathTree, filesInOrder, type PathNode } from "../core/path-tree";
 import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
 import { defaultRange, type Version, type VersionHistory } from "../core/versions";
@@ -16,13 +26,6 @@ export interface VersionsDialogRequest {
   patch: (history: VersionHistory, version: Version) => Promise<VersionPatch>;
 }
 
-const CHANGE: Record<FileChange, { label: string; tone: string }> = {
-  changed: { label: "Changed", tone: "accent" },
-  added: { label: "Newly changed", tone: "success" },
-  dropped: { label: "No longer changed", tone: "danger" },
-  opaque: { label: "Can't compare", tone: "muted" },
-  unchanged: { label: "Unchanged", tone: "muted" },
-};
 
 const DIALOG_STYLES = `
 :host {
@@ -191,12 +194,11 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 .legend .new i { background: var(--vd-add-word); }
 .legend .gone i { background: var(--vd-del-word); }
 .legend kbd { font: 600 12px var(--vd-mono); }
-.legend kbd.add { color: var(--vd-success); }
-.legend kbd.del { color: var(--vd-danger); }
 .wrap-toggle { margin-left: auto; font-weight: 400 !important; font-size: 12px; }
 
 .diff { overflow-x: auto; font: 12px/20px var(--vd-mono); }
 .line { display: flex; min-width: max-content; }
+.line[hidden] { display: none; }
 .num {
   flex: none;
   width: 48px;
@@ -207,8 +209,10 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 }
 .sign { flex: none; width: 20px; text-align: center; user-select: none; }
 .marker { flex: none; width: 22px; padding-left: 8px; font-weight: 600; user-select: none; }
-.marker[data-kind="+"] { color: var(--vd-success); }
-.marker[data-kind="-"] { color: var(--vd-danger); }
+.marker { color: var(--vd-muted); }
+.diff[data-uniform] .marker { display: none; }
+.diff[data-uniform="+"] .num:nth-child(2), .diff[data-uniform="-"] .num:nth-child(3) { display: none; }
+.diff[data-uniform] .expander .num { width: 68px; }
 .code { flex: 1; padding-right: 16px; white-space: pre; }
 .wrap .line { min-width: 0; }
 .wrap .code { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -433,9 +437,9 @@ function renderResult({ main, summary, legend, files: nav, signal }: Slots, file
   if (differing.length > 0) {
     const marks = el("span");
     marks.append(
-      el("kbd", { class: "add" }, "+"),
+      el("kbd", {}, "+"),
       " ",
-      el("kbd", { class: "del" }, "−"),
+      el("kbd", {}, "−"),
       " beside the code: what the pull request does to the line",
     );
     legend.replaceChildren(legendEntry("new", `Only in v${context.newer.number}`), legendEntry("gone", `Only in v${context.older.number}`), marks);
@@ -577,7 +581,7 @@ function renderFileTree(
 }
 
 function fileRow(file: FileInterdiff, name: string, depth: number): HTMLButtonElement {
-  const change = CHANGE[file.change];
+  const change = fileVerdict(file);
   const row = el("button", { type: "button", class: "file", title: file.oldPath ? `${file.oldPath} → ${file.path}` : file.path });
   row.style.setProperty("--depth", String(depth));
   row.append(el("span", { class: "mark", "data-tone": change.tone, "aria-hidden": "true" }), el("span", { class: "name" }, name));
@@ -601,7 +605,7 @@ function legendEntry(className: string, text: string): HTMLElement {
 }
 
 function renderFile(file: FileInterdiff, context: Context): HTMLDetailsElement {
-  const change = CHANGE[file.change];
+  const change = fileVerdict(file);
   const details = el("details", { class: "file", open: "" });
   const head = el("summary");
   const path = el("span", { class: "path" });
@@ -630,6 +634,9 @@ function renderFile(file: FileInterdiff, context: Context): HTMLDetailsElement {
   const diff = el("div", { class: "diff" });
   const language = languageFor(file.path);
   const syntax = language ? highlightLines(file.lines, language) : [];
+  // A new file's patch is all added lines: its markers and its empty base-side numbers would only repeat that.
+  const uniform = uniformKind(file.lines);
+  if (uniform) diff.dataset.uniform = uniform;
   const rows = (start: number, end: number) => file.lines.slice(start, end).map((line, index) => renderLine(line, context, syntax[start + index]));
   let shown = 0;
   for (const hunk of file.hunks) {
@@ -719,6 +726,7 @@ function outerLabel(mark: "+" | "-", context: Context): string {
 function renderLine(line: InterdiffLine, context: Context, tokens?: Token[] | null): HTMLElement {
   const { kind, code } = splitLine(line.display);
   const row = el("div", { class: "line", "data-outer": line.mark, "data-kind": kind });
+  if (kind === "hunk" && isWholeFileHunk(code)) row.hidden = true;
   const marker = kind === "+" || kind === "-" ? kind : "";
   const text = el("span", { class: "code" });
   if (line.mark !== " ") text.append(el("span", { class: "visually-hidden" }, `${outerLabel(line.mark, context)}: `));
