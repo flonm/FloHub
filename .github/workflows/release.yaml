@@ -1,4 +1,4 @@
-name: Sign Firefox add-on
+name: Release
 
 on:
   push:
@@ -9,9 +9,10 @@ permissions:
   contents: write
 
 jobs:
-  sign:
+  version:
     runs-on: ubuntu-latest
-    environment: amo
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -19,6 +20,7 @@ jobs:
       - run: bun run typecheck
       - run: bun run test
       - name: Take the version from the tag
+        id: version
         if: github.ref_type == 'tag'
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -32,10 +34,21 @@ jobs:
             echo "::error::Version $version must be higher than the latest release, $latest."
             exit 1
           fi
-          echo "FLOHUB_VERSION=$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+
+  firefox:
+    needs: version
+    runs-on: ubuntu-latest
+    environment: amo
+    env:
+      FLOHUB_VERSION: ${{ needs.version.outputs.version || '0.0.0' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
       - run: bun run sign:firefox
         env:
           WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
@@ -58,14 +71,38 @@ jobs:
           path: |
             flohub-*.xpi
             updates.json
-      - name: Attach the signed add-on and the update manifest to the release
-        if: github.ref_type == 'tag'
+
+  safari:
+    needs: version
+    runs-on: xcode-27
+    env:
+      FLOHUB_VERSION: ${{ needs.version.outputs.version || '0.0.0' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - run: bun run build:safari:app
+      - name: Zip the app
+        run: ditto -c -k --keepParent safari/build/Build/Products/Release/FloHub.app "flohub-safari-$FLOHUB_VERSION.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flohub-safari
+          path: flohub-safari-*.zip
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [firefox, safari]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Attach the builds and the Firefox update manifest to the release
         run: |
-          xpi="flohub-$FLOHUB_VERSION.xpi"
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$xpi" updates.json --clobber
+            gh release upload "$GITHUB_REF_NAME" flohub-*.xpi flohub-safari-*.zip updates.json --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$xpi" updates.json --generate-notes
+            gh release create "$GITHUB_REF_NAME" flohub-*.xpi flohub-safari-*.zip updates.json --generate-notes
           fi
         env:
           GH_TOKEN: ${{ github.token }}
