@@ -5,6 +5,7 @@ import type { ReviewEvent } from "../core/shortcuts";
 import type { RawPullRequest } from "../core/reviewers";
 import type { RawStack, RawStackPull } from "../core/stack";
 import type { ViewedFile, ViewedFiles } from "../core/viewed";
+import type { CommentPlace } from "../core/comment-jump";
 import type { VersionFile } from "../core/interdiff";
 import { baseBranches, deriveVersions, pickBase, type RawBasePull, type RawVersionPull, type VersionHistory } from "../core/versions";
 
@@ -504,6 +505,34 @@ export async function submitReview(ref: PullRef, event: ReviewEvent, body: strin
 async function findPendingReview(ref: PullRef): Promise<{ id: number } | null> {
   const reviews = (await request(`${pullPath(ref)}/reviews?per_page=100`, {})) as { id: number; state: string }[];
   return reviews.find((review) => review.state === "PENDING") ?? null;
+}
+
+/**
+ * @param ref The pull request.
+ * @param id The comment's number, as the comments panel's `paneldiscussion_r<id>` names it.
+ * @returns Where the comment sits.
+ */
+export async function fetchReviewComment(ref: PullRef, id: number): Promise<CommentPlace> {
+  const raw = (await request(`/repos/${ref.owner}/${ref.repo}/pulls/comments/${id}`, {})) as {
+    path: string;
+    original_commit_id: string;
+    original_line: number | null;
+    original_start_line: number | null;
+    line: number | null;
+    start_line: number | null;
+    side: "LEFT" | "RIGHT" | null;
+    created_at: string;
+  };
+  return {
+    path: raw.path,
+    originalCommit: raw.original_commit_id,
+    originalLine: raw.original_line,
+    originalStartLine: raw.original_start_line,
+    line: raw.line,
+    startLine: raw.start_line,
+    side: raw.side ?? "RIGHT",
+    createdAt: raw.created_at,
+  };
 }
 
 function pullPath(ref: PullRef): string {

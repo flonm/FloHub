@@ -483,6 +483,23 @@ function createFixture(
         }
         return;
       }
+      const comment = /\/pulls\/comments\/(\d+)$/u.exec(request.url());
+      if (comment) {
+        // A comment written on the reviewed v1, on a README.md line the current version renumbers: outdated there.
+        await route.fulfill({
+          json: {
+            path: "README.md",
+            original_commit_id: "aaaaaaa1",
+            original_line: 305,
+            original_start_line: null,
+            line: null,
+            start_line: null,
+            side: "RIGHT",
+            created_at: ago(40),
+          },
+        });
+        return;
+      }
       const compare = /\/compare\/(\w+)\.\.\.(\w+)/u.exec(request.url());
       if (compare) {
         const [, base, head] = compare as unknown as [string, string, string];
@@ -852,7 +869,9 @@ const SPLIT_PAGE = `<!doctype html><html><head><title>Split layout</title></head
 <section style="position:sticky;top:0;flex:1 1 100%;height:60px">Toolbar</section>
 <div id="github-pane" style="position:sticky;top:60px;width:300px"><div data-component="SplitPageLayout.Pane">GitHub's file tree</div></div>
 <div id="github-diff" data-component="SplitPageLayout.Content" style="flex:1;height:3000px">GitHub's diff</div>
-</div><aside style="width:320px"><textarea aria-label="Reply"></textarea></aside></div></body></html>`;
+</div><aside style="width:320px"><textarea aria-label="Reply"></textarea>
+<div id="paneldiscussion_r777"><a href="/flohub/split-diff/pull/1/changes#r777">README.md</a><p>Is this still true?</p></div>
+</aside></div></body></html>`;
 await light.route("https://github.com/flohub/split-diff/**", async (route) => route.fulfill({ body: SPLIT_PAGE, contentType: "text/html" }));
 const splitPage = await light.newPage();
 await splitPage.goto("https://github.com/flohub/split-diff/pull/1/changes?flohub-versions=");
@@ -875,6 +894,39 @@ check(
 );
 await splitPage.getByLabel("Reply").fill("Looks good now");
 check((await splitPage.getByLabel("Reply").inputValue()) === "Looks good now", "the comments beside the docked view stay usable");
+const jumpLink = splitPage.locator("#paneldiscussion_r777 a");
+await jumpLink.click();
+const jumpMenu = splitPage.locator("flohub-jump-menu");
+await jumpMenu.getByRole("menuitem", { name: /^Changes since v1/u }).waitFor();
+check(
+  !splitPage.url().includes("#r777") &&
+    (await jumpMenu.getByRole("menuitem", { name: /^In the current diff/u }).isDisabled()),
+  "a comment's link to its code opens FloHub's menu instead of GitHub's jump, and an outdated comment has no current lines",
+);
+await jumpMenu.getByRole("menuitem", { name: /^Changes since v1/u }).click();
+const target = docked.locator("details.file", { hasText: "README.md" }).locator(".line.target");
+await target.first().waitFor();
+check(
+  (await docked.getByLabel("From").inputValue()) === "1" &&
+    (await docked.getByLabel("To").inputValue()) === "3" &&
+    (await target.count()) === 1 &&
+    (await target.innerText()).includes("Diverged stacks") &&
+    (await target.evaluate((row) => {
+      const box = row.getBoundingClientRect();
+      const pane = row.closest("main")!.getBoundingClientRect();
+      return box.top >= pane.top && box.bottom <= pane.bottom;
+    })),
+  "Changes since v1 compares v1 with the head and marks the commented line, found by the number v1 gave it",
+);
+await jumpLink.click();
+await jumpMenu.getByRole("menuitem", { name: /^Code at v1/u }).click();
+await docked.getByText("Shows the pull request's changes as v1 made them").waitFor();
+check(
+  (await docked.getByLabel("From").inputValue()) === "0" &&
+    (await docked.locator(".line.target").innerText()).includes("Diverged stacks") &&
+    splitPage.url().includes("flohub-versions=base..aaaaaaa"),
+  "Code at v1 shows v1 against the base branch, at the commented line, and the URL says so",
+);
 await docked.getByRole("button", { name: "Close" }).click();
 check(
   (await splitPage.evaluate(() => getComputedStyle(document.getElementById("github-diff")!).display)) !== "none" &&
@@ -1101,6 +1153,8 @@ const longestGap = await cachedPage.evaluate(
 );
 check(longestGap < 150, `once shown, the cached stack stays while GitHub re-renders the header (longest gap ${Math.round(longestGap)}ms)`);
 
+// An overview still on its way would store this layer's own entry again over the one the next check plants.
+await inlineBar(cachedPage).locator('.refresh:not([aria-busy="true"])').waitFor({ timeout: 10_000 });
 const [cachedWorker] = cached.serviceWorkers();
 await cachedWorker?.evaluate(async (current) => {
   // oxlint-disable-next-line unicorn/consistent-function-scoping -- the function runs in the service worker, where outer scopes don't exist

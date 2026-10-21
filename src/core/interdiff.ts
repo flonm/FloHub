@@ -21,6 +21,11 @@ export interface InterdiffLine extends DiffLine {
   right: number | null;
   /** For a line that replaced, or was replaced by, a similar one: its code split by what differs from the other. */
   segments?: Segment[];
+  /**
+   * The line's numbers in the older version's diff, where it has the line: a kept line shows the newer version's
+   * numbers, but a comment on the older version names the older ones.
+   */
+  origin?: { left: number | null; right: number | null };
 }
 
 /** A run of changed lines with their context, as a slice of the file's lines. */
@@ -92,6 +97,36 @@ const PAIR_WINDOW = 8;
 export function interdiff(before: VersionFile[], after: VersionFile[]): FileInterdiff[] {
   return pairFiles(before, after)
     .map(([old, current]) => compareFile(old, current))
+    .toSorted((a, b) => (a.path < b.path ? -1 : (a.path > b.path ? 1 : 0)));
+}
+
+/**
+ * One version's own changes against its base, as a plain diff: each line is marked by what the pull request does to
+ * it, as GitHub's Files changed tab shows the version.
+ * @param files The files the version changes against its base.
+ * @returns One entry per file, in path order.
+ */
+export function versionDiff(files: VersionFile[]): FileInterdiff[] {
+  return files
+    .map((file) => {
+      const plain = compareFile(null, file);
+      // The lines are this call's own copies, so marking them in place is safe.
+      const lines = plain.lines.map((line) => {
+        const { kind } = splitLine(line.display);
+        return Object.assign(line, { mark: kind === "+" || kind === "-" ? kind : " ", origin: { left: line.left, right: line.right } });
+      });
+      const changed = lines.filter((line) => line.mark !== " ");
+      return {
+        ...plain,
+        change: file.status === "added" || file.status === "removed" ? ("added" as const) : ("changed" as const),
+        header: plain.header.map((line) => Object.assign(line, { mark: " " as const })),
+        lines,
+        // The patch is GitHub's diff of the version, context and all, so none of it folds away.
+        hunks: lines.length > 0 ? [{ start: 0, lines }] : [],
+        added: changed.filter((line) => line.mark === "+").length,
+        removed: changed.filter((line) => line.mark === "-").length,
+      };
+    })
     .toSorted((a, b) => (a.path < b.path ? -1 : (a.path > b.path ? 1 : 0)));
 }
 
@@ -187,9 +222,9 @@ function interdiffLines(before: string[], after: string[]): InterdiffLine[] {
   );
   for (const { mark } of diff) {
     // A kept line shows as the newer version has it.
-    const row = mark === "-" ? oldRows[x++] : newRows[y++];
-    if (mark === " ") x++;
-    if (row) lines.push(Object.assign(row, { mark }));
+    const old = mark === "+" ? undefined : oldRows[x++];
+    const row = mark === "-" ? old : newRows[y++];
+    if (row) lines.push(Object.assign(row, { mark }, old && { origin: { left: old.left, right: old.right } }));
   }
   pairReplacements(lines);
   return lines;

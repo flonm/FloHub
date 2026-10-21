@@ -1,4 +1,5 @@
 import type { FailureCode, Overview, VersionPatch } from "./github";
+import type { CommentPlace } from "../core/comment-jump";
 import type { PullRef } from "../core/pull-ref";
 import type { Inbox } from "../core/inbox";
 import type { ViewedFiles } from "../core/viewed";
@@ -17,6 +18,7 @@ export type Message =
   | { type: "inbox"; maxAgeMs?: number }
   | { type: "versions"; ref: PullRef }
   | { type: "version-patch"; ref: PullRef; head: string; bases: string[] }
+  | { type: "review-comment"; ref: PullRef; id: number }
   | { type: "open-options" };
 
 export type Reply<T> = { ok: true; value: T } | { ok: false; code: FailureCode; message: string };
@@ -32,6 +34,7 @@ export interface ReplyByType {
   inbox: Inbox;
   versions: VersionHistory;
   "version-patch": VersionPatch;
+  "review-comment": CommentPlace;
   "open-options": null;
 }
 
