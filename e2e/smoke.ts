@@ -643,12 +643,36 @@ const fileRows = (await versions.locator("details.file > summary").allInnerTexts
 check(
   JSON.stringify(fileRows) ===
     JSON.stringify([
-      "README.md Changed +1 −1 View file at v3",
       "cmd/adopt_test.go Newly changed Only in v3: New file +4 View file at v3",
       "cmd/legacy.go No longer changed −3 View file at v1",
       "cmd/rebase.go Changed +2 −1 View file at v3",
+      "README.md Changed +1 −1 View file at v3",
     ]),
-  `interdiff lists files whose change differs, ignoring moved hunks: ${JSON.stringify(fileRows)}`,
+  `interdiff lists files whose change differs, ignoring moved hunks, folders first: ${JSON.stringify(fileRows)}`,
+);
+const treeRows = await versions
+  .locator("nav.files button")
+  .evaluateAll((buttons) => buttons.map((row) => [...row.querySelectorAll(":scope > .name, :scope > .counts > span")].map((part) => part.textContent).join(" ")));
+check(
+  JSON.stringify(treeRows) === JSON.stringify(["cmd", "adopt_test.go +4", "legacy.go −3", "rebase.go +2 −1", "README.md +1 −1"]),
+  `the file tree lists the compared files by folder with their version-diff totals: ${JSON.stringify(treeRows)}`,
+);
+const readmeRow = versions.locator("nav.files button.file", { hasText: "README.md" });
+await readmeRow.click();
+await page.waitForFunction(() => {
+  const root = document.querySelector("flohub-versions")?.shadowRoot;
+  const scroller = root?.querySelector("main")?.getBoundingClientRect();
+  const target = [...(root?.querySelectorAll("details.file") ?? [])].find((file) => file.textContent.includes("README.md"));
+  const top = target?.getBoundingClientRect().top;
+  return scroller !== undefined && top !== undefined && top >= scroller.top - 1 && top < scroller.bottom;
+});
+check(
+  (await readmeRow.getAttribute("aria-current")) === "location" &&
+    (await page.evaluate(() => {
+      const active = document.querySelector("flohub-versions")?.shadowRoot?.activeElement;
+      return active?.localName === "summary" && active.textContent.includes("README.md");
+    })),
+  "a file tree row scrolls to its file, moves focus there and marks the row",
 );
 const rebaseFile = versions.locator("details.file", { hasText: "cmd/rebase.go" });
 check(
