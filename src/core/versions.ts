@@ -211,7 +211,7 @@ const RANGE_MEMORY_MS = 30 * 86_400_000;
 const MAX_SAVED_RANGES = 100;
 
 /**
- * Picks what to compare when the dialog opens: the range the viewer last compared, with its newer side moved to the
+ * Picks what to compare when the view opens: the range the viewer last compared, with its newer side moved to the
  * current head when it was the head back then, or else {@link defaultRange}.
  * @param versions Oldest first.
  * @param saved The range the viewer last compared on this pull request, if any.
@@ -220,8 +220,9 @@ const MAX_SAVED_RANGES = 100;
 export function restoreRange(versions: Version[], saved: SavedRange | null): { from: number; to: number } | null {
   const fallback = defaultRange(versions);
   if (!fallback || !saved) return fallback;
-  const from = versions.find((version) => version.oid === saved.from);
-  const to = saved.toCurrent ? versions.at(-1) : versions.find((version) => version.oid === saved.to);
+  // A range from a link names its commits by their short form.
+  const from = versions.find((version) => version.oid.startsWith(saved.from));
+  const to = saved.toCurrent ? versions.at(-1) : versions.find((version) => version.oid.startsWith(saved.to));
   if (!from || !to || from === to) return fallback;
   return { from: from.number, to: to.number };
 }
@@ -255,6 +256,27 @@ export function rangeToSave(versions: Version[], from: number, to: number, now: 
   const newer = versions[to - 1];
   if (!older || !newer || older === newer) return null;
   return { from: older.oid, to: newer.oid, toCurrent: newer.current, at: now };
+}
+
+/**
+ * @param older The older compared version.
+ * @param newer The newer compared version.
+ * @returns The range as the page's URL keeps it, like `1a2b3c4..5d6e7f8`; a newer side that is the head is left
+ * empty, so a link or a reload follows later pushes.
+ */
+export function formatRangeParam(older: Version, newer: Version): string {
+  return `${older.oid.slice(0, 7)}..${newer.current ? "" : newer.oid.slice(0, 7)}`;
+}
+
+/**
+ * @param value The URL's range, as {@link formatRangeParam} writes it.
+ * @param now The current time.
+ * @returns The range to open on, or null for an empty or malformed value, which opens on the remembered range.
+ */
+export function parseRangeParam(value: string, now: number): SavedRange | null {
+  const match = /^([\da-f]{7,40})\.\.([\da-f]{7,40})?$/u.exec(value);
+  if (!match?.[1]) return null;
+  return { from: match[1], to: match[2] ?? "", toCurrent: match[2] === undefined, at: now };
 }
 
 /**

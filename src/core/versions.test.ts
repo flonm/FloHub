@@ -5,8 +5,10 @@ import {
   carryRange,
   defaultRange,
   deriveVersions,
+  formatRangeParam,
   keepRecentRanges,
   lastReviewedVersion,
+  parseRangeParam,
   pickBase,
   rangeToSave,
   type RawVersionPull,
@@ -294,5 +296,24 @@ describe("remembered ranges", () => {
     expect(kept["o/r#99"]).toBeDefined();
     expect(kept["o/r#100"]).toBeUndefined();
     expect(kept["o/r#old"]).toBeUndefined();
+  });
+});
+
+describe("the range in the URL", () => {
+  const NOW = Date.parse("2026-10-21T12:00:00Z");
+  const { versions } = deriveVersions(pull({ headRefOid: "c3c3c3c3c3", commits: { nodes: [{ commit: commit("c3c3c3c3c3", "2026-10-03T09:00:00Z") }] }, timelineItems: { nodes: [] }, reviews: { nodes: [{ author: { login: "me" }, submittedAt: "2026-10-02T12:00:00Z", commit: commit("a1a1a1a1a1", "2026-10-01T08:00:00Z") }] } }), [], "me");
+
+  test("names both sides by their short commit, and leaves a newer side that is the head empty", () => {
+    expect(formatRangeParam(versions[0]!, versions[1]!)).toBe("a1a1a1a..");
+    expect(formatRangeParam(versions[1]!, versions[0]!)).toBe("c3c3c3c..a1a1a1a");
+  });
+
+  test("a link opens on the range it names, its empty newer side on the current head", () => {
+    expect(restoreRange(versions, parseRangeParam("a1a1a1a..", NOW))).toEqual({ from: 1, to: 2 });
+    expect(restoreRange(versions, parseRangeParam("c3c3c3c..a1a1a1a", NOW))).toEqual({ from: 2, to: 1 });
+  });
+
+  test.each(["", "..", "main..HEAD", "a1a1..", "a1a1a1a"])("%p opens on the remembered range instead", (value) => {
+    expect(parseRangeParam(value, NOW)).toBeNull();
   });
 });

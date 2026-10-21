@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/html-vite";
 import type { VersionPatch } from "../api/github";
 import type { SavedRange, Version, VersionHistory } from "../core/versions";
 import { el } from "../ui/dom";
-import { VersionsDialog } from "../ui/versions-dialog";
+import { VersionsView } from "../ui/versions-view";
 import { NOW } from "./shadow";
 
 const HOUR = 3_600_000;
@@ -193,7 +193,7 @@ function history(count: number): VersionHistory {
   return { baseRefOid: "0000000", versions: [V1, V2, V3].slice(0, count), baseHeads: [] };
 }
 
-/** Lets the dialog paint its busy state before the fixture answers, as a real request would. */
+/** Lets the view paint its busy state before the fixture answers, as a real request would. */
 async function settle(): Promise<void> {
   await new Promise((resolve) => {
     setTimeout(resolve, 0);
@@ -201,39 +201,70 @@ async function settle(): Promise<void> {
 }
 
 /**
- * Opens the dialog the way the versions bar does.
+ * A stand-in for GitHub's Files changed page: its split layout, with the file tree and diff the view takes the place
+ * of, under a sticky toolbar, and the comments panel beside them.
+ * @returns The page.
+ */
+function githubPage(): HTMLElement {
+  const page = el("div", { id: "diff-comparison-viewer-container" });
+  page.style.cssText = "display:flex;min-height:100vh;font:14px/1.5 sans-serif";
+  const layout = el("div");
+  layout.style.cssText = "flex:1;min-width:0;display:flex;flex-wrap:wrap;align-content:flex-start;gap:0 16px;padding:0 16px";
+  const toolbar = el("section", {}, "GitHub's toolbar: file filter, viewed count, Submit review");
+  toolbar.style.cssText = "position:sticky;top:0;flex:1 1 100%;height:60px;display:flex;align-items:center;border-bottom:1px solid #d1d9e0;background:#fff;z-index:1";
+  const pane = el("div");
+  pane.style.cssText = "position:sticky;top:60px;width:240px";
+  pane.append(el("div", { "data-component": "SplitPageLayout.Pane" }, "GitHub's file tree"));
+  const content = el("div", { "data-component": "SplitPageLayout.Content" }, "GitHub's diff");
+  content.style.cssText = "flex:1;min-height:2000px";
+  layout.append(toolbar, pane, content);
+  const comments = el("aside", {}, "GitHub's comments panel, which stays usable beside the view");
+  comments.style.cssText = "position:sticky;top:0;align-self:flex-start;width:320px;height:100vh;padding:16px;border-left:1px solid #d1d9e0";
+  page.append(layout, comments);
+  return page;
+}
+
+/**
+ * Opens the view the way the versions bar does: in place of GitHub's file tree and diff, or floating over a page
+ * without them.
  * @param kind How many versions the pull request has, or "loading"/"failing" for those states.
  * @param patches What each version changes.
  * @param stored What the extension kept from an earlier visit: the versions fetched then and the range compared.
- * @returns A line behind the backdrop.
+ * @param docked Whether the page has GitHub's split layout to dock in.
+ * @returns The page.
  */
-function dialog(
+function view(
   kind: number | "loading" | "failing",
   patches = PATCHES,
   stored: { cached?: VersionHistory; saved?: SavedRange } = {},
+  docked = true,
 ): HTMLElement {
   for (const previous of document.querySelectorAll("flohub-versions")) previous.remove();
-  new VersionsDialog().open({
-    key: "octo-org/api#344",
-    number: 344,
-    repoUrl: "https://github.com/octo-org/api",
-    cachedVersions: async () => {
-      await settle();
-      return stored.cached ?? null;
-    },
-    // oxlint-disable-next-line typescript/promise-function-async -- the fixture already holds the promise the dialog asks for
-    versions: () => pendingHistory(kind),
-    patch: async (_history, current) => {
-      await settle();
-      return patches[current.oid] ?? patches["2222222"]!;
-    },
-    savedRange: async () => {
-      await settle();
-      return stored.saved ?? null;
-    },
-    saveRange: () => undefined,
+  const page = docked ? githubPage() : el("p", {}, "A page without GitHub's split layout: the view floats over it.");
+  // The view finds its place in the page, so it opens once Storybook has put the page in the document.
+  requestAnimationFrame(() => {
+    new VersionsView().open({
+      key: "octo-org/api#344",
+      number: 344,
+      repoUrl: "https://github.com/octo-org/api",
+      cachedVersions: async () => {
+        await settle();
+        return stored.cached ?? null;
+      },
+      // oxlint-disable-next-line typescript/promise-function-async -- the fixture already holds the promise the view asks for
+      versions: () => pendingHistory(kind),
+      patch: async (_history, current) => {
+        await settle();
+        return patches[current.oid] ?? patches["2222222"]!;
+      },
+      savedRange: async () => {
+        await settle();
+        return stored.saved ?? null;
+      },
+      saveRange: () => undefined,
+    });
   });
-  return el("p", {}, "The dialog opens over the page; Esc closes it.");
+  return page;
 }
 
 /**
@@ -244,7 +275,7 @@ async function pendingHistory(kind: number | "loading" | "failing"): Promise<Ver
   await settle();
   if (kind === "failing") throw new Error("Resource not accessible by personal access token");
   if (kind === "loading") {
-    // A timer a day out leaves the dialog on its loading state for the story.
+    // A timer a day out leaves the view on its loading state for the story.
     return new Promise<VersionHistory>((resolve) => {
       setTimeout(resolve, 86_400_000);
     });
@@ -253,7 +284,7 @@ async function pendingHistory(kind: number | "loading" | "failing"): Promise<Ver
 }
 
 const meta = {
-  title: "Stack/Versions dialog",
+  title: "Stack/Versions view",
   tags: ["autodocs"],
   parameters: {
     docs: {
@@ -269,10 +300,10 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** Loading the version history. */
-export const Loading: Story = { render: () => dialog("loading") };
+export const Loading: Story = { render: () => view("loading") };
 
 /** A pull request with a single head: force pushes and reviews leave no second version to compare. */
-export const SingleVersion: Story = { render: () => dialog(1) };
+export const SingleVersion: Story = { render: () => view(1) };
 
 /**
  * Defaults to the viewer's last reviewed version against the current head. Like any diff, a line only in the newer
@@ -283,27 +314,30 @@ export const SingleVersion: Story = { render: () => dialog(1) };
  * shows where each version renamed it to; its folded context expands on click. The file tree on the left lists the
  * compared files with their version-diff totals; a row jumps to its file.
  */
-export const SinceTheViewersReview: Story = { render: () => dialog(3) };
+export const SinceTheViewersReview: Story = { render: () => view(3) };
 
 /**
  * Twelve files across nested folders. The tree merges folders that hold only one folder (`docs/guide/stacks`),
  * collapses a folder on click, and marks the file in view while the diff scrolls.
  */
-export const ManyFiles: Story = { render: () => dialog(3, MANY_PATCHES) };
+export const ManyFiles: Story = { render: () => view(3, MANY_PATCHES) };
 
 /** The history could not be read. */
-export const Fails: Story = { render: () => dialog("failing") };
+export const Fails: Story = { render: () => view("failing") };
 
 /**
  * Opens on the range the viewer compared last time, here v1 → v3 rather than the default from their last review. The
  * newer side was the head then, so after a push it would move to the new head.
  */
 export const RestoredRange: Story = {
-  render: () => dialog(3, PATCHES, { saved: { from: V1.oid, to: V3.oid, toCurrent: true, at: NOW - HOUR } }),
+  render: () => view(3, PATCHES, { saved: { from: V1.oid, to: V3.oid, toCurrent: true, at: NOW - HOUR } }),
 };
 
 /** Shows the versions fetched on an earlier visit straight away, while they are fetched again. */
-export const FromTheCache: Story = { render: () => dialog("loading", PATCHES, { cached: history(3) }) };
+export const FromTheCache: Story = { render: () => view("loading", PATCHES, { cached: history(3) }) };
 
 /** The versions shown came from an earlier visit, and fetching them again failed: the diff stays, with the error. */
-export const RefreshFails: Story = { render: () => dialog("failing", PATCHES, { cached: history(3) }) };
+export const RefreshFails: Story = { render: () => view("failing", PATCHES, { cached: history(3) }) };
+
+/** On a page without GitHub's split layout, like the classic Files changed tab, the view floats over the page. */
+export const Floating: Story = { render: () => view(3, PATCHES, {}, false) };
