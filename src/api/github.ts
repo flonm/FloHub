@@ -6,7 +6,7 @@ import type { RawPullRequest } from "../core/reviewers";
 import type { RawStack, RawStackPull } from "../core/stack";
 import type { ViewedFile, ViewedFiles } from "../core/viewed";
 import { type CommentLink, type CommentPlace, threadNumber } from "../core/comment-jump";
-import type { ReviewThread } from "../core/threads";
+import type { ReviewAction, ReviewDiscussion } from "../core/threads";
 import type { VersionFile } from "../core/interdiff";
 import { baseBranches, deriveVersions, pickBase, type RawBasePull, type RawVersionPull, type VersionHistory } from "../core/versions";
 
@@ -238,6 +238,11 @@ export interface VersionPatch {
   files: VersionFile[];
   /** Whether GitHub cut the file list off at its limit, so files past it are missing. */
   truncated: boolean;
+  /**
+   * The candidate base the version was compared with. Only the pull request's own base (the first candidate) gives
+   * the lines GitHub's diff has, which a new review comment has to be on.
+   */
+  base: string;
 }
 
 export type Overview = RawOverview & {
@@ -334,12 +339,12 @@ async function fetchBasePulls(ref: PullRef, branches: string[]): Promise<RawBase
  * @returns The changed files.
  */
 export async function fetchVersionPatch(ref: PullRef, head: string, bases: string[]): Promise<VersionPatch> {
-  const compares: RawCompare[] = [];
+  const compares: (RawCompare & { base: string })[] = [];
   for (const base of bases) {
     try {
       // One base after the other: the first that GitHub still has is usually the right one
       // oxlint-disable-next-line no-await-in-loop -- each try depends on whether the one before failed
-      compares.push(await fetchCompare(ref, base, head));
+      compares.push({ ...(await fetchCompare(ref, base, head)), base });
     } catch (error) {
       const missing = error instanceof GitHubError && error.status === 404;
       // An earlier head of the base branch may be gone; the version itself being gone fails every try.
@@ -350,7 +355,13 @@ export async function fetchVersionPatch(ref: PullRef, head: string, bases: strin
   const compare = compares[pickBase(compares.map((each) => ({ onBase: isOnBase(each), aheadBy: each.ahead_by })))];
   if (!compare) throw new GitHubError("failed", `Could not compare ${head.slice(0, 7)} with its base.`);
   const files = (compare.files ?? []).map((file) => toVersionFile(file));
-  return { mergeBase: compare.merge_base_commit.sha, onBase: isOnBase(compare), files, truncated: files.length >= MAX_COMPARE_FILES };
+  return {
+    mergeBase: compare.merge_base_commit.sha,
+    onBase: isOnBase(compare),
+    files,
+    truncated: files.length >= MAX_COMPARE_FILES,
+    base: compare.base,
+  };
 }
 
 async function fetchCompare(ref: PullRef, base: string, head: string): Promise<RawCompare> {
@@ -512,6 +523,8 @@ const REVIEW_THREADS_QUERY = `
 query ($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
+      id
+      reviews(states: PENDING, first: 1) { nodes { id commit { oid } } }
       reviewThreads(last: 100) {
         nodes {
           id isResolved isOutdated path line startLine originalLine originalStartLine diffSide
@@ -548,16 +561,25 @@ interface RawReviewThread {
 }
 
 /**
- * Fetches the pull request's review threads, the viewer's own draft comments among them, for the versions view.
+ * Fetches the pull request's review threads, the viewer's own draft comments among them, for the versions view, and
+ * what posting to them needs.
  * @param ref The pull request.
- * @returns The last 100 threads, with up to 50 comments each.
+ * @returns The last 100 threads, with up to 50 comments each, the pull request's id and the viewer's pending review.
  */
-export async function fetchReviewThreads(ref: PullRef): Promise<ReviewThread[]> {
-  const { data } = await graphql<{ repository: { pullRequest: { reviewThreads: { nodes: (RawReviewThread | null)[] } } | null } | null }>(
-    REVIEW_THREADS_QUERY,
-    { owner: ref.owner, name: ref.repo, number: ref.number },
-  );
-  return (data.repository?.pullRequest?.reviewThreads.nodes ?? [])
+export async function fetchReviewDiscussion(ref: PullRef): Promise<ReviewDiscussion> {
+  const { data } = await graphql<{
+    repository: {
+      pullRequest: {
+        id: string;
+        reviews: { nodes: ({ id: string; commit: { oid: string } | null } | null)[] };
+        reviewThreads: { nodes: (RawReviewThread | null)[] };
+      } | null;
+    } | null;
+  }>(REVIEW_THREADS_QUERY, { owner: ref.owner, name: ref.repo, number: ref.number });
+  const pull = data.repository?.pullRequest;
+  if (!pull) throw new GitHubError("failed", `The token cannot see ${ref.owner}/${ref.repo}#${ref.number}.`);
+  const [pending] = pull.reviews.nodes;
+  const threads = pull.reviewThreads.nodes
     .filter((raw): raw is RawReviewThread => raw !== null)
     .map((raw) => ({
       id: raw.id,
@@ -580,6 +602,62 @@ export async function fetchReviewThreads(ref: PullRef): Promise<ReviewThread[]> 
         originalCommit: comment.originalCommit?.oid ?? null,
       })),
     }));
+  return { threads, pullRequestId: pull.id, pending: pending?.commit ? { id: pending.id, commit: pending.commit.oid } : null };
+}
+
+/**
+ * Does what the viewer asked for in the versions view. A new comment goes out on its own (REST, on the head) or into
+ * the viewer's pending review, started on the head when there is none. A reply joins the pending review when there
+ * is one, as GitHub's own reply does, and else goes out at once. The pending review is looked up again here, since
+ * the viewer may have submitted or started one since the view loaded.
+ * @param ref The pull request.
+ * @param action What to do.
+ */
+export async function runReviewAction(ref: PullRef, action: ReviewAction): Promise<void> {
+  if (action.kind === "resolve") {
+    const mutation = action.resolved ? "resolveReviewThread" : "unresolveReviewThread";
+    await mutate(`mutation ($id: ID!) { ${mutation}(input: { threadId: $id }) { clientMutationId } }`, { id: action.threadId });
+    return;
+  }
+  const { pullRequestId, pending } = await fetchReviewDiscussion(ref);
+  if (action.kind === "reply") {
+    await (pending
+      ? mutate(
+          "mutation ($review: ID!, $thread: ID!, $body: String!) { addPullRequestReviewThreadReply(input: { pullRequestReviewId: $review, pullRequestReviewThreadId: $thread, body: $body }) { clientMutationId } }",
+          { review: pending.id, thread: action.threadId, body: action.body },
+        )
+      : request(`${pullPath(ref)}/comments/${action.commentId}/replies`, { method: "POST", body: JSON.stringify({ body: action.body }) }));
+    return;
+  }
+  const lines = {
+    line: action.line,
+    side: action.side,
+    ...(action.startLine !== undefined && { start_line: action.startLine, start_side: action.startSide }),
+  };
+  if (action.mode === "single") {
+    if (pending) throw new GitHubError("failed", "You have a pending review: add the comment to it instead.");
+    await request(`${pullPath(ref)}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ body: action.body, commit_id: action.head, path: action.path, ...lines }),
+    });
+    return;
+  }
+  if (pending && pending.commit !== action.head) {
+    throw new GitHubError("failed", "Your pending review is on an older version. Submit it before commenting on the current one.");
+  }
+  const review = pending?.id ?? (await startReview(pullRequestId, action.head));
+  await mutate(
+    "mutation ($review: ID!, $path: String!, $body: String!, $line: Int!, $side: DiffSide!, $startLine: Int, $startSide: DiffSide) { addPullRequestReviewThread(input: { pullRequestReviewId: $review, path: $path, body: $body, line: $line, side: $side, startLine: $startLine, startSide: $startSide }) { thread { id } } }",
+    {
+      review,
+      path: action.path,
+      body: action.body,
+      line: action.line,
+      side: action.side,
+      startLine: action.startLine ?? null,
+      startSide: action.startSide ?? null,
+    },
+  );
 }
 
 const THREADS_QUERY = `
@@ -684,6 +762,41 @@ async function graphql<T>(
     (error) => error.path?.findLast((segment): segment is string => typeof segment === "string") ?? error.message,
   );
   return { data: body.data, unreadable: [...new Set(unreadable)] };
+}
+
+/**
+ * Starts a pending review on a commit, which only the viewer sees until they submit it.
+ * @param pullRequestId The pull request's GraphQL id.
+ * @param head The commit the review is on: the head, whose lines its comments name.
+ * @returns The review's GraphQL id.
+ */
+async function startReview(pullRequestId: string, head: string): Promise<string> {
+  const started = await mutate<{ addPullRequestReview: { pullRequestReview: { id: string } } }>(
+    "mutation ($pull: ID!, $commit: GitObjectID!) { addPullRequestReview(input: { pullRequestId: $pull, commitOID: $commit }) { pullRequestReview { id } } }",
+    { pull: pullRequestId, commit: head },
+  );
+  return started.addPullRequestReview.pullRequestReview.id;
+}
+
+/**
+ * Runs a GraphQL mutation. A mutation that fails answers with data that is null where the mutation's result would be,
+ * next to the errors, which a query would read as fields the token can't see: here any error is a failure.
+ * @param query The mutation.
+ * @param variables Its variables.
+ * @returns The mutation's result.
+ */
+async function mutate<T = unknown>(query: string, variables: Record<string, unknown>): Promise<T> {
+  const body = (await request("/graphql", { method: "POST", body: JSON.stringify({ query, variables }) })) as {
+    data?: T | null;
+    errors?: { type?: string; message: string }[];
+  };
+  const errors = body.errors ?? [];
+  if (errors.length > 0 || body.data === undefined || body.data === null) {
+    const scopes = missingScopes(errors);
+    if (scopes !== null) throw new GitHubError("scopes", scopes);
+    throw new GitHubError("failed", errors.map((error) => error.message).join(" ") || "GitHub returned no data.");
+  }
+  return body.data;
 }
 
 /**

@@ -1,6 +1,6 @@
 import type { FailureCode, Overview, VersionPatch } from "./github";
 import type { CommentLink, CommentPlace } from "../core/comment-jump";
-import type { ReviewThread } from "../core/threads";
+import type { ReviewAction, ReviewDiscussion } from "../core/threads";
 import type { PullRef } from "../core/pull-ref";
 import type { Inbox } from "../core/inbox";
 import type { ViewedFiles } from "../core/viewed";
@@ -21,6 +21,7 @@ export type Message =
   | { type: "version-patch"; ref: PullRef; head: string; bases: string[] }
   | { type: "review-comment"; ref: PullRef; link: CommentLink }
   | { type: "review-threads"; ref: PullRef }
+  | { type: "review-action"; ref: PullRef; action: ReviewAction }
   | { type: "open-options" };
 
 export type Reply<T> = { ok: true; value: T } | { ok: false; code: FailureCode; message: string };
@@ -37,7 +38,8 @@ export interface ReplyByType {
   versions: VersionHistory;
   "version-patch": VersionPatch;
   "review-comment": CommentPlace;
-  "review-threads": ReviewThread[];
+  "review-threads": ReviewDiscussion;
+  "review-action": null;
   "open-options": null;
 }
 

@@ -314,11 +314,32 @@ function createFixture(
     threadsDelay: 0,
     /** An HTTP status to fail the overview query with, or 0 to answer it. */
     overviewFailure: 0,
+    /** The viewer's pending review, and the commit it was started on, or null. */
+    pendingReview: null as { commit: string } | null,
+    /** Every comment, reply and resolve the versions view sent, as the request or mutation and its input. */
+    reviewActions: [] as string[],
     async handle(route: Route): Promise<void> {
       const request = route.request();
       const graphql = request.url().endsWith("/graphql")
         ? (request.postDataJSON() as { query: string; variables: { path?: string; ids?: string[] } })
         : null;
+      const reviewMutation = graphql?.query.match(
+        /\b(resolveReviewThread|unresolveReviewThread|addPullRequestReviewThreadReply|addPullRequestReviewThread|addPullRequestReview)\(/u,
+      )?.[1];
+      if (graphql && reviewMutation) {
+        created.reviewActions.push(`${reviewMutation} ${JSON.stringify(graphql.variables)}`);
+        const results: Record<string, unknown> = {
+          addPullRequestReview: { pullRequestReview: { id: "PRR_new" } },
+          addPullRequestReviewThread: { thread: { id: "PRRT_new" } },
+        };
+        await route.fulfill({ json: { data: { [reviewMutation]: results[reviewMutation] ?? { clientMutationId: null } } } });
+        return;
+      }
+      if (request.method() === "POST" && /\/pulls\/\d+\/comments(?:\/\d+\/replies)?$/u.test(request.url())) {
+        created.reviewActions.push(`POST ${new URL(request.url()).pathname.replace(/^.*\/pulls\//u, "pulls/")} ${request.postData()}`);
+        await route.fulfill({ status: 201, json: { id: 5 } });
+        return;
+      }
       const mutation = graphql?.query.match(/\b(markFileAsViewed|unmarkFileAsViewed)\b/u)?.[1];
       if (graphql && mutation) {
         const path = graphql.variables.path ?? "";
@@ -409,6 +430,8 @@ function createFixture(
             data: {
               repository: {
                 pullRequest: {
+                  id: "PR_split",
+                  reviews: { nodes: created.pendingReview ? [{ id: "PRR_pending", commit: { oid: created.pendingReview.commit } }] : [] },
                   reviewThreads: {
                     nodes: [
                       reviewThread("PRRT_1", "README.md", 305, "aaaaaaa1", "Is this still true?"),
@@ -962,6 +985,69 @@ check(
 await docked.getByLabel("Comments").uncheck();
 check(await threadRows.first().isHidden(), "the Comments toggle hides the threads");
 await docked.getByLabel("Comments").check();
+
+// Commenting from the view, on v3, the head; the fixture records what would go to GitHub.
+const rebaseRow = (code: string) => docked.locator("details.file", { hasText: "cmd/rebase.go" }).locator(".line", { hasText: code });
+const addOn = async (code: string, shift = false) => {
+  await rebaseRow(code).hover();
+  await rebaseRow(code).locator(".add-comment").click({ modifiers: shift ? ["Shift"] : [] });
+};
+const composer = docked.locator(".composer-row");
+const lastAction = () => fixture.reviewActions.at(-1) ?? "";
+await addOn("log(branch)");
+await composer.getByRole("textbox").fill("Please log at debug level.");
+await composer.getByRole("button", { name: "Add single comment" }).click();
+await composer.waitFor({ state: "detached" });
+check(
+  lastAction() === 'POST pulls/1/comments {"body":"Please log at debug level.","commit_id":"ccccccc3","path":"cmd/rebase.go","line":44,"side":"RIGHT"}',
+  `a single comment goes out on the head's line, as GitHub's diff numbers it: ${lastAction()}`,
+);
+await addOn("adopt(branch, equivalent)");
+await addOn("log(branch)", true);
+check((await composer.locator(".title").innerText()).startsWith("Comment on lines 43–44"), "shift-click stretches the comment over the lines between");
+await composer.getByRole("textbox").fill("These two belong together.");
+await composer.getByRole("button", { name: "Start a review" }).click();
+await composer.waitFor({ state: "detached" });
+check(
+  fixture.reviewActions.slice(-2).join(" | ") ===
+    'addPullRequestReview {"pull":"PR_split","commit":"ccccccc3"} | addPullRequestReviewThread {"review":"PRR_new","path":"cmd/rebase.go","body":"These two belong together.","line":44,"side":"RIGHT","startLine":43,"startSide":"RIGHT"}',
+  `Start a review starts a pending review on the head and adds the comment to it: ${fixture.reviewActions.slice(-2).join(" | ")}`,
+);
+const readmeThread = docked.locator(".thread-row", { hasText: "Is this still true" });
+await readmeThread.getByRole("button", { name: "Reply" }).click();
+await readmeThread.getByRole("textbox").fill("Yes, still true.");
+await readmeThread.locator(".box").getByRole("button", { name: "Reply" }).click();
+await readmeThread.locator(".box").waitFor({ state: "detached" });
+check(lastAction() === 'POST pulls/1/comments/1/replies {"body":"Yes, still true."}', `a reply goes out at once without a pending review: ${lastAction()}`);
+fixture.pendingReview = { commit: "ccccccc3" };
+await readmeThread.getByRole("button", { name: "Resolve conversation" }).click();
+await readmeThread.getByRole("button", { name: "Reply" }).waitFor();
+check(lastAction() === 'resolveReviewThread {"id":"PRRT_1"}', `Resolve conversation resolves the thread: ${lastAction()}`);
+await addOn("log(branch)");
+check(
+  JSON.stringify(await composer.getByRole("button").allInnerTexts()) === JSON.stringify(["Cancel", "Add review comment"]),
+  "with a pending review on the head, a new comment can only join it",
+);
+await composer.getByRole("textbox").fill("Part of my review.");
+await composer.getByRole("button", { name: "Add review comment" }).click();
+await composer.waitFor({ state: "detached" });
+check(
+  lastAction().startsWith('addPullRequestReviewThread {"review":"PRR_pending","path":"cmd/rebase.go","body":"Part of my review.","line":44'),
+  `Add review comment adds to the pending review: ${lastAction()}`,
+);
+fixture.pendingReview = { commit: "aaaaaaa1" };
+await readmeThread.getByRole("button", { name: "Reply" }).click();
+await readmeThread.getByRole("textbox").fill("Noted.");
+await readmeThread.locator(".box").getByRole("button", { name: "Add review comment" }).click();
+await readmeThread.locator(".box").waitFor({ state: "detached" });
+await addOn("log(branch)");
+check(
+  (await composer.locator(".problem").innerText()).includes("Your pending review is on an older version") &&
+    JSON.stringify(await composer.getByRole("button").allInnerTexts()) === JSON.stringify(["Cancel"]),
+  "a pending review on an older version has to be submitted before commenting on the head",
+);
+await composer.getByRole("button", { name: "Cancel" }).click();
+fixture.pendingReview = null;
 await splitPage.getByLabel("Reply").fill("Looks good now");
 check((await splitPage.getByLabel("Reply").inputValue()) === "Looks good now", "the comments beside the docked view stay usable");
 const jumpLink = splitPage.locator("#outdated-link");

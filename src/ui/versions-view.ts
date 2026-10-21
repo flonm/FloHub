@@ -15,8 +15,18 @@ import {
   versionDiff,
 } from "../core/interdiff";
 import { buildPathTree, filesInOrder, type PathNode } from "../core/path-tree";
-import { type Compared, placeThreads, type ReviewThread } from "../core/threads";
-import { renderThread, THREAD_STYLES } from "./review-thread";
+import {
+  commentableLine,
+  commentRange,
+  type Compared,
+  placeThreads,
+  type PostingMode,
+  postingMode,
+  type ReviewAction,
+  type ReviewDiscussion,
+  type ReviewThread,
+} from "../core/threads";
+import { renderComposer, renderThread, THREAD_STYLES, type ThreadActions } from "./review-thread";
 import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
 import {
   BASE,
@@ -46,6 +56,19 @@ type Reveal = (line: CommentLine) => Revealed;
 /** Puts the review threads at their lines, in place of the ones shown before. */
 type PlaceThreads = (threads: ReviewThread[], compared: Compared) => void;
 
+/** What the view can do to the review, for the result on screen. */
+interface ReviewHooks {
+  /** A thread's Reply and Resolve, or undefined while the view can't post. */
+  threadActions: (thread: ReviewThread) => ThreadActions | undefined;
+  /** New comments on the head's lines, or null when this diff doesn't show GitHub's lines of the head. */
+  comment: {
+    mode: () => PostingMode;
+    post: (action: ReviewAction) => Promise<void>;
+    /** Tells the view a comment box closed, so a refresh it held back can show. */
+    released: () => void;
+  } | null;
+}
+
 export interface VersionsViewRequest {
   /** Names the pull request: opening the same one again shows what the view showed last, refreshed. */
   key: string;
@@ -57,7 +80,9 @@ export interface VersionsViewRequest {
   /** Resolves to the pull request's versions; rejects with a message to show. */
   versions: () => Promise<VersionHistory>;
   /** Resolves to the pull request's review threads, shown at their lines; rejects with a message to show. */
-  threads?: () => Promise<ReviewThread[]>;
+  threads?: () => Promise<ReviewDiscussion>;
+  /** Posts a comment or reply, or resolves a thread; rejects with a message to show. Without it, threads are read-only. */
+  post?: (action: ReviewAction) => Promise<void>;
   /** Resolves to what a version changes; rejects with a message to show. */
   patch: (history: VersionHistory, version: Version) => Promise<VersionPatch>;
   /** Resolves to the range the viewer last compared on this pull request, or to null. */
@@ -159,6 +184,26 @@ select {
 .body { flex: 1; min-height: 0; display: flex; }
 main { position: relative; flex: 1; min-width: 0; overflow: auto; overscroll-behavior: contain; padding: 16px; display: flex; flex-direction: column; gap: 12px; container-type: inline-size; }
 main.hide-threads :is(.thread-row, .elsewhere) { display: none; }
+.line { position: relative; }
+.add-comment {
+  position: absolute;
+  left: 20px;
+  top: 1px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--vd-accent);
+  color: var(--vd-bg);
+  font: 600 14px/1 var(--vd-mono);
+  cursor: pointer;
+}
+.line:hover .add-comment, .add-comment:focus-visible { display: flex; }
+.line.selected .code { background: var(--vd-attention-bg); }
 .elsewhere { margin-left: 6px; padding: 0 6px; border: 1px solid var(--vd-border); border-radius: 2em; color: var(--vd-muted); font-size: 12px; font-weight: 400; }
 .files .comment-count { display: inline-flex; align-items: center; gap: 2px; color: var(--vd-muted); }
 .files .comment-count svg { width: 12px; height: 12px; }
@@ -498,22 +543,46 @@ export class VersionsView {
       place: PlaceThreads;
       compared: Compared;
     } | null = null;
-    /** The pull request's review threads, once fetched, and whether the viewer wants them shown. */
-    let threads: ReviewThread[] = [];
+    /** The pull request's review threads and pending review, once fetched, and whether the viewer wants them shown. */
+    let discussion: ReviewDiscussion | null = null;
     let threadsShown = true;
     const placeAll = () => {
-      if (onScreen) onScreen.place(threadsShown ? threads : [], onScreen.compared);
+      if (onScreen) onScreen.place(threadsShown ? (discussion?.threads ?? []) : [], onScreen.compared);
     };
     const loadThreads = async () => {
       if (!request.threads) return;
       try {
         const fresh = await request.threads();
         if (!live()) return;
-        threads = fresh;
+        discussion = fresh;
         placeAll();
       } catch (failure) {
         if (live()) notice.textContent = `Could not load the comments: ${failure instanceof Error ? failure.message : "GitHub didn't answer."}`;
       }
+    };
+    /** Whether a comment or reply box holds text, which a redraw of the diff would throw away. */
+    const drafting = () => [...main.querySelectorAll("textarea")].some((box) => box.value.trim() !== "");
+    /** Whether a refresh found newer changes while the viewer was writing, and waits to show them. */
+    let held = false;
+    const release = () => {
+      if (!held || drafting()) return;
+      held = false;
+      void compare(true);
+    };
+    const post = async (action: ReviewAction) => {
+      if (!request.post) return;
+      await request.post(action);
+      // The threads come again once the box that posted has let go of its text.
+      void loadThreads().then(release);
+    };
+    const threadActions = (thread: ReviewThread): ThreadActions | undefined => {
+      const [first] = thread.comments;
+      if (!request.post || !first) return undefined;
+      return {
+        replyLabel: discussion?.pending ? "Add review comment" : "Reply",
+        reply: async (text) => post({ kind: "reply", threadId: thread.id, commentId: first.id, body: text }),
+        setResolved: async (resolved) => post({ kind: "resolve", threadId: thread.id, resolved }),
+      };
     };
     /** A range to show and a line to scroll to, waiting for the versions or for the range's diff. */
     let pending: { range: SavedRange; line?: CommentLine; oids?: string } | null = null;
@@ -557,6 +626,11 @@ export class VersionsView {
         if (!live() || showing !== shown) return;
         compared = comparedKey(versions, older, newer);
         const same = kept && (before && kept.before ? samePatch(before, kept.before) : before === kept.before) && samePatch(after, kept.after);
+        if (!same && kept && drafting()) {
+          held = true;
+          notice.textContent = "Newer changes arrived. They'll show once your comment is posted or cancelled.";
+          return;
+        }
         if (!same) {
           tracking?.abort();
           tracking = new AbortController();
@@ -565,7 +639,13 @@ export class VersionsView {
           legend.replaceChildren();
           files.replaceChildren();
           const diff = before ? interdiff(before.files, after.files) : versionDiff(after.files);
-          const show = renderResult({ main, summary, legend, files, signal: tracking.signal }, diff, {
+          // New comments go on the head's lines as GitHub's diff has them, which only the pull request's own base gives.
+          const commentable = Boolean(request.post) && newer.current && after.base === versions.baseRefOid;
+          const review: ReviewHooks = {
+            threadActions,
+            comment: commentable ? { mode: () => postingMode(discussion?.pending ?? null, newer.oid), post, released: release } : null,
+          };
+          const show = renderResult({ main, review, summary, legend, files, signal: tracking.signal }, diff, {
             older,
             newer,
             before,
@@ -804,6 +884,7 @@ interface Context {
 
 interface Slots {
   main: HTMLElement;
+  review: ReviewHooks;
   summary: HTMLElement;
   legend: HTMLElement;
   /** The file tree beside the diff. */
@@ -819,7 +900,7 @@ interface Slots {
  * @returns Functions that scroll to a commented line and mark it, and that put the review threads at their lines.
  */
 function renderResult(
-  { main, summary, legend, files: nav, signal }: Slots,
+  { main, review, summary, legend, files: nav, signal }: Slots,
   files: FileInterdiff[],
   context: Context,
 ): { reveal: Reveal; place: PlaceThreads } {
@@ -880,7 +961,7 @@ function renderResult(
   const sections = new Map<FileInterdiff, HTMLDetailsElement>();
   const rowAt = new Map<FileInterdiff, (index: number) => HTMLElement | null>();
   for (const file of filesInOrder(tree)) {
-    const { section, row } = renderFile(file, context);
+    const { section, row } = renderFile(file, context, review.comment ? (index, extend) => beginComment(file, index, extend) : undefined);
     sections.set(file, section);
     rowAt.set(file, row);
     content.push(section);
@@ -901,27 +982,40 @@ function renderResult(
   main.replaceChildren(...content);
   const treeRows = sections.size > 0 ? renderFileTree(nav, tree, sections, main, signal) : new Map<HTMLDetailsElement, HTMLButtonElement>();
 
+  /** Each thread's block, kept across placements so an open box or a thread the viewer opened stays as it is. */
+  const blocks = new Map<string, HTMLElement>();
   const place: PlaceThreads = (threads, compared) => {
     // Threads above the line the viewer reads, or was taken to, would push it down: it keeps its place on screen.
     const kept = main.querySelector<HTMLElement>(".line.target") ?? firstVisibleLine(main);
     const keptTop = kept?.getBoundingClientRect().top;
-    for (const earlier of main.querySelectorAll(".thread-row, .elsewhere")) earlier.remove();
+    for (const earlier of main.querySelectorAll(".elsewhere")) earlier.remove();
     for (const row of treeRows.values()) row.querySelector(".comment-count")?.remove();
     const now = Date.now();
+    const seen = new Set<string>();
     for (const [file, section] of sections) {
       const { placed, elsewhere } = placeThreads(file, threads, compared);
       const at = rowAt.get(file);
-      if (at) {
-        for (const { thread, first, last } of placed) {
-          // Unfolding the first line before the last keeps the commented lines together.
-          for (let index = first; index < last; index++) at(index);
-          let anchor: Element | null = at(last);
-          if (!anchor) continue;
-          while (anchor.nextElementSibling?.classList.contains("thread-row")) anchor = anchor.nextElementSibling;
-          const block = el("div", { class: "thread-row" });
-          block.append(renderThread(thread, now));
-          anchor.after(block);
+      const here = at ? placed : [];
+      for (const { thread, first, last } of here) {
+        seen.add(thread.id);
+        const block = blocks.get(thread.id);
+        if (block?.isConnected && holdsText(block)) continue;
+        const drawn = renderThread(thread, now, review.threadActions(thread));
+        const open = block?.querySelector("details")?.open;
+        if (open !== undefined) drawn.open = open;
+        if (block?.isConnected) {
+          block.replaceChildren(drawn);
+          continue;
         }
+        // Unfolding the first line before the last keeps the commented lines together.
+        for (let index = first; index < last; index++) at?.(index);
+        let anchor: Element | null | undefined = at?.(last);
+        if (!anchor) continue;
+        while (anchor.nextElementSibling?.matches(".thread-row, .composer-row")) anchor = anchor.nextElementSibling;
+        const added = el("div", { class: "thread-row", "data-thread": thread.id });
+        added.append(drawn);
+        anchor.after(added);
+        blocks.set(thread.id, added);
       }
       if (elsewhere.length > 0) {
         const count = `${elsewhere.length} ${elsewhere.length === 1 ? "comment" : "comments"} on other versions`;
@@ -946,7 +1040,64 @@ function renderResult(
     if (unchangedThreads > 0) {
       details.querySelector(":scope > summary")?.append(el("span", { class: "elsewhere" }, `${unchangedThreads} ${unchangedThreads === 1 ? "comment" : "comments"}`));
     }
+    for (const [id, block] of blocks) {
+      if (seen.has(id) || holdsText(block)) continue;
+      block.remove();
+      blocks.delete(id);
+    }
     if (kept && keptTop !== undefined && kept.isConnected) main.scrollTop += kept.getBoundingClientRect().top - keptTop;
+  };
+
+  /** The comment being written: its file, the row it was started on and the row it reaches to, and its box. */
+  let draft: { file: FileInterdiff; from: number; to: number; block: HTMLElement } | null = null;
+  const closeDraft = () => {
+    draft?.block.remove();
+    draft = null;
+    for (const row of main.querySelectorAll(".line.selected")) row.classList.remove("selected");
+    review.comment?.released();
+  };
+  /**
+   * Opens a box for a new comment on a row, or, with shift held, stretches the open one to it. A box that holds text
+   * is never replaced by another.
+   */
+  const beginComment = (file: FileInterdiff, index: number, extend: boolean) => {
+    const hooks = review.comment;
+    const at = rowAt.get(file);
+    if (!hooks || !at) return;
+    const stretch = extend && draft?.file === file;
+    if (!stretch && draft && holdsText(draft.block)) {
+      draft.block.querySelector("textarea")?.focus();
+      return;
+    }
+    const from = stretch && draft ? draft.from : index;
+    const lines = commentRange(file.lines, from, index, !context.older);
+    if (!lines) return;
+    const text = draft?.block.querySelector("textarea")?.value ?? "";
+    closeDraft();
+    const [first, last] = from <= index ? [from, index] : [index, from];
+    for (let each = first; each <= last; each++) at(each)?.classList.add("selected");
+    const where = lines.startLine === undefined ? `line ${lines.line}` : `lines ${lines.startLine}–${lines.line}`;
+    const composer = renderComposer({
+      title: `Comment on ${where} of ${file.path}${lines.side === "LEFT" ? ", on the base side" : ""}`,
+      mode: hooks.mode(),
+      post: async (mode, body) => {
+        await hooks.post({ kind: "comment", mode, head: context.newer.oid, path: file.path, body, ...lines });
+        closeDraft();
+      },
+      cancel: closeDraft,
+    });
+    const block = el("div", { class: "composer-row" });
+    block.append(composer);
+    let anchor: Element | null = at(last);
+    if (!anchor) return;
+    while (anchor.nextElementSibling?.matches(".thread-row")) anchor = anchor.nextElementSibling;
+    anchor.after(block);
+    draft = { file, from, to: index, block };
+    const box = composer.querySelector("textarea");
+    if (!box) return;
+    box.value = text;
+    box.dispatchEvent(new Event("input"));
+    box.focus();
   };
 
   const reveal: Reveal = (line) => {
@@ -1104,6 +1255,14 @@ function legendEntry(className: string, text: string): HTMLElement {
 }
 
 /**
+ * @param element A thread's block or a comment box.
+ * @returns Whether a box in it holds text the viewer wrote.
+ */
+function holdsText(element: Element): boolean {
+  return [...element.querySelectorAll("textarea")].some((box) => box.value.trim() !== "");
+}
+
+/**
  * @param main The diff's scroll container.
  * @returns The first line of the diff the viewer can see, or null.
  */
@@ -1123,9 +1282,15 @@ function noRow(): null {
 /**
  * @param file The file's interdiff.
  * @param context The versions compared.
+ * @param onAdd Opens a box for a new comment on a row, or stretches the open one with shift held; without it, rows
+ * take no comments.
  * @returns The file's section, and a function that gives the row of one of its lines, unfolding it if it has to.
  */
-function renderFile(file: FileInterdiff, context: Context): { section: HTMLDetailsElement; row: (index: number) => HTMLElement | null } {
+function renderFile(
+  file: FileInterdiff,
+  context: Context,
+  onAdd?: (index: number, extend: boolean) => void,
+): { section: HTMLDetailsElement; row: (index: number) => HTMLElement | null } {
   const change = fileVerdict(file);
   const details = el("details", { class: "file", open: "" });
   const head = el("summary");
@@ -1163,6 +1328,11 @@ function renderFile(file: FileInterdiff, context: Context): { section: HTMLDetai
     file.lines.slice(start, end).map((line, index) => {
       const row = renderLine(line, context, syntax[start + index]);
       row.dataset.index = String(start + index);
+      if (onAdd && commentableLine(line, !context.older)) {
+        const add = el("button", { type: "button", class: "add-comment", "aria-label": "Comment on this line", title: "Comment (shift-click to cover the lines up to here)" }, "+");
+        add.addEventListener("click", (event) => onAdd(start + index, event.shiftKey));
+        row.prepend(add);
+      }
       return row;
     });
   const folds: { start: number; end: number; button: HTMLButtonElement }[] = [];
