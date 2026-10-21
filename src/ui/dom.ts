@@ -103,6 +103,18 @@ export function icon(name: IconName, className?: string): SVGSVGElement {
 }
 
 /**
+ * Runs a button's action only for a click the user caused. The shadow root is open, so a page script can find
+ * a button and call `click()` on it; that must not make the token perform a GitHub action for the viewer.
+ * @param element The button.
+ * @param onClick The action.
+ */
+function onClickByUser(element: HTMLElement, onClick: () => void): void {
+  element.addEventListener("click", (event) => {
+    if (event.isTrusted) onClick();
+  });
+}
+
+/**
  * @param className The button's class.
  * @param label The visible label.
  * @param onClick The click handler.
@@ -111,7 +123,7 @@ export function icon(name: IconName, className?: string): SVGSVGElement {
  */
 export function button(className: string, label: string, onClick: () => void, focusKey: string): HTMLButtonElement {
   const element = el("button", { type: "button", class: className, "data-focus-key": focusKey }, label);
-  element.addEventListener("click", onClick);
+  onClickByUser(element, onClick);
   return element;
 }
 
@@ -131,6 +143,6 @@ export function iconButton(name: IconName, label: string, onClick: () => void, f
     "data-focus-key": focusKey,
   });
   element.append(icon(name));
-  element.addEventListener("click", onClick);
+  onClickByUser(element, onClick);
   return element;
 }

@@ -149,10 +149,11 @@ export class ReviewDialog {
 
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      void send();
+      // The shadow root is open, so a page script could submit the form itself; only a real submit may review.
+      if (event.isTrusted) void send();
     });
     body.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
+      if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey) || !event.isTrusted) return;
       event.preventDefault();
       void send();
     });
