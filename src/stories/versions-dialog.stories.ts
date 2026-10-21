@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
 import type { VersionPatch } from "../api/github";
-import type { Version, VersionHistory } from "../core/versions";
+import type { SavedRange, Version, VersionHistory } from "../core/versions";
 import { el } from "../ui/dom";
 import { VersionsDialog } from "../ui/versions-dialog";
 import { NOW } from "./shadow";
@@ -203,19 +203,35 @@ async function settle(): Promise<void> {
 /**
  * Opens the dialog the way the versions bar does.
  * @param kind How many versions the pull request has, or "loading"/"failing" for those states.
+ * @param patches What each version changes.
+ * @param stored What the extension kept from an earlier visit: the versions fetched then and the range compared.
  * @returns A line behind the backdrop.
  */
-function dialog(kind: number | "loading" | "failing", patches = PATCHES): HTMLElement {
+function dialog(
+  kind: number | "loading" | "failing",
+  patches = PATCHES,
+  stored: { cached?: VersionHistory; saved?: SavedRange } = {},
+): HTMLElement {
   for (const previous of document.querySelectorAll("flohub-versions")) previous.remove();
   new VersionsDialog().open({
+    key: "octo-org/api#344",
     number: 344,
     repoUrl: "https://github.com/octo-org/api",
+    cachedVersions: async () => {
+      await settle();
+      return stored.cached ?? null;
+    },
     // oxlint-disable-next-line typescript/promise-function-async -- the fixture already holds the promise the dialog asks for
     versions: () => pendingHistory(kind),
     patch: async (_history, current) => {
       await settle();
       return patches[current.oid] ?? patches["2222222"]!;
     },
+    savedRange: async () => {
+      await settle();
+      return stored.saved ?? null;
+    },
+    saveRange: () => undefined,
   });
   return el("p", {}, "The dialog opens over the page; Esc closes it.");
 }
@@ -277,3 +293,17 @@ export const ManyFiles: Story = { render: () => dialog(3, MANY_PATCHES) };
 
 /** The history could not be read. */
 export const Fails: Story = { render: () => dialog("failing") };
+
+/**
+ * Opens on the range the viewer compared last time, here v1 → v3 rather than the default from their last review. The
+ * newer side was the head then, so after a push it would move to the new head.
+ */
+export const RestoredRange: Story = {
+  render: () => dialog(3, PATCHES, { saved: { from: V1.oid, to: V3.oid, toCurrent: true, at: NOW - HOUR } }),
+};
+
+/** Shows the versions fetched on an earlier visit straight away, while they are fetched again. */
+export const FromTheCache: Story = { render: () => dialog("loading", PATCHES, { cached: history(3) }) };
+
+/** The versions shown came from an earlier visit, and fetching them again failed: the diff stays, with the error. */
+export const RefreshFails: Story = { render: () => dialog("failing", PATCHES, { cached: history(3) }) };

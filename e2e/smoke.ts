@@ -707,12 +707,17 @@ check(
 await versions.getByLabel("From").selectOption("3");
 await versions.getByText("No differences.").waitFor();
 check(true, "picking the same version on both sides shows no differences");
+await versions.getByLabel("From").selectOption("1");
+await versions.getByLabel("To").selectOption("2");
+await versions.locator("details.file").first().waitFor();
 await page.keyboard.press("Escape");
 check(await versions.isHidden(), "Escape closes the versions dialog");
 const pageOverflow = async () => page.evaluate(() => document.documentElement.style.overflow);
 check((await pageOverflow()) === "", "closing the versions dialog gives the page its scrolling back");
 await inlineBar(page).getByRole("button", { name: "Compare versions" }).click();
 await versions.locator("details.file").first().waitFor();
+const pickedRange = async () => `${await versions.getByLabel("From").inputValue()}→${await versions.getByLabel("To").inputValue()}`;
+check((await pickedRange()) === "1→2", `reopening the versions dialog keeps the range picked: ${await pickedRange()}`);
 const scrollBefore = await page.evaluate(() => scrollY);
 for (const pane of ["nav.files", "main"]) {
   await versions.locator(pane).hover();
@@ -785,6 +790,26 @@ check(
   fixture.compareLog.length === comparesBeforeReload,
   `a reload takes the highlights from storage, without comparing again: ${fixture.compareLog.length - comparesBeforeReload} new compares`,
 );
+await inlineBar(page).getByRole("button", { name: "Compare versions" }).click();
+await versions.locator("details.file").first().waitFor();
+check(
+  (await pickedRange()) === "1→2" && fixture.compareLog.length === comparesBeforeReload,
+  `after a reload the versions dialog opens on the range picked last, without comparing again: ${await pickedRange()}, ${fixture.compareLog.length - comparesBeforeReload} new compares`,
+);
+const storedVersions = await (light.serviceWorkers()[0] ?? (await light.waitForEvent("serviceworker"))).evaluate(async () => {
+  const local = await chrome.storage.local.get(["versionPatchIndex", "versionHistories", "versionRanges"]);
+  const ranges = local.versionRanges as Record<string, { from: string; to: string }> | undefined;
+  return {
+    patches: Object.keys((local.versionPatchIndex as object | undefined) ?? {}).length,
+    histories: Object.keys((local.versionHistories as object | undefined) ?? {}),
+    ranges: Object.values(ranges ?? {}).map((range) => `${range.from}→${range.to}`),
+  };
+});
+check(
+  storedVersions.patches >= 2 && storedVersions.histories.length === 1 && storedVersions.ranges.join(",") === "aaaaaaa1→bbbbbbb2",
+  `the versions, their patches and the range picked are stored, so they outlast the service worker: ${JSON.stringify(storedVersions)}`,
+);
+await page.keyboard.press("Escape");
 
 // GitHub's React diff, which it serves to signed-in viewers: the same README.md lines in its split markup.
 const reactRow = (left: number | null, right: number | null, marker: string, text: string) => {

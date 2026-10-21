@@ -13,7 +13,8 @@ import type { Overview } from "./api/github";
 import { readCachedOverview } from "./api/overview-cache";
 import { deriveStack } from "./core/stack";
 import { Toast } from "./ui/toast";
-import { baseCandidates } from "./core/versions";
+import { baseCandidates, keepRecentRanges, type SavedRange } from "./core/versions";
+import { readCachedHistory } from "./api/version-cache";
 import { VersionsDialog } from "./ui/versions-dialog";
 
 const AUTO_REFRESH_GAP_MS = 15_000;
@@ -26,6 +27,8 @@ const TEXT_FIELDS = "input, textarea, select, [contenteditable]:not([contentedit
 
 const SEEN_KEY = "discussionSeen";
 const SEEN_MEMORY_MS = 60 * 86_400_000;
+/** The range of versions the viewer last compared, by pull request. */
+const RANGES_KEY = "versionRanges";
 
 let current: PullRef | null = null;
 let state: BarState = { kind: "loading" };
@@ -505,8 +508,10 @@ function compareVersions(): void {
   const ref = current;
   if (!ref) return;
   versionsDialog.open({
+    key: pullKey(ref),
     number: ref.number,
     repoUrl: `https://github.com/${ref.owner}/${ref.repo}`,
+    cachedVersions: async () => readCachedHistory(ref),
     versions: async () => {
       const reply = await send({ type: "versions", ref });
       if (!reply.ok) throw new Error(reply.message);
@@ -517,7 +522,30 @@ function compareVersions(): void {
       if (!reply.ok) throw new Error(reply.message);
       return reply.value;
     },
+    savedRange: async () => {
+      const ranges = await readSavedRanges();
+      return ranges[pullKey(ref)] ?? null;
+    },
+    saveRange: (range) => void saveRange(pullKey(ref), range),
   });
+}
+
+async function readSavedRanges(): Promise<Record<string, SavedRange>> {
+  try {
+    const stored = await chrome.storage.local.get(RANGES_KEY);
+    return (stored[RANGES_KEY] as Record<string, SavedRange> | undefined) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+async function saveRange(key: string, range: SavedRange): Promise<void> {
+  const ranges = { ...(await readSavedRanges()), [key]: range };
+  try {
+    await chrome.storage.local.set({ [RANGES_KEY]: keepRecentRanges(ranges, range.at) });
+  } catch {
+    // The next visit opens on the default range instead.
+  }
 }
 
 function isOwnPull(): boolean {
