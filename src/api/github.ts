@@ -524,6 +524,7 @@ query ($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       id
+      headRefOid
       reviews(states: PENDING, first: 1) { nodes { id commit { oid } } }
       reviewThreads(last: 100) {
         nodes {
@@ -571,6 +572,7 @@ export async function fetchReviewDiscussion(ref: PullRef): Promise<ReviewDiscuss
     repository: {
       pullRequest: {
         id: string;
+        headRefOid: string;
         reviews: { nodes: ({ id: string; commit: { oid: string } | null } | null)[] };
         reviewThreads: { nodes: (RawReviewThread | null)[] };
       } | null;
@@ -602,7 +604,12 @@ export async function fetchReviewDiscussion(ref: PullRef): Promise<ReviewDiscuss
         originalCommit: comment.originalCommit?.oid ?? null,
       })),
     }));
-  return { threads, pullRequestId: pull.id, pending: pending?.commit ? { id: pending.id, commit: pending.commit.oid } : null };
+  return {
+    threads,
+    pullRequestId: pull.id,
+    head: pull.headRefOid,
+    pending: pending?.commit ? { id: pending.id, commit: pending.commit.oid } : null,
+  };
 }
 
 /**
@@ -619,7 +626,7 @@ export async function runReviewAction(ref: PullRef, action: ReviewAction): Promi
     await mutate(`mutation ($id: ID!) { ${mutation}(input: { threadId: $id }) { clientMutationId } }`, { id: action.threadId });
     return;
   }
-  const { pullRequestId, pending } = await fetchReviewDiscussion(ref);
+  const { pullRequestId, head, pending } = await fetchReviewDiscussion(ref);
   if (action.kind === "reply") {
     await (pending
       ? mutate(
@@ -628,6 +635,9 @@ export async function runReviewAction(ref: PullRef, action: ReviewAction): Promi
         )
       : request(`${pullPath(ref)}/comments/${action.commentId}/replies`, { method: "POST", body: JSON.stringify({ body: action.body }) }));
     return;
+  }
+  if (head !== action.head) {
+    throw new GitHubError("failed", "The author pushed since this diff loaded. Close and reopen Compare versions to comment on the new head.");
   }
   const lines = {
     line: action.line,

@@ -80,6 +80,8 @@ export interface ThreadActions {
   reply: (body: string) => Promise<void>;
   /** Resolves once done; rejects with a message to show. */
   setResolved: (resolved: boolean) => Promise<void>;
+  /** Called when a reply box closes without posting. */
+  closed?: () => void;
 }
 
 /**
@@ -137,6 +139,7 @@ function threadActions(thread: ReviewThread, actions: ThreadActions): HTMLElemen
       cancel: () => {
         box.remove();
         buttons.hidden = false;
+        actions.closed?.();
       },
     });
     buttons.hidden = true;

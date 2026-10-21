@@ -580,6 +580,7 @@ export class VersionsView {
       if (!request.post || !first) return undefined;
       return {
         replyLabel: discussion?.pending ? "Add review comment" : "Reply",
+        closed: release,
         reply: async (text) => post({ kind: "reply", threadId: thread.id, commentId: first.id, body: text }),
         setResolved: async (resolved) => post({ kind: "resolve", threadId: thread.id, resolved }),
       };
@@ -597,6 +598,12 @@ export class VersionsView {
     /** @param quiet Whether to keep the diff on screen while the same versions are compared again. */
     const compare = async (quiet: boolean) => {
       if (!history || !picker) return;
+      // A refresh the viewer didn't ask for waits while a box holds text, which a redraw of the diff would lose.
+      if (quiet && drafting()) {
+        held = true;
+        notice.textContent = "Newer changes arrived. They'll show once your comment is posted or cancelled.";
+        return;
+      }
       const fromNumber = Number(picker.from.value);
       const older = fromNumber === 0 ? null : history.versions[fromNumber - 1];
       const newer = history.versions[Number(picker.to.value) - 1];
@@ -624,14 +631,16 @@ export class VersionsView {
       try {
         const [before, after] = await Promise.all([older ? request.patch(versions, older) : null, request.patch(versions, newer)]);
         if (!live() || showing !== shown) return;
-        compared = comparedKey(versions, older, newer);
         const same = kept && (before && kept.before ? samePatch(before, kept.before) : before === kept.before) && samePatch(after, kept.after);
         if (!same && kept && drafting()) {
           held = true;
           notice.textContent = "Newer changes arrived. They'll show once your comment is posted or cancelled.";
           return;
         }
+        // Only now does the screen show this comparison, so a held refresh asks again.
+        compared = comparedKey(versions, older, newer);
         if (!same) {
+          if (kept) notice.textContent = "";
           tracking?.abort();
           tracking = new AbortController();
           error.textContent = "";

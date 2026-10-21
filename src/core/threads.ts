@@ -182,6 +182,8 @@ export interface ReviewDiscussion {
   threads: ReviewThread[];
   /** The pull request's GraphQL id. */
   pullRequestId: string;
+  /** The pull request's head commit now, which a new comment's lines have to be on. */
+  head: string;
   /** The viewer's pending review, which only the viewer sees, and the commit it was started on. */
   pending: { id: string; commit: string } | null;
 }

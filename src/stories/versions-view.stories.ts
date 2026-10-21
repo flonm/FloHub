@@ -265,7 +265,7 @@ function view(
       versions: () => pendingHistory(kind),
       threads: async () => {
         await settle();
-        return { threads, pullRequestId: "PR_1", pending: null };
+        return { threads, pullRequestId: "PR_1", head: V3.oid, pending: null };
       },
       // Posting only waits a moment here: the rows show their + and the threads their Reply and Resolve.
       post: async () => {

@@ -316,6 +316,8 @@ function createFixture(
     overviewFailure: 0,
     /** The viewer's pending review, and the commit it was started on, or null. */
     pendingReview: null as { commit: string } | null,
+    /** The head the review threads' query answers with, which a push moves. */
+    threadsHead: "ccccccc3",
     /** Every comment, reply and resolve the versions view sent, as the request or mutation and its input. */
     reviewActions: [] as string[],
     async handle(route: Route): Promise<void> {
@@ -431,6 +433,7 @@ function createFixture(
               repository: {
                 pullRequest: {
                   id: "PR_split",
+                  headRefOid: created.threadsHead,
                   reviews: { nodes: created.pendingReview ? [{ id: "PRR_pending", commit: { oid: created.pendingReview.commit } }] : [] },
                   reviewThreads: {
                     nodes: [
@@ -1002,6 +1005,18 @@ check(
   lastAction() === 'POST pulls/1/comments {"body":"Please log at debug level.","commit_id":"ccccccc3","path":"cmd/rebase.go","line":44,"side":"RIGHT"}',
   `a single comment goes out on the head's line, as GitHub's diff numbers it: ${lastAction()}`,
 );
+fixture.threadsHead = "ddddddd4";
+const sentBefore = fixture.reviewActions.length;
+await addOn("log(branch)");
+await composer.getByRole("textbox").fill("Is this still needed?");
+await composer.getByRole("button", { name: "Add single comment" }).click();
+await composer.locator(".problem", { hasText: "The author pushed since" }).waitFor();
+check(
+  fixture.reviewActions.length === sentBefore && (await composer.getByRole("textbox").inputValue()) === "Is this still needed?",
+  "a comment on a head the author has pushed over is refused, and keeps its text",
+);
+await composer.getByRole("button", { name: "Cancel" }).click();
+fixture.threadsHead = "ccccccc3";
 await addOn("adopt(branch, equivalent)");
 await addOn("log(branch)", true);
 check((await composer.locator(".title").innerText()).startsWith("Comment on lines 43–44"), "shift-click stretches the comment over the lines between");
