@@ -195,6 +195,82 @@ export function defaultRange(versions: Version[]): { from: number; to: number } 
   return { from: (lastReviewedVersion(versions) ?? previous).number, to: current.number };
 }
 
+/** A pair of versions the viewer compared, by commit so it survives versions being renumbered. */
+export interface SavedRange {
+  from: string;
+  to: string;
+  /** Whether `to` was the current head then, so the range follows the head to later pushes. */
+  toCurrent: boolean;
+  /** When the viewer picked the range. */
+  at: number;
+}
+
+/** How long a pull request keeps the range the viewer last compared. */
+const RANGE_MEMORY_MS = 30 * 86_400_000;
+/** How many pull requests keep the range the viewer last compared. */
+const MAX_SAVED_RANGES = 100;
+
+/**
+ * Picks what to compare when the dialog opens: the range the viewer last compared, with its newer side moved to the
+ * current head when it was the head back then, or else {@link defaultRange}.
+ * @param versions Oldest first.
+ * @param saved The range the viewer last compared on this pull request, if any.
+ * @returns The two version numbers, or null when there is only one version.
+ */
+export function restoreRange(versions: Version[], saved: SavedRange | null): { from: number; to: number } | null {
+  const fallback = defaultRange(versions);
+  if (!fallback || !saved) return fallback;
+  const from = versions.find((version) => version.oid === saved.from);
+  const to = saved.toCurrent ? versions.at(-1) : versions.find((version) => version.oid === saved.to);
+  if (!from || !to || from === to) return fallback;
+  return { from: from.number, to: to.number };
+}
+
+/**
+ * Keeps the range on screen when the versions are fetched again: by commit, since a newly seen review can renumber
+ * them, with the newer side moved to the current head when it was the head before.
+ * @param before The versions the range was picked from, oldest first.
+ * @param after The versions fetched again, oldest first.
+ * @param from The older version's number in `before`.
+ * @param to The newer version's number in `before`.
+ * @returns The two version numbers in `after`, or null when one of the versions is gone.
+ */
+export function carryRange(before: Version[], after: Version[], from: number, to: number): { from: number; to: number } | null {
+  const older = before[from - 1];
+  const newer = before[to - 1];
+  const carriedFrom = older && after.find((version) => version.oid === older.oid);
+  const carriedTo = newer && (newer.current ? after.at(-1) : after.find((version) => version.oid === newer.oid));
+  return carriedFrom && carriedTo ? { from: carriedFrom.number, to: carriedTo.number } : null;
+}
+
+/**
+ * @param versions Oldest first.
+ * @param from The older version's number.
+ * @param to The newer version's number.
+ * @param now The current time.
+ * @returns The range to remember, or null for one not worth restoring: a version compared with itself.
+ */
+export function rangeToSave(versions: Version[], from: number, to: number, now: number): SavedRange | null {
+  const older = versions[from - 1];
+  const newer = versions[to - 1];
+  if (!older || !newer || older === newer) return null;
+  return { from: older.oid, to: newer.oid, toCurrent: newer.current, at: now };
+}
+
+/**
+ * @param ranges The saved ranges, by pull request.
+ * @param now The current time.
+ * @returns Those still worth keeping: the most recently picked ones younger than a month.
+ */
+export function keepRecentRanges(ranges: Record<string, SavedRange>, now: number): Record<string, SavedRange> {
+  return Object.fromEntries(
+    Object.entries(ranges)
+      .filter(([, range]) => now - range.at < RANGE_MEMORY_MS)
+      .toSorted(([, a], [, b]) => b.at - a.at)
+      .slice(0, MAX_SAVED_RANGES),
+  );
+}
+
 /**
  * @param versions Oldest first.
  * @returns The version the viewer last reviewed, or null when they never did or reviewed the current one.

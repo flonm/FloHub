@@ -1,5 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { baseBranches, baseCandidates, defaultRange, deriveVersions, lastReviewedVersion, pickBase, type RawVersionPull } from "./versions";
+import {
+  baseBranches,
+  baseCandidates,
+  carryRange,
+  defaultRange,
+  deriveVersions,
+  keepRecentRanges,
+  lastReviewedVersion,
+  pickBase,
+  rangeToSave,
+  type RawVersionPull,
+  restoreRange,
+  type SavedRange,
+} from "./versions";
 
 const commit = (oid: string, committedDate: string) => ({ oid, committedDate });
 
@@ -209,5 +222,77 @@ describe("lastReviewedVersion", () => {
     expect(lastReviewedVersion(reviewed("v2", "2026-10-02T12:00:00Z"))?.number).toBe(2);
     expect(lastReviewedVersion(reviewed("v3", "2026-10-03T12:00:00Z"))).toBeNull();
     expect(lastReviewedVersion(deriveVersions(pull(), [], "me").versions)).toBeNull();
+  });
+});
+
+describe("remembered ranges", () => {
+  const NOW = Date.parse("2026-10-21T12:00:00Z");
+  const DAY = 86_400_000;
+  const { versions } = deriveVersions(pull(), [], "me");
+  /** The same pull request after another force push, v3 → v4. */
+  const pushed = deriveVersions(
+    pull({
+      headRefOid: "v4",
+      commits: { nodes: [{ commit: commit("v4", "2026-10-04T09:00:00Z") }] },
+      timelineItems: {
+        nodes: [
+          ...pull().timelineItems.nodes,
+          {
+            __typename: "HeadRefForcePushedEvent",
+            createdAt: "2026-10-04T10:00:00Z",
+            actor: { login: "ana" },
+            beforeCommit: commit("v3", "2026-10-03T09:00:00Z"),
+            afterCommit: commit("v4", "2026-10-04T09:00:00Z"),
+          },
+        ],
+      },
+    }),
+    [],
+    "me",
+  ).versions;
+  const saved = (overrides: Partial<SavedRange> = {}): SavedRange => ({ from: "v1", to: "v2", toCurrent: false, at: NOW, ...overrides });
+
+  test("a saved range is kept by commit, with a flag for a newer side that was the head", () => {
+    expect(rangeToSave(versions, 1, 3, NOW)).toEqual({ from: "v1", to: "v3", toCurrent: true, at: NOW });
+    expect(rangeToSave(versions, 1, 2, NOW)).toEqual({ from: "v1", to: "v2", toCurrent: false, at: NOW });
+  });
+
+  test("a version compared with itself isn't worth restoring", () => {
+    expect(rangeToSave(versions, 2, 2, NOW)).toBeNull();
+  });
+
+  test("the dialog opens on the saved range", () => {
+    expect(restoreRange(versions, saved())).toEqual({ from: 1, to: 2 });
+  });
+
+  test("a saved newer side that was the head follows the head to later pushes", () => {
+    expect(restoreRange(pushed, saved({ to: "v3", toCurrent: true }))).toEqual({ from: 1, to: 4 });
+    expect(restoreRange(pushed, saved({ to: "v3", toCurrent: false }))).toEqual({ from: 1, to: 3 });
+  });
+
+  test("without a saved range, or with one whose commits are gone, the dialog opens on the default range", () => {
+    expect(restoreRange(versions, null)).toEqual(defaultRange(versions));
+    expect(restoreRange(versions, saved({ from: "gone" }))).toEqual(defaultRange(versions));
+  });
+
+  test("a saved range never narrows a pull request with one version", () => {
+    expect(restoreRange(versions.slice(-1), saved())).toBeNull();
+  });
+
+  test("a refresh keeps the range on screen by commit, and moves a newer side that was the head", () => {
+    expect(carryRange(versions, pushed, 1, 2)).toEqual({ from: 1, to: 2 });
+    expect(carryRange(versions, pushed, 1, 3)).toEqual({ from: 1, to: 4 });
+    expect(carryRange(versions, pushed.slice(1), 1, 2)).toBeNull();
+  });
+
+  test("only the month's most recently picked ranges are kept", () => {
+    const ranges = Object.fromEntries(Array.from({ length: 120 }, (_, index) => [`o/r#${index}`, saved({ at: NOW - index * 60_000 })]));
+    ranges["o/r#old"] = saved({ at: NOW - 31 * DAY });
+    const kept = keepRecentRanges(ranges, NOW);
+    expect(Object.keys(kept)).toHaveLength(100);
+    expect(kept["o/r#0"]).toBeDefined();
+    expect(kept["o/r#99"]).toBeDefined();
+    expect(kept["o/r#100"]).toBeUndefined();
+    expect(kept["o/r#old"]).toBeUndefined();
   });
 });

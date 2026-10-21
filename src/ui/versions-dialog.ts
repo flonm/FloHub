@@ -1,6 +1,7 @@
 import { formatAge } from "../core/age";
 import { el, icon } from "./dom";
 import type { VersionPatch } from "../api/github";
+import { samePatch } from "../api/version-cache";
 import {
   diffstat,
   type FileInterdiff,
@@ -14,16 +15,32 @@ import {
 } from "../core/interdiff";
 import { buildPathTree, filesInOrder, type PathNode } from "../core/path-tree";
 import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
-import { defaultRange, type Version, type VersionHistory } from "../core/versions";
+import {
+  baseCandidates,
+  carryRange,
+  rangeToSave,
+  restoreRange,
+  type SavedRange,
+  type Version,
+  type VersionHistory,
+} from "../core/versions";
 
 export interface VersionsDialogRequest {
+  /** Names the pull request: opening the same one again shows what the dialog showed last, refreshed. */
+  key: string;
   number: number;
   /** The repository's URL, like https://github.com/owner/repo. */
   repoUrl: string;
+  /** Resolves to the versions fetched last time, shown while they are fetched again, or to null. */
+  cachedVersions?: () => Promise<VersionHistory | null>;
   /** Resolves to the pull request's versions; rejects with a message to show. */
   versions: () => Promise<VersionHistory>;
   /** Resolves to what a version changes; rejects with a message to show. */
   patch: (history: VersionHistory, version: Version) => Promise<VersionPatch>;
+  /** Resolves to the range the viewer last compared on this pull request, or to null. */
+  savedRange?: () => Promise<SavedRange | null>;
+  /** Remembers a range the viewer picked. */
+  saveRange?: (range: SavedRange) => void;
 }
 
 
@@ -262,6 +279,8 @@ export class VersionsDialog {
   private generation = 0;
   /** Gives the page its scrolling back, while the dialog holds it. */
   private releasePage: (() => void) | null = null;
+  /** The pull request the dialog shows, and how to fetch its versions again when it opens on it once more. */
+  private shown: { key: string; revalidate: () => Promise<void> } | null = null;
 
   constructor() {
     this.host = document.createElement("flohub-versions");
@@ -273,9 +292,8 @@ export class VersionsDialog {
     for (const type of ["keydown", "keyup", "keypress"]) {
       shadow.addEventListener(type, (event) => event.stopPropagation());
     }
+    // Closing keeps what the dialog shows, so opening it on the same pull request again picks up where it was.
     this.dialog.addEventListener("close", () => {
-      this.generation++;
-      this.dialog.replaceChildren();
       this.releasePage?.();
       this.releasePage = null;
     });
@@ -308,6 +326,13 @@ export class VersionsDialog {
   /** @param request Where the versions come from. */
   open(request: VersionsDialogRequest): void {
     if (!this.host.isConnected) document.body.append(this.host);
+    if (this.shown?.key === request.key) {
+      this.show();
+      this.dialog.querySelector<HTMLElement>("button.close")?.focus();
+      void this.shown.revalidate();
+      return;
+    }
+    this.shown = null;
     const run = ++this.generation;
     const live = () => run === this.generation;
 
@@ -327,78 +352,158 @@ export class VersionsDialog {
     const body = el("div", { class: "body" });
     body.append(files, main);
     this.dialog.replaceChildren(header, body);
-    if (!this.dialog.open) {
-      this.dialog.showModal();
-      this.releasePage = holdPageScroll();
-    }
+    this.show();
     close.focus();
 
-    void request.versions().then(
-      // oxlint-disable-next-line promise/always-return -- the chain ends here; nothing reads what it resolves to
-      (history) => {
-        if (!live()) return;
-        const range = defaultRange(history.versions);
-        if (!range) {
-          main.replaceChildren(
-            el("p", { class: "message" }, "This pull request has only one known version. Versions come from force pushes and reviews."),
-          );
+    let history: VersionHistory | null = null;
+    let picker: { from: HTMLSelectElement; to: HTMLSelectElement; link: HTMLAnchorElement } | null = null;
+    /** The compared commits and the bases each was diffed against, so a refresh that changes neither keeps the diff. */
+    let compared = "";
+    /** The patches on screen, so a refresh whose bases moved only redraws when what the versions change differs. */
+    let onScreen: { oids: string; before: VersionPatch; after: VersionPatch } | null = null;
+    let shown = 0;
+    let tracking: AbortController | undefined;
+
+    /** @param quiet Whether to keep the diff on screen while the same versions are compared again. */
+    const compare = async (quiet: boolean) => {
+      if (!history || !picker) return;
+      const older = history.versions[Number(picker.from.value) - 1];
+      const newer = history.versions[Number(picker.to.value) - 1];
+      if (!older || !newer) return;
+      const showing = ++shown;
+      const versions = history;
+      const oids = `${older.oid}|${newer.oid}`;
+      const kept = quiet && onScreen?.oids === oids ? onScreen : null;
+      picker.link.href = `${request.repoUrl}/compare/${older.oid}..${newer.oid}`;
+      picker.link.title = "GitHub's plain compare of the two heads, including everything the base branch gained in between";
+      if (!kept) {
+        onScreen = null;
+        tracking?.abort();
+        error.textContent = "";
+        summary.textContent = "";
+        legend.replaceChildren();
+        files.replaceChildren();
+        main.replaceChildren(el("p", { class: "message", role: "status" }, `Comparing v${older.number} with v${newer.number}…`));
+      }
+      try {
+        const [before, after] = await Promise.all([request.patch(versions, older), request.patch(versions, newer)]);
+        if (!live() || showing !== shown) return;
+        compared = comparedKey(versions, older, newer);
+        if (kept && samePatch(before, kept.before) && samePatch(after, kept.after)) return;
+        tracking?.abort();
+        tracking = new AbortController();
+        error.textContent = "";
+        summary.textContent = "";
+        legend.replaceChildren();
+        files.replaceChildren();
+        renderResult({ main, summary, legend, files, signal: tracking.signal }, interdiff(before.files, after.files), {
+          older,
+          newer,
+          before,
+          after,
+          history: versions,
+          repoUrl: request.repoUrl,
+        });
+        onScreen = { oids, before, after };
+      } catch (failure) {
+        if (!live() || showing !== shown) return;
+        const message = failure instanceof Error ? failure.message : "Could not compare the versions.";
+        if (kept) {
+          error.textContent = `Could not refresh the comparison: ${message}`;
           return;
         }
-        const now = Date.now();
-        const from = versionSelect("From", history.versions, range.from, now);
-        const to = versionSelect("To", history.versions, range.to, now);
+        main.replaceChildren();
+        error.textContent = message;
+      }
+    };
+
+    const onlyOne = () => {
+      picker = null;
+      controls.replaceChildren();
+      main.replaceChildren(
+        el("p", { class: "message" }, "This pull request has only one known version. Versions come from force pushes and reviews."),
+      );
+    };
+
+    /** Shows a history: the first one at the range the viewer last compared, a later one at the range on screen. */
+    const present = (next: VersionHistory, saved: SavedRange | null) => {
+      const previous = history;
+      history = next;
+      const range =
+        (previous && picker && carryRange(previous.versions, next.versions, Number(picker.from.value), Number(picker.to.value))) ??
+        restoreRange(next.versions, saved);
+      if (!range) {
+        onlyOne();
+        return;
+      }
+      const now = Date.now();
+      if (picker) {
+        fillVersions(picker.from, next.versions, range.from, now);
+        fillVersions(picker.to, next.versions, range.to, now);
+      } else {
+        const from = versionSelect("From", next.versions, range.from, now);
+        const to = versionSelect("To", next.versions, range.to, now);
         const link = el("a", { target: "_blank", rel: "noopener" }, "GitHub's compare");
         const wrap = el("input", { type: "checkbox" });
         wrap.addEventListener("change", () => main.classList.toggle("wrap", wrap.checked));
         const wrapLabel = el("label", { class: "wrap-toggle" });
         wrapLabel.append(wrap, "Wrap lines");
-        controls.append(from.label, el("span", { class: "arrow", "aria-hidden": "true" }, "→"), to.label, link, wrapLabel);
-
-        let shown = 0;
-        let tracking: AbortController | undefined;
-        const show = async () => {
-          tracking?.abort();
-          tracking = new AbortController();
-          const { signal } = tracking;
-          const showing = ++shown;
-          const older = history.versions[Number(from.select.value) - 1];
-          const newer = history.versions[Number(to.select.value) - 1];
-          if (!older || !newer) return;
-          link.href = `${request.repoUrl}/compare/${older.oid}..${newer.oid}`;
-          link.title = "GitHub's plain compare of the two heads, including everything the base branch gained in between";
-          error.textContent = "";
-          summary.textContent = "";
-          legend.replaceChildren();
-          files.replaceChildren();
-          main.replaceChildren(el("p", { class: "message", role: "status" }, `Comparing v${older.number} with v${newer.number}…`));
-          try {
-            const [before, after] = await Promise.all([request.patch(history, older), request.patch(history, newer)]);
-            if (!live() || showing !== shown) return;
-            renderResult({ main, summary, legend, files, signal }, interdiff(before.files, after.files), {
-              older,
-              newer,
-              before,
-              after,
-              history,
-              repoUrl: request.repoUrl,
-            });
-          } catch (failure) {
-            if (!live() || showing !== shown) return;
-            main.replaceChildren();
-            error.textContent = failure instanceof Error ? failure.message : "Could not compare the versions.";
-          }
+        controls.replaceChildren(from.label, el("span", { class: "arrow", "aria-hidden": "true" }, "→"), to.label, link, wrapLabel);
+        picker = { from: from.select, to: to.select, link };
+        const picked = () => {
+          if (!history) return;
+          const remembered = rangeToSave(history.versions, Number(from.select.value), Number(to.select.value), Date.now());
+          if (remembered) request.saveRange?.(remembered);
+          void compare(false);
         };
-        from.select.addEventListener("change", () => void show());
-        to.select.addEventListener("change", () => void show());
-        void show();
-      },
-      (failure: unknown) => {
-        if (!live()) return;
-        main.replaceChildren();
-        error.textContent = failure instanceof Error ? failure.message : "Could not load the versions.";
-      },
-    );
+        from.select.addEventListener("change", picked);
+        to.select.addEventListener("change", picked);
+      }
+      const older = next.versions[range.from - 1];
+      const newer = next.versions[range.to - 1];
+      if (older && newer && comparedKey(next, older, newer) !== compared) void compare(true);
+    };
+
+    const start = async () => {
+      const [cached, saved] = await Promise.all([request.cachedVersions?.() ?? null, request.savedRange?.() ?? null]);
+      if (!live()) return;
+      if (cached) present(cached, saved);
+      const revalidate = async () => {
+        try {
+          const fresh = await request.versions();
+          if (live()) present(fresh, saved);
+        } catch (failure) {
+          if (!live()) return;
+          const message = failure instanceof Error ? failure.message : "Could not load the versions.";
+          if (history) {
+            error.textContent = `Could not refresh the versions: ${message}`;
+          } else {
+            main.replaceChildren();
+            error.textContent = message;
+          }
+        }
+      };
+      this.shown = { key: request.key, revalidate };
+      await revalidate();
+    };
+    void start();
   }
+
+  private show(): void {
+    if (this.dialog.open) return;
+    this.dialog.showModal();
+    this.releasePage = holdPageScroll();
+  }
+}
+
+/**
+ * @param history The versions.
+ * @param older The older compared version.
+ * @param newer The newer compared version.
+ * @returns What decides the comparison: both commits and the bases each is diffed against.
+ */
+function comparedKey(history: VersionHistory, older: Version, newer: Version): string {
+  return [older, newer].map((version) => `${version.oid}:${baseCandidates(history, version).join(",")}`).join("|");
 }
 
 /**
@@ -416,14 +521,20 @@ function holdPageScroll(): () => void {
 
 function versionSelect(name: string, versions: Version[], selected: number, now: number) {
   const select = el("select");
-  for (const version of versions.toReversed()) {
-    const option = el("option", { value: String(version.number) }, describeVersion(version, now));
-    option.selected = version.number === selected;
-    select.append(option);
-  }
+  fillVersions(select, versions, selected, now);
   const label = el("label", {}, name);
   label.append(select);
   return { label, select };
+}
+
+function fillVersions(select: HTMLSelectElement, versions: Version[], selected: number, now: number): void {
+  select.replaceChildren(
+    ...versions.toReversed().map((version) => {
+      const option = el("option", { value: String(version.number) }, describeVersion(version, now));
+      option.selected = version.number === selected;
+      return option;
+    }),
+  );
 }
 
 /**
