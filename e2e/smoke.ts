@@ -310,6 +310,8 @@ function createFixture(
     reviewState,
     /** Milliseconds to hold back the overview query, to see what the bar shows before it arrives. */
     overviewDelay: 0,
+    /** How long the review threads take to answer, so they can arrive after the diff. */
+    threadsDelay: 0,
     /** An HTTP status to fail the overview query with, or 0 to answer it. */
     overviewFailure: 0,
     async handle(route: Route): Promise<void> {
@@ -381,6 +383,11 @@ function createFixture(
         return;
       }
       if (graphql?.query.includes("originalStartLine diffSide")) {
+        if (created.threadsDelay > 0) {
+          await new Promise((resolve) => {
+            setTimeout(resolve, created.threadsDelay);
+          });
+        }
         const reviewThread = (id: string, path: string, line: number, on: string, body: string) => ({
           id,
           isResolved: false,
@@ -1010,6 +1017,21 @@ check(
   (await jumpMenu.count()) === 0 && splitPage.url().endsWith("#r777"),
   "a link in a comment's text stays GitHub's, even when it points at a comment",
 );
+fixture.threadsDelay = 1500;
+await splitPage.goto("https://github.com/flohub/split-diff/pull/1/changes");
+await splitPage.locator("#outdated-link").click();
+await jumpMenu.getByRole("menuitem", { name: /^Changes since v1/u }).click();
+await docked.locator(".line.target").waitFor();
+await docked.locator(".thread-row").nth(1).waitFor();
+check(
+  await docked.locator(".line.target").evaluate((row) => {
+    const box = row.getBoundingClientRect();
+    const pane = row.closest("main")!.getBoundingClientRect();
+    return box.top >= pane.top && box.bottom <= pane.bottom;
+  }),
+  "threads that arrive after a jump keep the commented line on screen",
+);
+fixture.threadsDelay = 0;
 await splitPage.close();
 
 const tree = page.getByRole("tree", { name: "File Tree" });

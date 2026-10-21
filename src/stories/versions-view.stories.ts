@@ -400,7 +400,10 @@ function thread(id: string, on: Version, path: string, line: number, body: strin
 
 const THREADS: ReviewThread[] = [
   thread("t1", V2, "src/core/retry.ts", 13, "500ms is long for a first retry.", { outdated: true }),
-  thread("t2", V3, "src/ui/bar.ts", 5, "Is 250 enough when the API is rate limiting?"),
+  thread("t2", V3, "src/ui/bar.ts", 5, "Is 250 enough when the API is rate limiting? The comment above says it doubles.", {
+    originalStartLine: 4,
+    startLine: 4,
+  }),
   thread("t3", V3, "db/migrations/0042_inbox_pulls.sql", 8, "Should this index be partial?", { resolved: true }),
   thread("t4", V3, "src/ui/bar.ts", 6, "Nit: this label reads better as <code>attempt 2/3</code>.", {
     comments: [
@@ -417,11 +420,13 @@ const THREADS: ReviewThread[] = [
     ],
   }),
   thread("t5", V1, "src/ui/bar.ts", 3, "Why three retries?", { outdated: true }),
+  thread("t6", V3, "src/ui/stack-view.ts", 2, "Is the trunk always layer 0?"),
 ];
 
 /**
  * The review threads at their lines, here since the viewer's review of v2: one written on v2 on a line v3 changed,
- * sitting on the removed line; one on v3; a resolved one, folded; the viewer's pending draft; and, in bar.ts's header,
- * one written on v1 that this diff has no line for. The file tree counts each file's threads, and Comments hides them.
+ * sitting on the removed line; one on v3 covering two lines; a resolved one, folded; the viewer's pending draft; and, in bar.ts's header,
+ * one written on v1 that this diff has no line for; and, in the list of files that make the same change in both
+ * versions, the count of stack-view.ts's thread. The file tree counts each file's threads, and Comments hides them.
  */
 export const WithComments: Story = { render: () => view(3, PATCHES, {}, true, undefined, THREADS) };

@@ -159,7 +159,7 @@ select {
 .body { flex: 1; min-height: 0; display: flex; }
 main { position: relative; flex: 1; min-width: 0; overflow: auto; overscroll-behavior: contain; padding: 16px; display: flex; flex-direction: column; gap: 12px; container-type: inline-size; }
 main.hide-threads :is(.thread-row, .elsewhere) { display: none; }
-.elsewhere { padding: 0 6px; border: 1px solid var(--vd-border); border-radius: 2em; color: var(--vd-muted); font-size: 12px; font-weight: 400; }
+.elsewhere { margin-left: 6px; padding: 0 6px; border: 1px solid var(--vd-border); border-radius: 2em; color: var(--vd-muted); font-size: 12px; font-weight: 400; }
 .files .comment-count { display: inline-flex; align-items: center; gap: 2px; color: var(--vd-muted); }
 .files .comment-count svg { width: 12px; height: 12px; }
 .files.hide-threads .comment-count { display: none; }
@@ -886,10 +886,15 @@ function renderResult(
     content.push(section);
   }
   const details = el("details", { class: "unchanged" });
+  const unchangedItems = new Map<FileInterdiff, HTMLLIElement>();
   if (unchanged.length > 0) {
     details.append(el("summary", {}, `${unchanged.length} ${unchanged.length === 1 ? "file makes" : "files make"} the same change in both versions`));
     const list = el("ul");
-    for (const file of unchanged) list.append(el("li", {}, file.oldPath ? `${file.oldPath} → ${file.path}` : file.path));
+    for (const file of unchanged) {
+      const item = el("li", {}, file.oldPath ? `${file.oldPath} → ${file.path}` : file.path);
+      unchangedItems.set(file, item);
+      list.append(item);
+    }
     details.append(list);
     content.push(details);
   }
@@ -897,6 +902,9 @@ function renderResult(
   const treeRows = sections.size > 0 ? renderFileTree(nav, tree, sections, main, signal) : new Map<HTMLDetailsElement, HTMLButtonElement>();
 
   const place: PlaceThreads = (threads, compared) => {
+    // Threads above the line the viewer reads, or was taken to, would push it down: it keeps its place on screen.
+    const kept = main.querySelector<HTMLElement>(".line.target") ?? firstVisibleLine(main);
+    const keptTop = kept?.getBoundingClientRect().top;
     for (const earlier of main.querySelectorAll(".thread-row, .elsewhere")) earlier.remove();
     for (const row of treeRows.values()) row.querySelector(".comment-count")?.remove();
     const now = Date.now();
@@ -927,6 +935,18 @@ function renderResult(
       if (lineCounts) lineCounts.before(badge);
       else treeRow.append(badge);
     }
+    // A file that makes the same change in both versions has no diff to put its threads in: they're counted instead.
+    let unchangedThreads = 0;
+    for (const [file, item] of unchangedItems) {
+      const count = threads.filter((thread) => thread.path === file.path || thread.path === file.oldPath).length;
+      if (count === 0) continue;
+      unchangedThreads += count;
+      item.append(el("span", { class: "elsewhere" }, `${count} ${count === 1 ? "comment" : "comments"}`));
+    }
+    if (unchangedThreads > 0) {
+      details.querySelector(":scope > summary")?.append(el("span", { class: "elsewhere" }, `${unchangedThreads} ${unchangedThreads === 1 ? "comment" : "comments"}`));
+    }
+    if (kept && keptTop !== undefined && kept.isConnected) main.scrollTop += kept.getBoundingClientRect().top - keptTop;
   };
 
   const reveal: Reveal = (line) => {
@@ -1081,6 +1101,15 @@ function legendEntry(className: string, text: string): HTMLElement {
   const item = el("span", { class: className });
   item.append(el("i", { "aria-hidden": "true" }), text);
   return item;
+}
+
+/**
+ * @param main The diff's scroll container.
+ * @returns The first line of the diff the viewer can see, or null.
+ */
+function firstVisibleLine(main: HTMLElement): HTMLElement | null {
+  const { top } = main.getBoundingClientRect();
+  return [...main.querySelectorAll<HTMLElement>(".line")].find((line) => line.getBoundingClientRect().bottom > top) ?? null;
 }
 
 /** How many lines around a line taken out of a fold come out with it. */
