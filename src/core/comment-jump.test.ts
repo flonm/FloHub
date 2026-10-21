@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type CommentPlace, commentJump } from "./comment-jump";
+import { type CommentPlace, commentJump, parseCommentLink, storedVersionsWillDo, threadNumber } from "./comment-jump";
 import type { Version } from "./versions";
 
 const NOW = Date.parse("2026-10-21T12:00:00Z");
@@ -66,5 +66,58 @@ describe("commentJump", () => {
 
   test("a pull request without versions has nothing to show", () => {
     expect(commentJump([], comment(), NOW)).toBeNull();
+  });
+});
+
+describe("parseCommentLink", () => {
+  const PAGE = "https://github.com/flonm/FloHub/pull/52/changes?panel=comments";
+
+  test.each([
+    ["/flonm/FloHub/pull/52/changes#r4337461516", { kind: "comment", id: 4_337_461_516 }],
+    [
+      "https://github.com/flonm/FloHub/pull/52/changes/d11f0f7c560795b3bbb91c5852935caf9a3c9279?new_files_changed=true#r2932429879",
+      { kind: "thread", id: 2_932_429_879 },
+    ],
+    ["/flonm/FloHub/pull/52/files#r12", { kind: "comment", id: 12 }],
+  ])("%p names a comment or, outdated, its thread", (href, expected) => {
+    expect(parseCommentLink(href, PAGE)).toEqual(expected as ReturnType<typeof parseCommentLink>);
+  });
+
+  test.each([
+    "https://github.com/flonm/FloHub/pull/52/changes#paneldiscussion_r4337462359",
+    "/flonm",
+    "/flonm/FloHub/pull/52#issuecomment-1",
+    "/flonm/FloHub/issues/52#r1",
+  ])("leaves %p alone", (href) => {
+    expect(parseCommentLink(href, PAGE)).toBeNull();
+  });
+});
+
+describe("threadNumber", () => {
+  test("reads the number GitHub links an outdated comment by out of its thread's id", () => {
+    // From flonm/FloHub#52: the thread of the comment its outdated link names #r2932429879.
+    expect(threadNumber("PRRT_kwDOVHGhw86uyVQ3")).toBe(2_932_429_879);
+    expect(threadNumber("PRRT_kwABzQN4")).toBe(888);
+  });
+
+  test.each(["PRRC_kwDOVHGhw86uyVQ3", "PRRT_", "PRRT_!!", "MDE3OlB1bGxSZXF1ZXN0UmV2aWV3VGhyZWFkMQ==", "PRRT_kwDO"])(
+    "an id of another shape gives no number: %p",
+    (id) => {
+      expect(threadNumber(id)).toBeNull();
+    },
+  );
+});
+
+describe("storedVersionsWillDo", () => {
+  const stored = { baseRefOid: "base", versions: VERSIONS, baseHeads: [] };
+
+  test("the stored versions answer while they know the comment's commit as an older version", () => {
+    expect(storedVersionsWillDo(stored, "v1")).toBe(true);
+  });
+
+  test("but not once they call it the head, from before the author pushed again, or don't know it", () => {
+    expect(storedVersionsWillDo(stored, "v3")).toBe(false);
+    expect(storedVersionsWillDo(stored, "v4")).toBe(false);
+    expect(storedVersionsWillDo(null, "v1")).toBe(false);
   });
 });

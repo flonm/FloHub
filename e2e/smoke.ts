@@ -380,6 +380,13 @@ function createFixture(
         });
         return;
       }
+      if (graphql?.query.includes("comments(first: 1) { nodes { databaseId")) {
+        // PRRT_kwABzQN4 is thread 888, the number an outdated comment's link names it by.
+        await route.fulfill({
+          json: { data: { repository: { pullRequest: { reviewThreads: { nodes: [{ id: "PRRT_kwABzQN4", comments: { nodes: [{ databaseId: 999 }] } }] } } } } },
+        });
+        return;
+      }
       if (graphql?.query.includes("headRefName")) {
         await route.fulfill({ json: { data: { repository: { b0: { nodes: [] } } } } });
         return;
@@ -485,17 +492,19 @@ function createFixture(
       }
       const comment = /\/pulls\/comments\/(\d+)$/u.exec(request.url());
       if (comment) {
-        // A comment written on the reviewed v1, on a README.md line the current version renumbers: outdated there.
+        // 999 was written on the reviewed v1, on a README.md line the head renumbers, and is outdated there; 777 on the
+        // head, on the same line as the head numbers it.
+        const outdated = comment[1] === "999";
         await route.fulfill({
           json: {
             path: "README.md",
-            original_commit_id: "aaaaaaa1",
-            original_line: 305,
+            original_commit_id: outdated ? "aaaaaaa1" : "ccccccc3",
+            original_line: outdated ? 305 : 326,
             original_start_line: null,
-            line: null,
+            line: outdated ? null : 326,
             start_line: null,
             side: "RIGHT",
-            created_at: ago(40),
+            created_at: ago(outdated ? 40 : 1),
           },
         });
         return;
@@ -869,8 +878,10 @@ const SPLIT_PAGE = `<!doctype html><html><head><title>Split layout</title></head
 <section style="position:sticky;top:0;flex:1 1 100%;height:60px">Toolbar</section>
 <div id="github-pane" style="position:sticky;top:60px;width:300px"><div data-component="SplitPageLayout.Pane">GitHub's file tree</div></div>
 <div id="github-diff" data-component="SplitPageLayout.Content" style="flex:1;height:3000px">GitHub's diff</div>
-</div><aside style="width:320px"><textarea aria-label="Reply"></textarea>
-<div id="paneldiscussion_r777"><a href="/flohub/split-diff/pull/1/changes#r777">README.md</a><p>Is this still true?</p></div>
+</div><aside id="docked-side-panel-content" style="width:320px"><textarea aria-label="Reply"></textarea>
+<div id="panelpullrequestreview-1"><h2><a id="outdated-link" href="/flohub/split-diff/pull/1/changes/aaaaaaa1?new_files_changed=true#r888">README.md</a></h2>
+<div class="markdown-body"><p>Is this still true? See <a id="text-link" href="/flohub/split-diff/pull/1/changes#r777">the newer one</a>.</p></div></div>
+<div id="panelpullrequestreview-2"><h2><a id="current-link" href="/flohub/split-diff/pull/1/changes#r777">README.md</a></h2></div>
 </aside></div></body></html>`;
 await light.route("https://github.com/flohub/split-diff/**", async (route) => route.fulfill({ body: SPLIT_PAGE, contentType: "text/html" }));
 const splitPage = await light.newPage();
@@ -894,12 +905,12 @@ check(
 );
 await splitPage.getByLabel("Reply").fill("Looks good now");
 check((await splitPage.getByLabel("Reply").inputValue()) === "Looks good now", "the comments beside the docked view stay usable");
-const jumpLink = splitPage.locator("#paneldiscussion_r777 a");
+const jumpLink = splitPage.locator("#outdated-link");
 await jumpLink.click();
 const jumpMenu = splitPage.locator("flohub-jump-menu");
 await jumpMenu.getByRole("menuitem", { name: /^Changes since v1/u }).waitFor();
 check(
-  !splitPage.url().includes("#r777") &&
+  !splitPage.url().includes("#r888") &&
     (await jumpMenu.getByRole("menuitem", { name: /^In the current diff/u }).isDisabled()),
   "a comment's link to its code opens FloHub's menu instead of GitHub's jump, and an outdated comment has no current lines",
 );
@@ -927,11 +938,25 @@ check(
     splitPage.url().includes("flohub-versions=base..aaaaaaa"),
   "Code at v1 shows v1 against the base branch, at the commented line, and the URL says so",
 );
+await splitPage.locator("#current-link").click();
+await jumpMenu.getByRole("menuitem", { name: /^In the current diff/u }).click();
+await docked.getByText("Shows the pull request's changes as v3 made them").waitFor();
+check(
+  (await docked.getByLabel("From").inputValue()) === "0" &&
+    (await docked.getByLabel("To").inputValue()) === "3" &&
+    (await docked.locator(".line.target").innerText()).includes("Diverged stacks"),
+  "a current comment's In the current diff shows the head against the base branch, at the line as the head numbers it",
+);
 await docked.getByRole("button", { name: "Close" }).click();
 check(
   (await splitPage.evaluate(() => getComputedStyle(document.getElementById("github-diff")!).display)) !== "none" &&
     !splitPage.url().includes("flohub-versions"),
   "closing the docked view shows GitHub's diff again and takes the range off the URL",
+);
+await splitPage.locator("#text-link").click();
+check(
+  (await jumpMenu.count()) === 0 && splitPage.url().endsWith("#r777"),
+  "a link in a comment's text stays GitHub's, even when it points at a comment",
 );
 await splitPage.close();
 
