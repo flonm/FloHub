@@ -15,6 +15,8 @@ import {
   versionDiff,
 } from "../core/interdiff";
 import { buildPathTree, filesInOrder, type PathNode } from "../core/path-tree";
+import { type Compared, placeThreads, type ReviewThread } from "../core/threads";
+import { renderThread, THREAD_STYLES } from "./review-thread";
 import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
 import {
   BASE,
@@ -41,6 +43,8 @@ export interface CommentLine {
 /** Where scrolling to a commented line got: to the line, only to its file, or nowhere because the diff lacks it. */
 type Revealed = "line" | "file" | "unchanged" | "missing";
 type Reveal = (line: CommentLine) => Revealed;
+/** Puts the review threads at their lines, in place of the ones shown before. */
+type PlaceThreads = (threads: ReviewThread[], compared: Compared) => void;
 
 export interface VersionsViewRequest {
   /** Names the pull request: opening the same one again shows what the view showed last, refreshed. */
@@ -52,6 +56,8 @@ export interface VersionsViewRequest {
   cachedVersions?: () => Promise<VersionHistory | null>;
   /** Resolves to the pull request's versions; rejects with a message to show. */
   versions: () => Promise<VersionHistory>;
+  /** Resolves to the pull request's review threads, shown at their lines; rejects with a message to show. */
+  threads?: () => Promise<ReviewThread[]>;
   /** Resolves to what a version changes; rejects with a message to show. */
   patch: (history: VersionHistory, version: Version) => Promise<VersionPatch>;
   /** Resolves to the range the viewer last compared on this pull request, or to null. */
@@ -75,6 +81,7 @@ const VIEW_STYLES = `
   --vd-success: var(--fgColor-success, #1a7f37);
   --vd-danger: var(--fgColor-danger, #d1242f);
   --vd-accent: var(--fgColor-accent, #0969da);
+  --vd-done: var(--fgColor-done, #8250df);
   --vd-attention: var(--fgColor-attention, #9a6700);
   --vd-attention-bg: var(--bgColor-attention-muted, #fff8c5);
   --vd-add-bg: var(--diffBlob-additionLine-bgColor, #dafbe1);
@@ -150,7 +157,12 @@ select {
 .line.target { box-shadow: inset 4px 0 0 var(--vd-attention); }
 .line.target .code { background: var(--vd-attention-bg); }
 .body { flex: 1; min-height: 0; display: flex; }
-main { position: relative; flex: 1; min-width: 0; overflow: auto; overscroll-behavior: contain; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+main { position: relative; flex: 1; min-width: 0; overflow: auto; overscroll-behavior: contain; padding: 16px; display: flex; flex-direction: column; gap: 12px; container-type: inline-size; }
+main.hide-threads :is(.thread-row, .elsewhere) { display: none; }
+.elsewhere { padding: 0 6px; border: 1px solid var(--vd-border); border-radius: 2em; color: var(--vd-muted); font-size: 12px; font-weight: 400; }
+.files .comment-count { display: inline-flex; align-items: center; gap: 2px; color: var(--vd-muted); }
+.files .comment-count svg { width: 12px; height: 12px; }
+.files.hide-threads .comment-count { display: none; }
 
 nav.files { position: relative; flex: none; width: 280px; overflow: auto; overscroll-behavior: contain; padding: 8px; border-right: 1px solid var(--vd-border); font-size: 12px; }
 nav.files:empty { display: none; }
@@ -248,6 +260,7 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 .legend .gone i { background: var(--vd-del-word); }
 .legend kbd { font: 600 12px var(--vd-mono); }
 .wrap-toggle { margin-left: auto; font-weight: 400 !important; font-size: 12px; }
+.wrap-toggle + .wrap-toggle { margin-left: 0; }
 
 .diff { overflow-x: auto; font: 12px/20px var(--vd-mono); }
 .line { display: flex; min-width: max-content; }
@@ -305,6 +318,7 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 details.unchanged > summary { color: var(--vd-muted); cursor: pointer; }
 details.unchanged ul { margin: 6px 0 0; padding-left: 20px; font: 12px/20px var(--vd-mono); color: var(--vd-muted); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; user-select: none; }
+${THREAD_STYLES}
 @media (prefers-reduced-motion: reduce) { .chevron, .files .folder svg { transition: none; } }
 `;
 
@@ -476,7 +490,31 @@ export class VersionsView {
     /** The compared commits and the bases each was diffed against, so a refresh that changes neither keeps the diff. */
     let compared = "";
     /** The patches on screen, so a refresh whose bases moved only redraws when what the versions change differs. */
-    let onScreen: { oids: string; before: VersionPatch | null; after: VersionPatch; reveal: Reveal } | null = null;
+    let onScreen: {
+      oids: string;
+      before: VersionPatch | null;
+      after: VersionPatch;
+      reveal: Reveal;
+      place: PlaceThreads;
+      compared: Compared;
+    } | null = null;
+    /** The pull request's review threads, once fetched, and whether the viewer wants them shown. */
+    let threads: ReviewThread[] = [];
+    let threadsShown = true;
+    const placeAll = () => {
+      if (onScreen) onScreen.place(threadsShown ? threads : [], onScreen.compared);
+    };
+    const loadThreads = async () => {
+      if (!request.threads) return;
+      try {
+        const fresh = await request.threads();
+        if (!live()) return;
+        threads = fresh;
+        placeAll();
+      } catch (failure) {
+        if (live()) notice.textContent = `Could not load the comments: ${failure instanceof Error ? failure.message : "GitHub didn't answer."}`;
+      }
+    };
     /** A range to show and a line to scroll to, waiting for the versions or for the range's diff. */
     let pending: { range: SavedRange; line?: CommentLine; oids?: string } | null = null;
     let shown = 0;
@@ -535,7 +573,9 @@ export class VersionsView {
             history: versions,
             repoUrl: request.repoUrl,
           });
-          onScreen = { oids, before, after, reveal: show };
+          const shownVersions = { older: older?.oid ?? null, newer: newer.oid, newerIsHead: newer.current };
+          onScreen = { oids, before, after, reveal: show.reveal, place: show.place, compared: shownVersions };
+          placeAll();
         }
         if (pending?.line && pending.oids === oids && onScreen) {
           reveal(onScreen.reveal, pending.line);
@@ -611,7 +651,24 @@ export class VersionsView {
         wrap.addEventListener("change", () => main.classList.toggle("wrap", wrap.checked));
         const wrapLabel = el("label", { class: "wrap-toggle" });
         wrapLabel.append(wrap, "Wrap lines");
-        controls.replaceChildren(from.label, el("span", { class: "arrow", "aria-hidden": "true" }, "→"), to.label, link, wrapLabel);
+        const comments = el("input", { type: "checkbox" });
+        comments.checked = threadsShown;
+        comments.addEventListener("change", () => {
+          threadsShown = comments.checked;
+          main.classList.toggle("hide-threads", !threadsShown);
+          files.classList.toggle("hide-threads", !threadsShown);
+          placeAll();
+        });
+        const commentsLabel = el("label", { class: "wrap-toggle" });
+        commentsLabel.append(comments, "Comments");
+        controls.replaceChildren(
+          from.label,
+          el("span", { class: "arrow", "aria-hidden": "true" }, "→"),
+          to.label,
+          link,
+          commentsLabel,
+          wrapLabel,
+        );
         picker = { from: from.select, to: to.select, link };
         const picked = () => {
           if (!history) return;
@@ -636,6 +693,7 @@ export class VersionsView {
       if (!live()) return;
       if (cached) present(cached, saved);
       const revalidate = async () => {
+        void loadThreads();
         try {
           const fresh = await request.versions();
           if (live()) present(fresh, saved);
@@ -758,9 +816,13 @@ interface Slots {
  * @param slots Where the result goes.
  * @param files The compared files.
  * @param context The versions compared.
- * @returns A function that scrolls to a commented line and marks it.
+ * @returns Functions that scroll to a commented line and mark it, and that put the review threads at their lines.
  */
-function renderResult({ main, summary, legend, files: nav, signal }: Slots, files: FileInterdiff[], context: Context): Reveal {
+function renderResult(
+  { main, summary, legend, files: nav, signal }: Slots,
+  files: FileInterdiff[],
+  context: Context,
+): { reveal: Reveal; place: PlaceThreads } {
   const { older, newer } = context;
   // Past GitHub's file limit, a file only one version lists may just be cut off from the other's list.
   const truncated = Boolean(context.before?.truncated) || context.after.truncated;
@@ -832,9 +894,42 @@ function renderResult({ main, summary, legend, files: nav, signal }: Slots, file
     content.push(details);
   }
   main.replaceChildren(...content);
-  if (sections.size > 0) renderFileTree(nav, tree, sections, main, signal);
+  const treeRows = sections.size > 0 ? renderFileTree(nav, tree, sections, main, signal) : new Map<HTMLDetailsElement, HTMLButtonElement>();
 
-  return (line) => {
+  const place: PlaceThreads = (threads, compared) => {
+    for (const earlier of main.querySelectorAll(".thread-row, .elsewhere")) earlier.remove();
+    for (const row of treeRows.values()) row.querySelector(".comment-count")?.remove();
+    const now = Date.now();
+    for (const [file, section] of sections) {
+      const { placed, elsewhere } = placeThreads(file, threads, compared);
+      const at = rowAt.get(file);
+      if (at) {
+        for (const { thread, first, last } of placed) {
+          // Unfolding the first line before the last keeps the commented lines together.
+          for (let index = first; index < last; index++) at(index);
+          let anchor: Element | null = at(last);
+          if (!anchor) continue;
+          while (anchor.nextElementSibling?.classList.contains("thread-row")) anchor = anchor.nextElementSibling;
+          const block = el("div", { class: "thread-row" });
+          block.append(renderThread(thread, now));
+          anchor.after(block);
+        }
+      }
+      if (elsewhere.length > 0) {
+        const count = `${elsewhere.length} ${elsewhere.length === 1 ? "comment" : "comments"} on other versions`;
+        section.querySelector(":scope > summary")?.append(el("span", { class: "elsewhere", title: "Written on a version this diff doesn't show, and outdated since" }, count));
+      }
+      const treeRow = treeRows.get(section);
+      if (!treeRow || placed.length === 0) continue;
+      const badge = el("span", { class: "comment-count", title: `${placed.length} ${placed.length === 1 ? "thread" : "threads"} here` });
+      badge.append(icon("comment"), String(placed.length));
+      const lineCounts = treeRow.querySelector(".counts");
+      if (lineCounts) lineCounts.before(badge);
+      else treeRow.append(badge);
+    }
+  };
+
+  const reveal: Reveal = (line) => {
     for (const marked of main.querySelectorAll(".line.target")) marked.classList.remove("target");
     const named = (file: FileInterdiff) => file.path === line.path || file.oldPath === line.path;
     if (unchanged.some((file) => named(file))) {
@@ -864,6 +959,7 @@ function renderResult({ main, summary, legend, files: nav, signal }: Slots, file
     marked.at(-1)?.scrollIntoView({ block: "center" });
     return marked.length > 0 ? "line" : "file";
   };
+  return { reveal, place };
 }
 
 /**
@@ -881,7 +977,7 @@ function renderFileTree(
   sections: Map<FileInterdiff, HTMLDetailsElement>,
   main: HTMLElement,
   signal: AbortSignal,
-): void {
+): Map<HTMLDetailsElement, HTMLButtonElement> {
   const rows = new Map<HTMLDetailsElement, HTMLButtonElement>();
   let current: HTMLButtonElement | null = null;
   let picked: HTMLDetailsElement | null = null;
@@ -960,6 +1056,7 @@ function renderFileTree(
   );
   signal.addEventListener("abort", () => cancelAnimationFrame(frame));
   follow();
+  return rows;
 }
 
 function fileRow(file: FileInterdiff, name: string, depth: number): HTMLButtonElement {
@@ -985,6 +1082,9 @@ function legendEntry(className: string, text: string): HTMLElement {
   item.append(el("i", { "aria-hidden": "true" }), text);
   return item;
 }
+
+/** How many lines around a line taken out of a fold come out with it. */
+const UNFOLD_CONTEXT = 3;
 
 /** @returns No row: a file without a diff has none. */
 function noRow(): null {
@@ -1040,18 +1140,28 @@ function renderFile(file: FileInterdiff, context: Context): { section: HTMLDetai
   const fold = (start: number, end: number) => {
     const button = expander(end - start, rows.bind(null, start, end));
     folds.push({ start, end, button });
-    diff.append(button);
+    return button;
   };
   let shown = 0;
   for (const hunk of file.hunks) {
-    if (hunk.start > shown) fold(shown, hunk.start);
+    if (hunk.start > shown) diff.append(fold(shown, hunk.start));
     diff.append(...rows(hunk.start, hunk.start + hunk.lines.length));
     shown = hunk.start + hunk.lines.length;
   }
-  if (shown < file.lines.length) fold(shown, file.lines.length);
+  if (shown < file.lines.length) diff.append(fold(shown, file.lines.length));
   details.append(diff);
+  // A line in a fold comes out with a few lines of context, the rest of the fold staying folded around it.
   const row = (index: number) => {
-    folds.find((each) => index >= each.start && index < each.end && each.button.isConnected)?.button.click();
+    const folded = folds.find((each) => index >= each.start && index < each.end && each.button.isConnected);
+    if (folded) {
+      const from = Math.max(folded.start, index - UNFOLD_CONTEXT);
+      const to = Math.min(folded.end, index + UNFOLD_CONTEXT + 1);
+      folded.button.replaceWith(
+        ...(from > folded.start ? [fold(folded.start, from)] : []),
+        ...rows(from, to),
+        ...(to < folded.end ? [fold(to, folded.end)] : []),
+      );
+    }
     return [...diff.querySelectorAll<HTMLElement>(".line")].find((line) => line.dataset.index === String(index)) ?? null;
   };
   return { section: details, row };

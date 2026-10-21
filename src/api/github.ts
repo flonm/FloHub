@@ -6,6 +6,7 @@ import type { RawPullRequest } from "../core/reviewers";
 import type { RawStack, RawStackPull } from "../core/stack";
 import type { ViewedFile, ViewedFiles } from "../core/viewed";
 import { type CommentLink, type CommentPlace, threadNumber } from "../core/comment-jump";
+import type { ReviewThread } from "../core/threads";
 import type { VersionFile } from "../core/interdiff";
 import { baseBranches, deriveVersions, pickBase, type RawBasePull, type RawVersionPull, type VersionHistory } from "../core/versions";
 
@@ -505,6 +506,80 @@ export async function submitReview(ref: PullRef, event: ReviewEvent, body: strin
 async function findPendingReview(ref: PullRef): Promise<{ id: number } | null> {
   const reviews = (await request(`${pullPath(ref)}/reviews?per_page=100`, {})) as { id: number; state: string }[];
   return reviews.find((review) => review.state === "PENDING") ?? null;
+}
+
+const REVIEW_THREADS_QUERY = `
+query ($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(last: 100) {
+        nodes {
+          id isResolved isOutdated path line startLine originalLine originalStartLine diffSide
+          comments(first: 50) {
+            nodes { databaseId author { login avatarUrl } bodyHTML createdAt url state originalCommit { oid } }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+interface RawReviewThread {
+  id: string;
+  isResolved: boolean;
+  isOutdated: boolean;
+  path: string;
+  line: number | null;
+  startLine: number | null;
+  originalLine: number | null;
+  originalStartLine: number | null;
+  diffSide: "LEFT" | "RIGHT";
+  comments: {
+    nodes: {
+      databaseId: number | null;
+      author: { login: string; avatarUrl: string } | null;
+      bodyHTML: string;
+      createdAt: string;
+      url: string;
+      state: string;
+      originalCommit: { oid: string } | null;
+    }[];
+  };
+}
+
+/**
+ * Fetches the pull request's review threads, the viewer's own draft comments among them, for the versions view.
+ * @param ref The pull request.
+ * @returns The last 100 threads, with up to 50 comments each.
+ */
+export async function fetchReviewThreads(ref: PullRef): Promise<ReviewThread[]> {
+  const { data } = await graphql<{ repository: { pullRequest: { reviewThreads: { nodes: (RawReviewThread | null)[] } } | null } | null }>(
+    REVIEW_THREADS_QUERY,
+    { owner: ref.owner, name: ref.repo, number: ref.number },
+  );
+  return (data.repository?.pullRequest?.reviewThreads.nodes ?? [])
+    .filter((raw): raw is RawReviewThread => raw !== null)
+    .map((raw) => ({
+      id: raw.id,
+      path: raw.path,
+      resolved: raw.isResolved,
+      outdated: raw.isOutdated,
+      line: raw.line,
+      startLine: raw.startLine,
+      originalLine: raw.originalLine,
+      originalStartLine: raw.originalStartLine,
+      side: raw.diffSide,
+      comments: raw.comments.nodes.map((comment) => ({
+        id: comment.databaseId ?? 0,
+        author: comment.author?.login ?? null,
+        avatarUrl: comment.author?.avatarUrl ?? null,
+        html: comment.bodyHTML,
+        createdAt: comment.createdAt,
+        url: comment.url,
+        pending: comment.state === "PENDING",
+        originalCommit: comment.originalCommit?.oid ?? null,
+      })),
+    }));
 }
 
 const THREADS_QUERY = `

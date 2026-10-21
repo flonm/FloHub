@@ -380,6 +380,41 @@ function createFixture(
         });
         return;
       }
+      if (graphql?.query.includes("originalStartLine diffSide")) {
+        const reviewThread = (id: string, path: string, line: number, on: string, body: string) => ({
+          id,
+          isResolved: false,
+          isOutdated: on !== "ccccccc3",
+          path,
+          line: on === "ccccccc3" ? line : null,
+          startLine: null,
+          originalLine: line,
+          originalStartLine: null,
+          diffSide: "RIGHT",
+          comments: {
+            nodes: [
+              { databaseId: 1, author: { login: "octocat", avatarUrl: "" }, bodyHTML: `<p>${body}</p>`, createdAt: ago(30), url: "", state: "SUBMITTED", originalCommit: { oid: on } },
+            ],
+          },
+        });
+        await route.fulfill({
+          json: {
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: {
+                    nodes: [
+                      reviewThread("PRRT_1", "README.md", 305, "aaaaaaa1", "Is this still true?"),
+                      reviewThread("PRRT_2", "cmd/rebase.go", 44, "ccccccc3", "Log at debug level?"),
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        });
+        return;
+      }
       if (graphql?.query.includes("comments(first: 1) { nodes { databaseId")) {
         // PRRT_kwABzQN4 is thread 888, the number an outdated comment's link names it by.
         await route.fulfill({
@@ -903,6 +938,23 @@ check(
   dockedLayout.mode === "docked" && dockedLayout.top === "60px" && dockedLayout.hidden.join(",") === "none,none" && dockedLayout.fits,
   `on GitHub's split layout the versions view takes the place of the file tree and diff, scrolled to fit under the toolbar: ${JSON.stringify(dockedLayout)}`,
 );
+const threadRows = docked.locator(".thread-row");
+await threadRows.nth(1).waitFor();
+const placedThreads = await threadRows.evaluateAll((blocks) =>
+  blocks.map((block) => {
+    const line = block.previousElementSibling?.textContent ?? "";
+    const where = line.includes("Diverged stacks") ? "Diverged stacks" : (line.includes("log(branch)") ? "log(branch)" : line);
+    return `${where} → ${block.textContent.includes("Is this still true") ? "v1 thread" : "v3 thread"}`;
+  }),
+);
+check(
+  JSON.stringify(placedThreads.toSorted((a, b) => a.localeCompare(b))) === JSON.stringify(["Diverged stacks → v1 thread", "log(branch) → v3 thread"]) &&
+    (await docked.locator("nav.files button.file", { hasText: "README.md" }).locator(".comment-count").innerText()) === "1",
+  `review threads sit under their lines, by the numbers of the version each was written on, and the file tree counts them: ${JSON.stringify(placedThreads)}`,
+);
+await docked.getByLabel("Comments").uncheck();
+check(await threadRows.first().isHidden(), "the Comments toggle hides the threads");
+await docked.getByLabel("Comments").check();
 await splitPage.getByLabel("Reply").fill("Looks good now");
 check((await splitPage.getByLabel("Reply").inputValue()) === "Looks good now", "the comments beside the docked view stay usable");
 const jumpLink = splitPage.locator("#outdated-link");

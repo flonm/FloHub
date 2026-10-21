@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
 import type { VersionPatch } from "../api/github";
+import type { ReviewThread } from "../core/threads";
 import { BASE, type SavedRange, type Version, type VersionHistory } from "../core/versions";
 import { el } from "../ui/dom";
 import { type CommentLine, VersionsView } from "../ui/versions-view";
@@ -232,6 +233,7 @@ function githubPage(): HTMLElement {
  * @param stored What the extension kept from an earlier visit: the versions fetched then and the range compared.
  * @param docked Whether the page has GitHub's split layout to dock in.
  * @param target A range to show and a commented line to scroll to, as a comment's menu asks for them.
+ * @param threads The pull request's review threads.
  * @returns The page.
  */
 function view(
@@ -240,6 +242,7 @@ function view(
   stored: { cached?: VersionHistory; saved?: SavedRange } = {},
   docked = true,
   target?: { range: SavedRange; line?: CommentLine },
+  threads: ReviewThread[] = [],
 ): HTMLElement {
   for (const previous of document.querySelectorAll("flohub-versions")) previous.remove();
   const page = docked ? githubPage() : el("p", {}, "A page without GitHub's split layout: the view floats over it.");
@@ -256,6 +259,10 @@ function view(
       },
       // oxlint-disable-next-line typescript/promise-function-async -- the fixture already holds the promise the view asks for
       versions: () => pendingHistory(kind),
+      threads: async () => {
+        await settle();
+        return threads;
+      },
       patch: async (_history, current) => {
         await settle();
         return patches[current.oid] ?? patches["2222222"]!;
@@ -362,3 +369,59 @@ export const ChangesSinceAComment: Story = {
       line: { path: "src/core/retry.ts", line: 13, side: "RIGHT" },
     }),
 };
+
+/** @returns A one-comment thread started on a version, on a line as that version numbers it. */
+function thread(id: string, on: Version, path: string, line: number, body: string, overrides: Partial<ReviewThread> = {}): ReviewThread {
+  return {
+    id,
+    path,
+    resolved: false,
+    outdated: false,
+    line: on.current ? line : null,
+    startLine: null,
+    originalLine: line,
+    originalStartLine: null,
+    side: "RIGHT",
+    comments: [
+      {
+        id: Number(id.slice(1)),
+        author: "tizian",
+        avatarUrl: null,
+        html: `<p>${body}</p>`,
+        createdAt: on.at,
+        url: `https://github.com/octo-org/api/pull/344#discussion_r${id.slice(1)}`,
+        pending: false,
+        originalCommit: on.oid,
+      },
+    ],
+    ...overrides,
+  };
+}
+
+const THREADS: ReviewThread[] = [
+  thread("t1", V2, "src/core/retry.ts", 13, "500ms is long for a first retry.", { outdated: true }),
+  thread("t2", V3, "src/ui/bar.ts", 5, "Is 250 enough when the API is rate limiting?"),
+  thread("t3", V3, "db/migrations/0042_inbox_pulls.sql", 8, "Should this index be partial?", { resolved: true }),
+  thread("t4", V3, "src/ui/bar.ts", 6, "Nit: this label reads better as <code>attempt 2/3</code>.", {
+    comments: [
+      {
+        id: 4,
+        author: "you",
+        avatarUrl: null,
+        html: "<p>Nit: this label reads better as <code>attempt 2/3</code>.</p>",
+        createdAt: V3.at,
+        url: "",
+        pending: true,
+        originalCommit: V3.oid,
+      },
+    ],
+  }),
+  thread("t5", V1, "src/ui/bar.ts", 3, "Why three retries?", { outdated: true }),
+];
+
+/**
+ * The review threads at their lines, here since the viewer's review of v2: one written on v2 on a line v3 changed,
+ * sitting on the removed line; one on v3; a resolved one, folded; the viewer's pending draft; and, in bar.ts's header,
+ * one written on v1 that this diff has no line for. The file tree counts each file's threads, and Comments hides them.
+ */
+export const WithComments: Story = { render: () => view(3, PATCHES, {}, true, undefined, THREADS) };
