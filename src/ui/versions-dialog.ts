@@ -2,6 +2,7 @@ import { formatAge } from "../core/age";
 import { el, icon } from "./dom";
 import type { VersionPatch } from "../api/github";
 import { diffstat, type FileChange, type FileInterdiff, headerLabels, type InterdiffLine, interdiff, splitLine } from "../core/interdiff";
+import { buildPathTree, filesInOrder, type PathNode } from "../core/path-tree";
 import { defaultRange, type Version, type VersionHistory } from "../core/versions";
 
 export interface VersionsDialogRequest {
@@ -85,7 +86,37 @@ select {
 .summary strong { color: var(--vd-fg); }
 .error { margin: 0; color: var(--vd-danger); }
 .error:empty { display: none; }
-main { flex: 1; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.body { flex: 1; min-height: 0; display: flex; }
+main { position: relative; flex: 1; min-width: 0; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+
+nav.files { position: relative; flex: none; width: 280px; overflow: auto; padding: 8px; border-right: 1px solid var(--vd-border); font-size: 12px; }
+nav.files:empty { display: none; }
+.files-head { display: flex; align-items: center; gap: 8px; padding: 4px 8px 8px; color: var(--vd-muted); font-weight: 600; }
+.files-head .counts { margin-left: auto; }
+.files ul { margin: 0; padding: 0; list-style: none; }
+.files ul[hidden] { display: none; }
+.files button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px 0 calc(8px + var(--depth, 0) * 16px);
+  border: 0;
+  border-radius: 6px;
+  font-weight: 400;
+  text-align: left;
+}
+.files .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files .folder { color: var(--vd-muted); }
+.files .folder svg { width: 12px; height: 12px; transform: rotate(180deg); transition: transform 120ms; }
+.files .folder[aria-expanded="false"] svg { transform: rotate(90deg); }
+.files .file[aria-current] { background: var(--vd-bg-muted); font-weight: 600; box-shadow: inset 2px 0 0 var(--vd-accent); }
+.files .mark { flex: none; width: 8px; height: 8px; border-radius: 2px; background: currentColor; }
+.counts { flex: none; display: inline-flex; gap: 4px; font: 600 11px var(--vd-mono); }
+.counts .add { color: var(--vd-success); }
+.counts .del { color: var(--vd-danger); }
+@media (max-width: 760px) { nav.files { display: none; } }
 .message { color: var(--vd-muted); }
 button {
   min-height: 32px;
@@ -202,7 +233,7 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 details.unchanged > summary { color: var(--vd-muted); cursor: pointer; }
 details.unchanged ul { margin: 6px 0 0; padding-left: 20px; font: 12px/20px var(--vd-mono); color: var(--vd-muted); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; user-select: none; }
-@media (prefers-reduced-motion: reduce) { dialog[open] { animation: none; } .chevron { transition: none; } }
+@media (prefers-reduced-motion: reduce) { dialog[open] { animation: none; } .chevron, .files .folder svg { transition: none; } }
 `;
 
 /** A modal that shows how a pull request's own changes differ between two of its versions. */
@@ -248,9 +279,12 @@ export class VersionsDialog {
     const error = el("p", { class: "error", role: "alert" });
     const header = el("header");
     header.append(titleRow, controls, summary, legend, error);
+    const files = el("nav", { class: "files", "aria-label": "Files" });
     const main = el("main");
     main.append(el("p", { class: "message", role: "status" }, "Loading versions…"));
-    this.dialog.replaceChildren(header, main);
+    const body = el("div", { class: "body" });
+    body.append(files, main);
+    this.dialog.replaceChildren(header, body);
     if (!this.dialog.open) this.dialog.showModal();
     close.focus();
 
@@ -276,7 +310,11 @@ export class VersionsDialog {
         controls.append(from.label, el("span", { class: "arrow", "aria-hidden": "true" }, "→"), to.label, link, wrapLabel);
 
         let shown = 0;
+        let tracking: AbortController | undefined;
         const show = async () => {
+          tracking?.abort();
+          tracking = new AbortController();
+          const { signal } = tracking;
           const showing = ++shown;
           const older = history.versions[Number(from.select.value) - 1];
           const newer = history.versions[Number(to.select.value) - 1];
@@ -286,11 +324,12 @@ export class VersionsDialog {
           error.textContent = "";
           summary.textContent = "";
           legend.replaceChildren();
+          files.replaceChildren();
           main.replaceChildren(el("p", { class: "message", role: "status" }, `Comparing v${older.number} with v${newer.number}…`));
           try {
             const [before, after] = await Promise.all([request.patch(history, older), request.patch(history, newer)]);
             if (!live() || showing !== shown) return;
-            renderResult({ main, summary, legend }, interdiff(before.files, after.files), {
+            renderResult({ main, summary, legend, files, signal }, interdiff(before.files, after.files), {
               older,
               newer,
               before,
@@ -357,9 +396,13 @@ interface Slots {
   main: HTMLElement;
   summary: HTMLElement;
   legend: HTMLElement;
+  /** The file tree beside the diff. */
+  files: HTMLElement;
+  /** Aborts when another range replaces this result. */
+  signal: AbortSignal;
 }
 
-function renderResult({ main, summary, legend }: Slots, files: FileInterdiff[], context: Context): void {
+function renderResult({ main, summary, legend, files: nav, signal }: Slots, files: FileInterdiff[], context: Context): void {
   // Past GitHub's file limit, a file only one version lists may just be cut off from the other's list.
   const truncated = context.before.truncated || context.after.truncated;
   const shown = truncated ? files.filter((file) => file.change !== "added" && file.change !== "dropped") : files;
@@ -399,8 +442,13 @@ function renderResult({ main, summary, legend }: Slots, files: FileInterdiff[], 
       ),
     );
   }
-  const compared = [...differing, ...opaque].toSorted((a, b) => (a.path < b.path ? -1 : 1));
-  for (const file of compared) content.push(renderFile(file, context));
+  const tree = buildPathTree([...differing, ...opaque], (file) => file.path);
+  const sections = new Map<FileInterdiff, HTMLDetailsElement>();
+  for (const file of filesInOrder(tree)) {
+    const section = renderFile(file, context);
+    sections.set(file, section);
+    content.push(section);
+  }
   if (unchanged.length > 0) {
     const details = el("details", { class: "unchanged" });
     details.append(el("summary", {}, `${unchanged.length} ${unchanged.length === 1 ? "file makes" : "files make"} the same change in both versions`));
@@ -410,6 +458,121 @@ function renderResult({ main, summary, legend }: Slots, files: FileInterdiff[], 
     content.push(details);
   }
   main.replaceChildren(...content);
+  if (sections.size > 0) renderFileTree(nav, tree, sections, main, signal);
+}
+
+/**
+ * Lists the compared files by folder beside the diff. A file's row jumps to its diff, and the row of the file in view
+ * stays marked while the diff scrolls.
+ * @param nav Where the tree goes.
+ * @param tree The compared files by folder.
+ * @param sections Each file's diff.
+ * @param main The diff's scroll container.
+ * @param signal Aborts when another range replaces the diff.
+ */
+function renderFileTree(
+  nav: HTMLElement,
+  tree: PathNode<FileInterdiff>[],
+  sections: Map<FileInterdiff, HTMLDetailsElement>,
+  main: HTMLElement,
+  signal: AbortSignal,
+): void {
+  const rows = new Map<HTMLDetailsElement, HTMLButtonElement>();
+  let current: HTMLButtonElement | null = null;
+  let picked: HTMLDetailsElement | null = null;
+  const mark = (row: HTMLButtonElement | undefined) => {
+    if (!row || row === current) return;
+    current?.removeAttribute("aria-current");
+    row.setAttribute("aria-current", "location");
+    current = row;
+    row.scrollIntoView({ block: "nearest" });
+  };
+  const jump = (section: HTMLDetailsElement) => {
+    section.open = true;
+    picked = section;
+    mark(rows.get(section));
+    section.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    section.querySelector("summary")?.focus({ preventScroll: true });
+  };
+
+  const list = (nodes: PathNode<FileInterdiff>[], depth: number): HTMLUListElement => {
+    const ul = el("ul");
+    for (const node of nodes) {
+      const item = el("li");
+      if (node.kind === "folder") {
+        const toggle = el("button", { type: "button", class: "folder", "aria-expanded": "true", title: node.path });
+        toggle.style.setProperty("--depth", String(depth));
+        toggle.append(icon("chevron"), el("span", { class: "name" }, node.name));
+        const children = list(node.children, depth + 1);
+        let expanded = true;
+        toggle.addEventListener("click", () => {
+          expanded = !expanded;
+          children.hidden = !expanded;
+          toggle.setAttribute("aria-expanded", String(expanded));
+        });
+        item.append(toggle, children);
+      } else {
+        const section = sections.get(node.item);
+        if (!section) continue;
+        const row = fileRow(node.item, node.name, depth);
+        row.addEventListener("click", () => jump(section));
+        rows.set(section, row);
+        item.append(row);
+      }
+      ul.append(item);
+    }
+    return ul;
+  };
+
+  const all = [...sections.keys()];
+  const head = el("div", { class: "files-head" }, `${all.length} ${all.length === 1 ? "file" : "files"}`);
+  head.append(counts(all.reduce((sum, file) => sum + file.added, 0), all.reduce((sum, file) => sum + file.removed, 0)));
+  nav.replaceChildren(head, list(tree, 0));
+
+  let frame = 0;
+  const follow = () => {
+    frame = 0;
+    const { top, bottom } = main.getBoundingClientRect();
+    if (picked) {
+      const rect = picked.getBoundingClientRect();
+      if (rect.bottom > top && rect.top < bottom) return;
+      picked = null;
+    }
+    let inView: HTMLDetailsElement | undefined;
+    for (const section of rows.keys()) {
+      inView ??= section;
+      if (section.getBoundingClientRect().top > top + 24) break;
+      inView = section;
+    }
+    if (inView) mark(rows.get(inView));
+  };
+  main.addEventListener(
+    "scroll",
+    () => {
+      frame ||= requestAnimationFrame(follow);
+    },
+    { signal, passive: true },
+  );
+  signal.addEventListener("abort", () => cancelAnimationFrame(frame));
+  follow();
+}
+
+function fileRow(file: FileInterdiff, name: string, depth: number): HTMLButtonElement {
+  const change = CHANGE[file.change];
+  const row = el("button", { type: "button", class: "file", title: file.oldPath ? `${file.oldPath} → ${file.path}` : file.path });
+  row.style.setProperty("--depth", String(depth));
+  row.append(el("span", { class: "mark", "data-tone": change.tone, "aria-hidden": "true" }), el("span", { class: "name" }, name));
+  if (file.added > 0 || file.removed > 0) row.append(counts(file.added, file.removed));
+  const lines = file.added > 0 || file.removed > 0 ? `, ${file.added} lines added, ${file.removed} removed` : "";
+  row.append(el("span", { class: "visually-hidden" }, `, ${change.label}${lines}`));
+  return row;
+}
+
+function counts(added: number, removed: number): HTMLElement {
+  const element = el("span", { class: "counts", "aria-hidden": "true" });
+  if (added > 0) element.append(el("span", { class: "add" }, `+${added}`));
+  if (removed > 0) element.append(el("span", { class: "del" }, `−${removed}`));
+  return element;
 }
 
 function legendEntry(className: string, text: Node | string): HTMLElement {
@@ -418,7 +581,7 @@ function legendEntry(className: string, text: Node | string): HTMLElement {
   return item;
 }
 
-function renderFile(file: FileInterdiff, context: Context): HTMLElement {
+function renderFile(file: FileInterdiff, context: Context): HTMLDetailsElement {
   const change = CHANGE[file.change];
   const details = el("details", { class: "file", open: "" });
   const head = el("summary");

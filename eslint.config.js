@@ -13,7 +13,7 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default defineConfig(
-  globalIgnores(["dist", "dist-firefox", "storybook-static", "web-ext-artifacts", "node_modules"]),
+  globalIgnores(["dist", "dist-firefox", "storybook-static", "web-ext-artifacts", "node_modules", ".claude/worktrees"]),
   {
     files: ["**/*.{ts,js}"],
     extends: [

@@ -99,6 +99,45 @@ const PATCHES: Record<string, VersionPatch> = {
   },
 };
 
+const MANY_PATHS = [
+  "README.md",
+  "cmd/adopt.go",
+  "cmd/rebase.go",
+  "cmd/sync.go",
+  "docs/guide/stacks/rebasing.md",
+  "internal/git/gitops.go",
+  "internal/git/gitops_test.go",
+  "internal/git/mock_ops.go",
+  "internal/stack/stack.go",
+  "internal/stack/stack_test.go",
+  "skills/gh-stack/SKILL.md",
+  "go.mod",
+];
+
+/** @returns A patch that sets a value, longer for later files so the diffs scroll. */
+function manyPatch(index: number, value: string): string {
+  const context = Array.from({ length: 6 + index * 2 }, (_, line) => ` line ${line} of file ${index}`);
+  return [`@@ -1,${context.length + 1} +1,${context.length + 1} @@`, ...context, `+const LIMIT_${index} = ${value};`].join("\n");
+}
+
+/** Twelve files across nested folders, each changed again between v2 and v3. */
+const MANY_PATCHES: Record<string, VersionPatch> = Object.fromEntries(
+  [V1, V2, V3].map((current) => [
+    current.oid,
+    {
+      mergeBase: "0000000",
+      onBase: true,
+      truncated: false,
+      files: MANY_PATHS.map((filename, index) => ({
+        filename,
+        status: "modified",
+        sha: `${current.oid}-${index}`,
+        patch: manyPatch(index, String(current.number * (index + 1))),
+      })),
+    },
+  ]),
+);
+
 /** @returns A history of the first count versions, oldest first. */
 function history(count: number): VersionHistory {
   return { baseRefOid: "0000000", versions: [V1, V2, V3].slice(0, count), baseHeads: [] };
@@ -116,7 +155,7 @@ async function settle(): Promise<void> {
  * @param kind How many versions the pull request has, or "loading"/"failing" for those states.
  * @returns A line behind the backdrop.
  */
-function dialog(kind: number | "loading" | "failing"): HTMLElement {
+function dialog(kind: number | "loading" | "failing", patches = PATCHES): HTMLElement {
   for (const previous of document.querySelectorAll("flohub-versions")) previous.remove();
   new VersionsDialog().open({
     number: 344,
@@ -125,7 +164,7 @@ function dialog(kind: number | "loading" | "failing"): HTMLElement {
     versions: () => pendingHistory(kind),
     patch: async (_history, current) => {
       await settle();
-      return PATCHES[current.oid] ?? PATCHES["2222222"]!;
+      return patches[current.oid] ?? patches["2222222"]!;
     },
   });
   return el("p", {}, "The dialog opens over the page; Esc closes it.");
@@ -172,9 +211,16 @@ export const SingleVersion: Story = { render: () => dialog(1) };
 /**
  * Defaults to the viewer's last reviewed version against the current head. Lines only in the newer version get an
  * amber bar, lines only in the older one a red bar and a strike, and a replaced line highlights the words that differ.
- * The renamed file's header says where each version renamed it to; its folded context expands on click.
+ * The renamed file's header says where each version renamed it to; its folded context expands on click. The file
+ * tree on the left lists the compared files with their version-diff totals; a row jumps to its file.
  */
 export const SinceTheViewersReview: Story = { render: () => dialog(3) };
+
+/**
+ * Twelve files across nested folders. The tree merges folders that hold only one folder (`docs/guide/stacks`),
+ * collapses a folder on click, and marks the file in view while the diff scrolls.
+ */
+export const ManyFiles: Story = { render: () => dialog(3, MANY_PATCHES) };
 
 /** The history could not be read. */
 export const Fails: Story = { render: () => dialog("failing") };
