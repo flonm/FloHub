@@ -5,7 +5,7 @@ import type { VersionHistory } from "../core/versions";
 const PATCH_INDEX_KEY = "versionPatchIndex";
 const PATCH_PREFIX = "versionPatch:";
 const HISTORY_KEY = "versionHistories";
-/** About two compared pairs for each of the last few pull requests. */
+/** About two compared pairs for each of the last few pull requests: the cache is for coming back, not for browsing. */
 const MAX_PATCHES = 16;
 const MAX_HISTORIES = 30;
 const MAX_AGE_MS = 3 * 86_400_000;

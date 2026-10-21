@@ -544,7 +544,7 @@ async function saveRange(key: string, range: SavedRange): Promise<void> {
   try {
     await chrome.storage.local.set({ [RANGES_KEY]: keepRecentRanges(ranges, range.at) });
   } catch {
-    // Without storage, the next visit opens on the default range.
+    // The next visit opens on the default range instead.
   }
 }
 
