@@ -97,9 +97,9 @@ select {
 .error { margin: 0; color: var(--vd-danger); }
 .error:empty { display: none; }
 .body { flex: 1; min-height: 0; display: flex; }
-main { position: relative; flex: 1; min-width: 0; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+main { position: relative; flex: 1; min-width: 0; overflow: auto; overscroll-behavior: contain; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 
-nav.files { position: relative; flex: none; width: 280px; overflow: auto; padding: 8px; border-right: 1px solid var(--vd-border); font-size: 12px; }
+nav.files { position: relative; flex: none; width: 280px; overflow: auto; overscroll-behavior: contain; padding: 8px; border-right: 1px solid var(--vd-border); font-size: 12px; }
 nav.files:empty { display: none; }
 .files-head { display: flex; align-items: center; gap: 8px; padding: 4px 8px 8px; color: var(--vd-muted); font-weight: 600; }
 .files-head .counts { margin-left: auto; }
@@ -260,6 +260,8 @@ export class VersionsDialog {
   private readonly host: HTMLElement;
   private readonly dialog: HTMLDialogElement;
   private generation = 0;
+  /** Gives the page its scrolling back, while the dialog holds it. */
+  private releasePage: (() => void) | null = null;
 
   constructor() {
     this.host = document.createElement("flohub-versions");
@@ -274,7 +276,28 @@ export class VersionsDialog {
     this.dialog.addEventListener("close", () => {
       this.generation++;
       this.dialog.replaceChildren();
+      this.releasePage?.();
+      this.releasePage = null;
     });
+    let pressedOutside = false;
+    this.dialog.addEventListener("pointerdown", (event) => {
+      pressedOutside = this.isBackdrop(event);
+    });
+    this.dialog.addEventListener("click", (event) => {
+      if (pressedOutside && this.isBackdrop(event)) this.dialog.close();
+      pressedOutside = false;
+    });
+  }
+
+  /**
+   * A click on the backdrop targets the dialog itself, at a point outside its box.
+   * @param event The pointer event.
+   * @returns Whether it hit the backdrop.
+   */
+  private isBackdrop(event: MouseEvent): boolean {
+    if (event.target !== this.dialog) return false;
+    const box = this.dialog.getBoundingClientRect();
+    return event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom;
   }
 
   /** @returns Whether the dialog is showing. */
@@ -304,7 +327,10 @@ export class VersionsDialog {
     const body = el("div", { class: "body" });
     body.append(files, main);
     this.dialog.replaceChildren(header, body);
-    if (!this.dialog.open) this.dialog.showModal();
+    if (!this.dialog.open) {
+      this.dialog.showModal();
+      this.releasePage = holdPageScroll();
+    }
     close.focus();
 
     void request.versions().then(
@@ -373,6 +399,19 @@ export class VersionsDialog {
       },
     );
   }
+}
+
+/**
+ * Stops the page behind the dialog from scrolling, which a wheel turn that a pane can't use would otherwise reach.
+ * @returns A function that restores the page's own overflow.
+ */
+function holdPageScroll(): () => void {
+  const root = document.documentElement;
+  const previous = root.style.overflow;
+  root.style.overflow = "hidden";
+  return () => {
+    root.style.overflow = previous;
+  };
 }
 
 function versionSelect(name: string, versions: Version[], selected: number, now: number) {

@@ -709,6 +709,30 @@ await versions.getByText("No differences.").waitFor();
 check(true, "picking the same version on both sides shows no differences");
 await page.keyboard.press("Escape");
 check(await versions.isHidden(), "Escape closes the versions dialog");
+const pageOverflow = async () => page.evaluate(() => document.documentElement.style.overflow);
+check((await pageOverflow()) === "", "closing the versions dialog gives the page its scrolling back");
+await inlineBar(page).getByRole("button", { name: "Compare versions" }).click();
+await versions.locator("details.file").first().waitFor();
+const scrollBefore = await page.evaluate(() => scrollY);
+for (const pane of ["nav.files", "main"]) {
+  await versions.locator(pane).hover();
+  await page.mouse.wheel(0, 4000);
+}
+await page.waitForTimeout(250);
+check(
+  (await page.evaluate(() => scrollY)) === scrollBefore && (await pageOverflow()) === "hidden",
+  "a wheel turn the dialog's panes can't use doesn't scroll the page behind it",
+);
+const dialogTitle = await versions.locator("h2").boundingBox();
+if (dialogTitle) {
+  await page.mouse.move(dialogTitle.x + 4, dialogTitle.y + dialogTitle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(10, 300, { steps: 4 });
+  await page.mouse.up();
+}
+check(await versions.isVisible(), "a text selection that ends on the backdrop keeps the versions dialog open");
+await page.mouse.click(10, 300);
+check(await versions.isHidden() && (await pageOverflow()) === "", "a click on the backdrop closes the versions dialog");
 
 const readmeDiff = page.locator(`#${await diffAnchorOf("README.md")}`);
 const changedCell = readmeDiff.locator("[data-flohub-since]");
