@@ -505,7 +505,9 @@ function navigateStack(direction: 1 | -1): void {
     toast.show(direction === 1 ? "Already at the top of the stack." : "Already at the bottom of the stack.", "info");
     return;
   }
-  location.assign(`${target.url}${pullTab(location.pathname)}`);
+  // The versions view is a setting of the page, so the next layer opens on it too, on its own range.
+  const versions = versionsView.isOpen ? `?${VERSIONS_PARAM}=` : "";
+  location.assign(`${target.url}${pullTab(location.pathname)}${versions}`);
 }
 
 async function approveNow(): Promise<void> {

@@ -847,6 +847,7 @@ await reactPage.close();
 
 // GitHub's split Files changed layout: the versions view takes the place of the file tree and diff, beside the comments.
 const SPLIT_PAGE = `<!doctype html><html><head><title>Split layout</title></head><body>
+<header style="height:300px">The pull request's title, tabs and FloHub's bar</header>
 <div id="diff-comparison-viewer-container" style="display:flex"><div style="flex:1;display:flex;flex-wrap:wrap">
 <section style="position:sticky;top:0;flex:1 1 100%;height:60px">Toolbar</section>
 <div id="github-pane" style="position:sticky;top:60px;width:300px"><div data-component="SplitPageLayout.Pane">GitHub's file tree</div></div>
@@ -859,15 +860,18 @@ const docked = splitPage.locator("flohub-versions");
 await docked.locator("details.file").first().waitFor();
 const dockedLayout = await splitPage.evaluate(() => {
   const host = document.querySelector<HTMLElement>("flohub-versions");
+  const box = host?.getBoundingClientRect();
   return {
     mode: host?.dataset.mode,
     top: host && getComputedStyle(host).top,
+    fits: box !== undefined && Math.round(box.top) === 60 && box.bottom <= innerHeight,
+    box: box && [Math.round(box.top), Math.round(box.bottom), innerHeight, Math.round(scrollY)],
     hidden: ["github-pane", "github-diff"].map((id) => getComputedStyle(document.getElementById(id)!).display),
   };
 });
 check(
-  dockedLayout.mode === "docked" && dockedLayout.top === "60px" && dockedLayout.hidden.join(",") === "none,none",
-  `on GitHub's split layout the versions view takes the place of the file tree and diff, under the toolbar: ${JSON.stringify(dockedLayout)}`,
+  dockedLayout.mode === "docked" && dockedLayout.top === "60px" && dockedLayout.hidden.join(",") === "none,none" && dockedLayout.fits,
+  `on GitHub's split layout the versions view takes the place of the file tree and diff, scrolled to fit under the toolbar: ${JSON.stringify(dockedLayout)}`,
 );
 await splitPage.getByLabel("Reply").fill("Looks good now");
 check((await splitPage.getByLabel("Reply").inputValue()) === "Looks good now", "the comments beside the docked view stay usable");

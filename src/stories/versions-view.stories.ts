@@ -207,11 +207,11 @@ async function settle(): Promise<void> {
  */
 function githubPage(): HTMLElement {
   const page = el("div", { id: "diff-comparison-viewer-container" });
-  page.style.cssText = "display:flex;min-height:100vh;font:14px/1.5 sans-serif";
+  page.style.cssText = "display:flex;min-height:100vh;font:14px/1.5 sans-serif;color:var(--fgColor-default);background:var(--bgColor-default)";
   const layout = el("div");
   layout.style.cssText = "flex:1;min-width:0;display:flex;flex-wrap:wrap;align-content:flex-start;gap:0 16px;padding:0 16px";
   const toolbar = el("section", {}, "GitHub's toolbar: file filter, viewed count, Submit review");
-  toolbar.style.cssText = "position:sticky;top:0;flex:1 1 100%;height:60px;display:flex;align-items:center;border-bottom:1px solid #d1d9e0;background:#fff;z-index:1";
+  toolbar.style.cssText = "position:sticky;top:0;flex:1 1 100%;height:60px;display:flex;align-items:center;border-bottom:1px solid var(--borderColor-default);background:var(--bgColor-default);z-index:1";
   const pane = el("div");
   pane.style.cssText = "position:sticky;top:60px;width:240px";
   pane.append(el("div", { "data-component": "SplitPageLayout.Pane" }, "GitHub's file tree"));
@@ -219,7 +219,7 @@ function githubPage(): HTMLElement {
   content.style.cssText = "flex:1;min-height:2000px";
   layout.append(toolbar, pane, content);
   const comments = el("aside", {}, "GitHub's comments panel, which stays usable beside the view");
-  comments.style.cssText = "position:sticky;top:0;align-self:flex-start;width:320px;height:100vh;padding:16px;border-left:1px solid #d1d9e0";
+  comments.style.cssText = "position:sticky;top:0;align-self:flex-start;width:320px;height:100vh;padding:16px;border-left:1px solid var(--borderColor-default)";
   page.append(layout, comments);
   return page;
 }

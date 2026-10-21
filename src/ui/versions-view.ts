@@ -83,6 +83,7 @@ const VIEW_STYLES = `
 * { box-sizing: border-box; }
 :host { display: block; }
 :host([data-mode="docked"]) {
+  box-sizing: border-box;
   position: sticky;
   top: var(--flohub-top, 0px);
   flex: 1 1 100%;
@@ -91,6 +92,7 @@ const VIEW_STYLES = `
   height: calc(100vh - var(--flohub-top, 0px));
   padding: 16px 0 8px;
 }
+:host([data-mode="docked"]) main, :host([data-mode="docked"]) nav.files { overscroll-behavior: auto; }
 :host([data-mode="floating"]) { position: fixed; z-index: 100; inset: 72px 16px 16px; box-shadow: var(--vd-shadow); border-radius: 12px; }
 .surface {
   display: flex;
@@ -283,6 +285,8 @@ details.unchanged ul { margin: 6px 0 0; padding-left: 20px; font: 12px/20px var(
 @media (prefers-reduced-motion: reduce) { .chevron, .files .folder svg { transition: none; } }
 `;
 
+/** How long after docking the view keeps scrolling to its sticky place while the page above it grows. */
+const ALIGN_MS = 3000;
 /** Marks the element the view is docked in, so the page's own file tree and diff beside it hide. */
 const DOCKED = "data-flohub-versions";
 /** Hides GitHub's file tree and diff while the view takes their place. */
@@ -331,6 +335,8 @@ export class VersionsView {
   /** The pull request the view shows, and how to fetch its versions again when it opens on it once more. */
   private shown: { key: string; revalidate: () => Promise<void> } | null = null;
   private onClose: (() => void) | undefined;
+  /** Until when the view keeps scrolling the page to its sticky place, while the page above it still grows. */
+  private alignUntil = 0;
 
   constructor() {
     this.host = document.createElement("flohub-versions");
@@ -359,12 +365,25 @@ export class VersionsView {
   place(): void {
     const dock = findDock(document);
     if (dock) {
-      if (this.host.parentElement !== dock.parent || this.host.dataset.mode !== "docked") {
+      const moved = this.host.parentElement !== dock.parent || this.host.dataset.mode !== "docked";
+      if (moved) {
         dock.parent.setAttribute(DOCKED, "");
         dock.before.before(this.host);
       }
       this.host.dataset.mode = "docked";
       this.host.style.setProperty("--flohub-top", `${dock.top}px`);
+      // Below the page's header the view would reach past the window; scrolled up to its sticky place, it fits. The
+      // header may still grow after the view docks (the bar mounts, GitHub renders lazily), so it keeps that place a
+      // little longer, until the viewer scrolls themselves.
+      if (moved) {
+        this.alignUntil = Date.now() + ALIGN_MS;
+        const stop = () => {
+          this.alignUntil = 0;
+        };
+        for (const type of ["wheel", "touchstart", "keydown"]) addEventListener(type, stop, { once: true, passive: true });
+      }
+      const below = this.host.getBoundingClientRect().top - dock.top;
+      if (Date.now() < this.alignUntil && below > 0) scrollBy({ top: below });
     } else if (!this.host.isConnected || this.host.dataset.mode !== "floating") {
       undock();
       this.host.dataset.mode = "floating";
