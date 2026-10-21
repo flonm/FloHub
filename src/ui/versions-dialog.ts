@@ -87,9 +87,9 @@ select {
 .error { margin: 0; color: var(--vd-danger); }
 .error:empty { display: none; }
 .body { flex: 1; min-height: 0; display: flex; }
-main { flex: 1; min-width: 0; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+main { position: relative; flex: 1; min-width: 0; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 
-nav.files { flex: none; width: 280px; overflow: auto; padding: 8px; border-right: 1px solid var(--vd-border); font-size: 12px; }
+nav.files { position: relative; flex: none; width: 280px; overflow: auto; padding: 8px; border-right: 1px solid var(--vd-border); font-size: 12px; }
 nav.files:empty { display: none; }
 .files-head { display: flex; align-items: center; gap: 8px; padding: 4px 8px 8px; color: var(--vd-muted); font-weight: 600; }
 .files-head .counts { margin-left: auto; }

@@ -683,6 +683,14 @@ check(
   (await rebaseFile.locator(".line[data-outer='+'] .num").allInnerTexts()).join(",") === ",43,,44",
   "lines are numbered as the version they come from numbers them",
 );
+const viewport = page.viewportSize();
+await page.setViewportSize({ width: 1280, height: 400 });
+const dialogScroll = await versions.evaluate((dialog) => ({ client: dialog.clientHeight, scroll: dialog.scrollHeight }));
+check(
+  dialogScroll.scroll === dialogScroll.client,
+  `only the diff and the file tree scroll, never the dialog around them: ${JSON.stringify(dialogScroll)}`,
+);
+if (viewport) await page.setViewportSize(viewport);
 check(
   (await versions.locator("details.unchanged > summary").innerText()).startsWith("1 file makes the same change"),
   "docs/same.md, whose hunk only moved, counts as unchanged",
