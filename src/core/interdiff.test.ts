@@ -1,5 +1,21 @@
 import { describe, expect, test } from "bun:test";
-import { diffLines, diffstat, headerLabels, interdiff, type LineKind, lineNumbers, patchLines, splitLine, type VersionFile, wordDiff } from "./interdiff";
+import {
+  diffLines,
+  diffstat,
+  fileVerdict,
+  headerLabels,
+  type InterdiffLine,
+  interdiff,
+  isWholeFileHunk,
+  type LineKind,
+  lineNumbers,
+  patchLines,
+  splitLine,
+  uniformKind,
+  type VersionFile,
+  versionDiff,
+  wordDiff,
+} from "./interdiff";
 
 const file = (filename: string, patch: string | undefined, extra: Partial<VersionFile> = {}): VersionFile => ({
   filename,
@@ -239,7 +255,7 @@ describe("wordDiff", () => {
 });
 
 describe("headerLabels", () => {
-  test("names new, deleted and renamed files, and a rename's target only when it changed", () => {
+  test("names where a renamed file came from, but not where it went, which its path shows", () => {
     expect(
       headerLabels([
         { mark: " ", text: "rename from a.ts" },
@@ -251,12 +267,63 @@ describe("headerLabels", () => {
         { mark: "-", text: "rename to b.ts" },
         { mark: "+", text: "rename to c.ts" },
       ]),
-    ).toEqual([
-      { label: "Renamed to b.ts", mark: "-" },
-      { label: "Renamed to c.ts", mark: "+" },
-    ]);
-    expect(headerLabels([{ mark: "+", text: "new file" }])).toEqual([{ label: "New file", mark: "+" }]);
-    expect(headerLabels([{ mark: "-", text: "deleted file" }])).toEqual([{ label: "Deleted file", mark: "-" }]);
+    ).toEqual([]);
+  });
+
+  test("leaves saying a file is new or deleted to its verdict", () => {
+    expect(headerLabels([{ mark: "+", text: "new file" }])).toEqual([]);
+    expect(headerLabels([{ mark: "-", text: "deleted file" }])).toEqual([]);
+  });
+});
+
+describe("fileVerdict", () => {
+  test.each([
+    ["added", null, "added", "New file", "success"],
+    ["added", null, "removed", "Deleted", "danger"],
+    ["added", null, "modified", "Newly changed", "success"],
+    ["dropped", "added", null, "Deleted", "danger"],
+    ["dropped", "removed", null, "Restored", "success"],
+    ["dropped", "modified", null, "No longer changed", "danger"],
+    ["changed", "modified", "removed", "Deleted", "danger"],
+    ["changed", "removed", "modified", "Restored", "success"],
+    ["changed", "added", "added", "Changed", "accent"],
+    ["changed", "removed", "removed", "Changed", "accent"],
+    ["opaque", "modified", "modified", "Can't compare", "muted"],
+    ["unchanged", "modified", "modified", "Unchanged", "muted"],
+  ] as const)("a %s file that was %p before and %p after reads %p", (change, before, after, label, tone) => {
+    expect(fileVerdict({ change, status: { before, after } })).toEqual({ label, tone });
+  });
+});
+
+const patchLine = (display: string): InterdiffLine => ({ mark: "-", text: display, display, left: null, right: null });
+
+describe("uniformKind", () => {
+  test("a new file's lines are all added, hunk headers and the no-newline note aside", () => {
+    expect(uniformKind([patchLine("@@ -0,0 +1,2 @@"), patchLine("+a"), patchLine("+b"), patchLine(String.raw`\ No newline at end of file`)])).toBe("+");
+  });
+
+  test("a deleted file's lines are all removed", () => {
+    expect(uniformKind([patchLine("-a"), patchLine("-b")])).toBe("-");
+  });
+
+  test("a patch with context or both kinds has none", () => {
+    expect(uniformKind([patchLine("+a"), patchLine(" b")])).toBeNull();
+    expect(uniformKind([patchLine("+a"), patchLine("-b")])).toBeNull();
+    expect(uniformKind([patchLine(" a")])).toBeNull();
+    expect(uniformKind([])).toBeNull();
+  });
+});
+
+describe("isWholeFileHunk", () => {
+  test.each([
+    ["@@ -0,0 +1,59 @@", true],
+    ["@@ -0,0 +1 @@", true],
+    ["@@ -1,12 +0,0 @@", true],
+    ["@@ -0,0 +1,3 @@ fn", true],
+    ["@@ -1,4 +1,5 @@", false],
+    ["@@ -10,0 +11,2 @@", false],
+  ])("%p only says the file is new or deleted: %p", (display, whole) => {
+    expect(isWholeFileHunk(display)).toBe(whole);
   });
 });
 
@@ -270,5 +337,34 @@ describe("diffstat", () => {
     [30, 20, ["add", "add", "add", "del", "del"]],
   ])("%p added and %p removed fill the squares in proportion", (added, removed, squares) => {
     expect(diffstat(added, removed)).toEqual(squares as ReturnType<typeof diffstat>);
+  });
+});
+
+describe("versionDiff", () => {
+  const modified = { filename: "src/a.ts", status: "modified", sha: "a1", patch: "@@ -1,3 +1,3 @@\n keep\n-old\n+new\n tail" };
+
+  test("shows one version's own changes as a plain diff, marked by what the pull request does", () => {
+    const [diff] = versionDiff([modified]);
+    expect(diff?.lines.map((line) => `${line.mark}${line.left ?? ""}/${line.right ?? ""}`)).toEqual([" /", " 1/1", "-2/", "+/2", " 3/3"]);
+    expect([diff?.added, diff?.removed, diff?.change]).toEqual([1, 1, "changed"]);
+    expect(diff?.hunks).toHaveLength(1);
+  });
+
+  test("a file the version adds or deletes reads as new or deleted", () => {
+    const [added] = versionDiff([{ ...modified, status: "added", patch: "@@ -0,0 +1 @@\n+new" }]);
+    expect(fileVerdict(added!).label).toBe("New file");
+    const [removed] = versionDiff([{ ...modified, status: "removed", patch: "@@ -1 +0,0 @@\n-old" }]);
+    expect(fileVerdict(removed!).label).toBe("Deleted");
+  });
+});
+
+describe("a kept line remembers where the older version had it", () => {
+  test("so a comment on the older version finds it, though the newer one numbers it differently", () => {
+    const before = { filename: "a.ts", status: "modified", sha: "a1", patch: "@@ -10,2 +10,3 @@\n keep\n+added\n tail" };
+    const after = { filename: "a.ts", status: "modified", sha: "a2", patch: "@@ -20,2 +20,4 @@\n+first\n keep\n+added\n tail" };
+    const [compared] = interdiff([before], [after]);
+    const kept = compared?.lines.find((line) => line.display === "+added");
+    expect([kept?.mark, kept?.right, kept?.origin?.right]).toEqual([" ", 22, 11]);
+    expect(compared?.lines.find((line) => line.display === "+first")?.origin).toBeUndefined();
   });
 });

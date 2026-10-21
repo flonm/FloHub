@@ -1,6 +1,7 @@
 import {
   fetchOverview,
   fetchPendingComments,
+  fetchReviewComment,
   fetchVersionPatch,
   fetchVersions,
   fetchViewedFiles,
@@ -10,10 +11,20 @@ import {
   rerequestReview,
   setFileViewed,
   submitReview,
+  type VersionPatch,
 } from "./api/github";
 import { clearInbox, ensureInboxAlarm, INBOX_ALARM, refreshInbox, refreshInboxAgain } from "./api/inbox-sync";
 import type { Message, Reply, ReplyByType } from "./api/messages";
 import { clearOverviewCache, queueCacheWrite, writeCachedOverview } from "./api/overview-cache";
+import {
+  clearVersionCache,
+  patchKey,
+  queueVersionCache,
+  readCachedPatch,
+  writeCachedHistory,
+  writeCachedPatch,
+} from "./api/version-cache";
+import type { PullRef } from "./core/pull-ref";
 import { REVIEW_SCOPES_KEY } from "./core/review-scope";
 
 chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) => {
@@ -31,6 +42,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "sync" && Object.hasOwn(changes, REVIEW_SCOPES_KEY)) void refreshInboxAgain().catch(() => undefined);
   if (area !== "local" || !("token" in changes)) return;
   void queueCacheWrite(clearOverviewCache);
+  void queueVersionCache(clearVersionCache);
   void clearInbox().then(async () => refreshInbox()).catch(() => undefined);
 });
 
@@ -71,10 +83,18 @@ async function handle(message: Message): Promise<Reply<ReplyByType[Message["type
         return { ok: true, value: null };
       }
       case "versions": {
-        return { ok: true, value: await fetchVersions(message.ref) };
+        const token = await readToken();
+        const history = await fetchVersions(message.ref);
+        void queueVersionCache(async () => {
+          if ((await readToken()) === token) await writeCachedHistory(message.ref, history);
+        });
+        return { ok: true, value: history };
       }
       case "version-patch": {
-        return { ok: true, value: await fetchVersionPatch(message.ref, message.head, message.bases) };
+        return { ok: true, value: await versionPatch(message.ref, message.head, message.bases) };
+      }
+      case "review-comment": {
+        return { ok: true, value: await fetchReviewComment(message.ref, message.link) };
       }
       case "open-options": {
         await chrome.runtime.openOptionsPage();
@@ -85,4 +105,18 @@ async function handle(message: Message): Promise<Reply<ReplyByType[Message["type
     if (error instanceof GitHubError) return { ok: false, code: error.code, message: error.message };
     return { ok: false, code: "failed", message: "Could not reach GitHub." };
   }
+}
+
+/** Answers from the stored patches when it can: a version's patch never changes, but fetching it takes a while. */
+async function versionPatch(ref: PullRef, head: string, bases: string[]): Promise<VersionPatch> {
+  const key = patchKey(ref, head, bases);
+  // A hit marks the patch as used, a write, so the read queues behind the writes before it.
+  const cached = await queueVersionCache(async () => readCachedPatch(key));
+  if (cached) return cached;
+  const token = await readToken();
+  const patch = await fetchVersionPatch(ref, head, bases);
+  void queueVersionCache(async () => {
+    if ((await readToken()) === token) await writeCachedPatch(key, patch);
+  });
+  return patch;
 }

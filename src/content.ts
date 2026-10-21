@@ -4,7 +4,7 @@ import { DiffHighlights, type HighlightStatus } from "./ui/diff-highlights";
 import { Favicon, faviconUrl } from "./ui/favicon";
 import { ViewedTree } from "./ui/file-tree";
 import { send } from "./api/messages";
-import { type PullRef, parsePullRef, pullKey, pullTab } from "./core/pull-ref";
+import { isWholeFilesTab, type PullRef, parsePullRef, pullKey, pullTab } from "./core/pull-ref";
 import { ReviewDialog } from "./ui/review-dialog";
 import { deriveDiscussion, lastReviewBy } from "./core/discussion";
 import { deriveReviewers, type Reviewer } from "./core/reviewers";
@@ -13,8 +13,20 @@ import type { Overview } from "./api/github";
 import { readCachedOverview } from "./api/overview-cache";
 import { deriveStack } from "./core/stack";
 import { Toast } from "./ui/toast";
-import { baseCandidates } from "./core/versions";
-import { VersionsDialog } from "./ui/versions-dialog";
+import {
+  BASE,
+  baseCandidates,
+  formatRangeParam,
+  keepRecentRanges,
+  parseRangeParam,
+  rangeParam,
+  type SavedRange,
+  type VersionHistory,
+} from "./core/versions";
+import { commentJump, type CommentJump, type CommentLink, type JumpTarget, parseCommentLink, storedVersionsWillDo } from "./core/comment-jump";
+import { JumpMenu } from "./ui/jump-menu";
+import { readCachedHistory } from "./api/version-cache";
+import { VersionsView } from "./ui/versions-view";
 
 const AUTO_REFRESH_GAP_MS = 15_000;
 const STICKY_HEADER_HEIGHT = 96;
@@ -26,6 +38,12 @@ const TEXT_FIELDS = "input, textarea, select, [contenteditable]:not([contentedit
 
 const SEEN_KEY = "discussionSeen";
 const SEEN_MEMORY_MS = 60 * 86_400_000;
+/** The range of versions the viewer last compared, by pull request. */
+const RANGES_KEY = "versionRanges";
+/** GitHub's comments panel beside the Files changed diff. */
+const COMMENTS_PANEL = "#docked-side-panel-content";
+/** The URL parameter that keeps the versions view open on the Files changed tab, with the range it compares. */
+const VERSIONS_PARAM = "flohub-versions";
 
 let current: PullRef | null = null;
 let state: BarState = { kind: "loading" };
@@ -46,11 +64,21 @@ let pokes: Record<string, number> = {};
 let highlight: HighlightStatus | null = null;
 let discussionExpanded = false;
 let showBots = false;
+/**
+ * The pull request whose Files changed tab shows the versions view in place of GitHub's diff. It outlasts GitHub's own
+ * navigations, which drop the URL parameter that mirrors it.
+ */
+let versionsWanted: string | null = null;
+/** The range the URL asked for, which the view opens on once. */
+let versionsFromUrl: SavedRange | null = null;
+/** The URL parameter's value for the range on screen. */
+let versionsParam = "";
 /** When the viewer last opened the pull request on screen before this visit, once read from storage. */
 let visit: { key: string; previous: string | null } | null = null;
 const busy = new Set<string>();
 const dialog = new ReviewDialog();
-const versionsDialog = new VersionsDialog();
+const versionsView = new VersionsView();
+const jumpMenu = new JumpMenu();
 const toast = new Toast();
 const favicon = new Favicon();
 const matchShortcut = createShortcutMatcher();
@@ -118,6 +146,7 @@ document.addEventListener("visibilitychange", () => {
 });
 addEventListener("focus", () => void load(false));
 addEventListener("keydown", onKeydown, true);
+document.addEventListener("click", onCommentLink, { capture: true });
 addEventListener("keypress", swallowClaimedKey, true);
 addEventListener("keyup", swallowClaimedKey, true);
 
@@ -177,7 +206,36 @@ function sync(): void {
   if (!inline.host.isConnected) mountInline(ref);
   viewedTree.sync(ref);
   highlights.sync(ref);
+  syncVersions(ref);
   updateVisibility();
+}
+
+/** Shows the versions view on the Files changed tab while the viewer keeps it open, and nowhere else. */
+function syncVersions(ref: PullRef): void {
+  const key = pullKey(ref);
+  const param = new URL(location.href).searchParams.get(VERSIONS_PARAM);
+  if (param !== null && versionsWanted !== key) {
+    versionsWanted = key;
+    versionsFromUrl = parseRangeParam(param, Date.now());
+    versionsParam = param;
+  }
+  if (versionsWanted !== key || !isWholeFilesTab(location.pathname)) {
+    versionsView.close();
+    return;
+  }
+  if (param === null) writeVersionsParam(versionsParam);
+  if (versionsView.isOpen) versionsView.place();
+  else openVersions(ref);
+}
+
+/** @param value The range to keep in the URL, or null to drop the parameter. */
+function writeVersionsParam(value: string | null): void {
+  const url = new URL(location.href);
+  if (url.searchParams.get(VERSIONS_PARAM) === value) return;
+  if (value === null) url.searchParams.delete(VERSIONS_PARAM);
+  else url.searchParams.set(VERSIONS_PARAM, value);
+  // GitHub's router keeps its own state in the history entry, so it stays.
+  history.replaceState(history.state, "", url);
 }
 
 /**
@@ -390,7 +448,7 @@ async function rerequest(reviewer: Reviewer): Promise<void> {
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  if (!current || dialog.isOpen || versionsDialog.isOpen) return;
+  if (!current || dialog.isOpen) return;
   const { action, claim } = matchShortcut({
     key: event.key,
     metaKey: event.metaKey,
@@ -462,7 +520,9 @@ function navigateStack(direction: 1 | -1): void {
     toast.show(direction === 1 ? "Already at the top of the stack." : "Already at the bottom of the stack.", "info");
     return;
   }
-  location.assign(`${target.url}${pullTab(location.pathname)}`);
+  // The versions view is a setting of the page, so the next layer opens on it too, on its own range.
+  const versions = versionsView.isOpen ? `?${VERSIONS_PARAM}=` : "";
+  location.assign(`${target.url}${pullTab(location.pathname)}${versions}`);
 }
 
 async function approveNow(): Promise<void> {
@@ -501,12 +561,142 @@ async function submitReview(ref: PullRef, event: ReviewEvent, body: string): Pro
   return null;
 }
 
+/** Opens the versions view on the Files changed tab, or closes it when it's open. */
 function compareVersions(): void {
   const ref = current;
   if (!ref) return;
-  versionsDialog.open({
+  if (versionsView.isOpen) {
+    closeVersions();
+    return;
+  }
+  versionsWanted = pullKey(ref);
+  if (isWholeFilesTab(location.pathname)) syncVersions(ref);
+  else location.assign(`https://github.com/${ref.owner}/${ref.repo}/pull/${ref.number}/changes?${VERSIONS_PARAM}=${versionsParam}`);
+}
+
+/**
+ * Takes over the links from a comment in GitHub's comments panel to its code. GitHub's own jump doesn't scroll while
+ * the panel is open, and sends an outdated comment to the single-commit view (see docs/github-quirks.md); the menu
+ * offers the versions view instead. The link alone says which comment it is: the panel draws a comment in more than
+ * one shape, and not always around its links.
+ * @param event A click anywhere on the page.
+ */
+function onCommentLink(event: MouseEvent): void {
+  const ref = current;
+  if (!ref || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  const [target] = event.composedPath();
+  if (!(target instanceof Element)) return;
+  const link = target.closest<HTMLAnchorElement>("a[href]");
+  // A link in a comment's text may point at another comment; only the comment's own links are its jump to the code.
+  if (!link?.closest(COMMENTS_PANEL) || link.closest(".markdown-body")) return;
+  const named = parseCommentLink(link.getAttribute("href") ?? "", location.href);
+  if (!named) return;
+  // The page's capture listeners sit below the document, so GitHub never sees the click.
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  void openJumpMenu(ref, link, named);
+}
+
+async function openJumpMenu(ref: PullRef, link: HTMLAnchorElement, named: CommentLink): Promise<void> {
+  if (jumpMenu.openedFrom === link) {
+    jumpMenu.close();
+    return;
+  }
+  jumpMenu.open(link, { kind: "loading" });
+  const fallback = () => location.assign(link.href);
+  const [place, stored] = await Promise.all([send({ type: "review-comment", ref, link: named }), readCachedHistory(ref)]);
+  if (jumpMenu.openedFrom !== link) return;
+  if (!place.ok) {
+    jumpMenu.open(link, { kind: "failed", message: place.message, fallback });
+    return;
+  }
+  const comment = place.value;
+  const history = storedVersionsWillDo(stored, comment.originalCommit) ? stored : await freshVersions(ref);
+  if (jumpMenu.openedFrom !== link) return;
+  if (typeof history === "string") {
+    jumpMenu.open(link, { kind: "failed", message: history, fallback });
+    return;
+  }
+  const jump = commentJump(history.versions, comment, Date.now());
+  if (!jump) {
+    jumpMenu.open(link, { kind: "failed", message: "FloHub knows no versions of this pull request.", fallback });
+    return;
+  }
+  const name = `v${jump.version.number}`;
+  const nearest = jump.exact
+    ? undefined
+    : `The comment was written on ${comment.originalCommit.slice(0, 7)}, which isn't a known version, so these show ${name}, the version current then.`;
+  const choose = (show: () => void) => () => {
+    if (nearest) toast.show(nearest, "info");
+    show();
+  };
+  const { since } = jump;
+  jumpMenu.open(link, {
+    kind: "ready",
+    choices: [
+      {
+        label: `Changes since ${name}`,
+        detail: since ? `How the code changed from ${name}, where the comment was written, to the current version` : `${name}, where the comment was written, is the current version`,
+        disabled: !since,
+        run: choose(() => since && showInVersions(ref, since)),
+      },
+      { label: `Code at ${name}`, detail: `The pull request's changes as ${name} made them, as the comment saw them`, run: choose(() => showInVersions(ref, jump.at)) },
+      {
+        label: "In the current diff",
+        detail: jump.current ? "Where the comment sits in the pull request's current changes" : "The comment is outdated: its lines are gone from the current diff",
+        disabled: !jump.current,
+        run: () => showCurrent(ref, named.kind === "comment" ? named.id : null, jump),
+      },
+    ],
+    ...(nearest && { note: nearest }),
+  });
+}
+
+/** @returns The pull request's versions as GitHub has them now, or why there are none. */
+async function freshVersions(ref: PullRef): Promise<VersionHistory | string> {
+  const reply = await send({ type: "versions", ref });
+  return reply.ok ? reply.value : reply.message;
+}
+
+/** Opens the versions view on a range, and scrolls it to the commented line. */
+function showInVersions(ref: PullRef, target: JumpTarget): void {
+  versionsWanted = pullKey(ref);
+  if (!isWholeFilesTab(location.pathname)) {
+    location.assign(`https://github.com/${ref.owner}/${ref.repo}/pull/${ref.number}/changes?${VERSIONS_PARAM}=${rangeParam(target.range)}`);
+    return;
+  }
+  if (!versionsView.isOpen) {
+    versionsFromUrl = target.range;
+    openVersions(ref);
+  }
+  versionsView.goTo(target.range, target.line);
+}
+
+/** Scrolls to the comment in the current diff: the versions view's, while it's open, or else GitHub's own. */
+function showCurrent(ref: PullRef, id: number | null, jump: CommentJump): void {
+  if (!jump.current) return;
+  if (versionsView.isOpen) {
+    showInVersions(ref, { range: { from: BASE, to: "", toCurrent: true, at: Date.now() }, line: jump.current });
+    return;
+  }
+  // GitHub draws the thread in its diff too, under the comment's number.
+  const thread = id === null ? null : document.getElementById(`r${id}`);
+  if (thread) thread.scrollIntoView({ block: "center" });
+  else toast.show(`GitHub hasn't drawn the comment in its diff yet. Scroll to ${jump.current.path} and it will.`, "info");
+}
+
+function closeVersions(): void {
+  versionsWanted = null;
+  versionsView.close();
+  writeVersionsParam(null);
+}
+
+function openVersions(ref: PullRef): void {
+  versionsView.open({
+    key: pullKey(ref),
     number: ref.number,
     repoUrl: `https://github.com/${ref.owner}/${ref.repo}`,
+    cachedVersions: async () => readCachedHistory(ref),
     versions: async () => {
       const reply = await send({ type: "versions", ref });
       if (!reply.ok) throw new Error(reply.message);
@@ -517,7 +707,37 @@ function compareVersions(): void {
       if (!reply.ok) throw new Error(reply.message);
       return reply.value;
     },
+    savedRange: async () => {
+      const fromUrl = versionsFromUrl;
+      versionsFromUrl = null;
+      const ranges = await readSavedRanges();
+      return fromUrl ?? ranges[pullKey(ref)] ?? null;
+    },
+    saveRange: (range) => void saveRange(pullKey(ref), range),
+    onShow: (older, newer) => {
+      versionsParam = formatRangeParam(older, newer);
+      if (versionsView.isOpen) writeVersionsParam(versionsParam);
+    },
+    onClose: closeVersions,
   });
+}
+
+async function readSavedRanges(): Promise<Record<string, SavedRange>> {
+  try {
+    const stored = await chrome.storage.local.get(RANGES_KEY);
+    return (stored[RANGES_KEY] as Record<string, SavedRange> | undefined) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+async function saveRange(key: string, range: SavedRange): Promise<void> {
+  const ranges = { ...(await readSavedRanges()), [key]: range };
+  try {
+    await chrome.storage.local.set({ [RANGES_KEY]: keepRecentRanges(ranges, range.at) });
+  } catch {
+    // The next visit opens on the default range instead.
+  }
 }
 
 function isOwnPull(): boolean {

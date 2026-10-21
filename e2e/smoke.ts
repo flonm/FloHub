@@ -380,6 +380,13 @@ function createFixture(
         });
         return;
       }
+      if (graphql?.query.includes("comments(first: 1) { nodes { databaseId")) {
+        // PRRT_kwABzQN4 is thread 888, the number an outdated comment's link names it by.
+        await route.fulfill({
+          json: { data: { repository: { pullRequest: { reviewThreads: { nodes: [{ id: "PRRT_kwABzQN4", comments: { nodes: [{ databaseId: 999 }] } }] } } } } },
+        });
+        return;
+      }
       if (graphql?.query.includes("headRefName")) {
         await route.fulfill({ json: { data: { repository: { b0: { nodes: [] } } } } });
         return;
@@ -481,6 +488,25 @@ function createFixture(
         } else {
           await route.fulfill({ json: reviewState.pendingComments === null ? [] : [{ id: 9, state: "PENDING" }] });
         }
+        return;
+      }
+      const comment = /\/pulls\/comments\/(\d+)$/u.exec(request.url());
+      if (comment) {
+        // 999 was written on the reviewed v1, on a README.md line the head renumbers, and is outdated there; 777 on the
+        // head, on the same line as the head numbers it.
+        const outdated = comment[1] === "999";
+        await route.fulfill({
+          json: {
+            path: "README.md",
+            original_commit_id: outdated ? "aaaaaaa1" : "ccccccc3",
+            original_line: outdated ? 305 : 326,
+            original_start_line: null,
+            line: outdated ? null : 326,
+            start_line: null,
+            side: "RIGHT",
+            created_at: ago(outdated ? 40 : 1),
+          },
+        });
         return;
       }
       const compare = /\/compare\/(\w+)\.\.\.(\w+)/u.exec(request.url());
@@ -633,7 +659,7 @@ check(
   "versions row counts the force pushes",
 );
 await inlineBar(page).getByRole("button", { name: "Compare versions" }).click();
-const versions = page.locator("flohub-versions dialog");
+const versions = page.locator("flohub-versions .surface");
 await versions.locator("details.file").first().waitFor();
 check(
   (await versions.getByLabel("From").inputValue()) === "1" && (await versions.getByLabel("To").inputValue()) === "3",
@@ -643,12 +669,36 @@ const fileRows = (await versions.locator("details.file > summary").allInnerTexts
 check(
   JSON.stringify(fileRows) ===
     JSON.stringify([
-      "README.md Changed +1 −1 View file at v3",
-      "cmd/adopt_test.go Newly changed Only in v3: New file +4 View file at v3",
+      "cmd/adopt_test.go New file +4 View file at v3",
       "cmd/legacy.go No longer changed −3 View file at v1",
       "cmd/rebase.go Changed +2 −1 View file at v3",
+      "README.md Changed +1 −1 View file at v3",
     ]),
-  `interdiff lists files whose change differs, ignoring moved hunks: ${JSON.stringify(fileRows)}`,
+  `interdiff lists files whose change differs, ignoring moved hunks, folders first: ${JSON.stringify(fileRows)}`,
+);
+const treeRows = await versions
+  .locator("nav.files button")
+  .evaluateAll((buttons) => buttons.map((row) => [...row.querySelectorAll(":scope > .name, :scope > .counts > span")].map((part) => part.textContent).join(" ")));
+check(
+  JSON.stringify(treeRows) === JSON.stringify(["cmd", "adopt_test.go +4", "legacy.go −3", "rebase.go +2 −1", "README.md +1 −1"]),
+  `the file tree lists the compared files by folder with their version-diff totals: ${JSON.stringify(treeRows)}`,
+);
+const readmeRow = versions.locator("nav.files button.file", { hasText: "README.md" });
+await readmeRow.click();
+await page.waitForFunction(() => {
+  const root = document.querySelector("flohub-versions")?.shadowRoot;
+  const scroller = root?.querySelector("main")?.getBoundingClientRect();
+  const target = [...(root?.querySelectorAll("details.file") ?? [])].find((file) => file.textContent.includes("README.md"));
+  const top = target?.getBoundingClientRect().top;
+  return scroller !== undefined && top !== undefined && top >= scroller.top - 1 && top < scroller.bottom;
+});
+check(
+  (await readmeRow.getAttribute("aria-current")) === "location" &&
+    (await page.evaluate(() => {
+      const active = document.querySelector("flohub-versions")?.shadowRoot?.activeElement;
+      return active?.localName === "summary" && active.textContent.includes("README.md");
+    })),
+  "a file tree row scrolls to its file, moves focus there and marks the row",
 );
 const rebaseFile = versions.locator("details.file", { hasText: "cmd/rebase.go" });
 check(
@@ -659,6 +709,14 @@ check(
   (await rebaseFile.locator(".line[data-outer='+'] .num").allInnerTexts()).join(",") === ",43,,44",
   "lines are numbered as the version they come from numbers them",
 );
+const viewport = page.viewportSize();
+await page.setViewportSize({ width: 1280, height: 400 });
+const viewScroll = await versions.evaluate((surface) => ({ client: surface.clientHeight, scroll: surface.scrollHeight }));
+check(
+  viewScroll.scroll === viewScroll.client,
+  `only the diff and the file tree scroll, never the view around them: ${JSON.stringify(viewScroll)}`,
+);
+if (viewport) await page.setViewportSize(viewport);
 check(
   (await versions.locator("details.unchanged > summary").innerText()).startsWith("1 file makes the same change"),
   "docs/same.md, whose hunk only moved, counts as unchanged",
@@ -675,8 +733,25 @@ check(
 await versions.getByLabel("From").selectOption("3");
 await versions.getByText("No differences.").waitFor();
 check(true, "picking the same version on both sides shows no differences");
+await versions.getByLabel("From").selectOption("1");
+await versions.getByLabel("To").selectOption("2");
+await versions.locator("details.file").first().waitFor();
+const versionsParam = async () => page.evaluate(() => new URL(location.href).searchParams.get("flohub-versions"));
+check((await versionsParam()) === "aaaaaaa..bbbbbbb", `the URL keeps the range on screen: ${await versionsParam()}`);
+check(
+  (await page.locator("flohub-versions").getAttribute("data-mode")) === "floating",
+  "on GitHub's classic Files changed page the versions view floats over the diff",
+);
+await versions.getByLabel("To").focus();
 await page.keyboard.press("Escape");
-check(await versions.isHidden(), "Escape closes the versions dialog");
+check(await versions.isHidden(), "Escape inside the versions view closes it");
+check((await versionsParam()) === null, "closing the versions view takes the range off the URL");
+await inlineBar(page).getByRole("button", { name: "Compare versions" }).click();
+await versions.locator("details.file").first().waitFor();
+const pickedRange = async () => `${await versions.getByLabel("From").inputValue()}→${await versions.getByLabel("To").inputValue()}`;
+check((await pickedRange()) === "1→2", `reopening the versions view keeps the range picked: ${await pickedRange()}`);
+await versions.getByRole("button", { name: "Close" }).click();
+check(await versions.isHidden(), "Close closes the versions view");
 
 const readmeDiff = page.locator(`#${await diffAnchorOf("README.md")}`);
 const changedCell = readmeDiff.locator("[data-flohub-since]");
@@ -729,6 +804,30 @@ check(
   fixture.compareLog.length === comparesBeforeReload,
   `a reload takes the highlights from storage, without comparing again: ${fixture.compareLog.length - comparesBeforeReload} new compares`,
 );
+await inlineBar(page).getByRole("button", { name: "Compare versions" }).click();
+await versions.locator("details.file").first().waitFor();
+check(
+  (await pickedRange()) === "1→2" && fixture.compareLog.length === comparesBeforeReload,
+  `after a reload the versions view opens on the range picked last, without comparing again: ${await pickedRange()}, ${fixture.compareLog.length - comparesBeforeReload} new compares`,
+);
+const storedVersions = await (light.serviceWorkers()[0] ?? (await light.waitForEvent("serviceworker"))).evaluate(async () => {
+  const local = await chrome.storage.local.get(["versionPatchIndex", "versionHistories", "versionRanges"]);
+  const ranges = local.versionRanges as Record<string, { from: string; to: string }> | undefined;
+  return {
+    patches: Object.keys((local.versionPatchIndex as object | undefined) ?? {}).length,
+    histories: Object.keys((local.versionHistories as object | undefined) ?? {}),
+    ranges: Object.values(ranges ?? {}).map((range) => `${range.from}→${range.to}`),
+  };
+});
+check(
+  storedVersions.patches >= 2 && storedVersions.histories.length === 1 && storedVersions.ranges.join(",") === "aaaaaaa1→bbbbbbb2",
+  `the versions, their patches and the range picked are stored, so they outlast the service worker: ${JSON.stringify(storedVersions)}`,
+);
+await versions.getByRole("button", { name: "Close" }).click();
+await page.goto(`${PULL_URL}/files?flohub-versions=aaaaaaa..`);
+await versions.locator("details.file").first().waitFor();
+check((await pickedRange()) === "1→3", `a link with a range opens the versions view on it, an empty newer side on the head: ${await pickedRange()}`);
+await versions.getByRole("button", { name: "Close" }).click();
 
 // GitHub's React diff, which it serves to signed-in viewers: the same README.md lines in its split markup.
 const reactRow = (left: number | null, right: number | null, marker: string, text: string) => {
@@ -771,6 +870,95 @@ check(
   "in GitHub's React diff, the file header gets the badge",
 );
 await reactPage.close();
+
+// GitHub's split Files changed layout: the versions view takes the place of the file tree and diff, beside the comments.
+const SPLIT_PAGE = `<!doctype html><html><head><title>Split layout</title></head><body>
+<header style="height:300px">The pull request's title, tabs and FloHub's bar</header>
+<div id="diff-comparison-viewer-container" style="display:flex"><div style="flex:1;display:flex;flex-wrap:wrap">
+<section style="position:sticky;top:0;flex:1 1 100%;height:60px">Toolbar</section>
+<div id="github-pane" style="position:sticky;top:60px;width:300px"><div data-component="SplitPageLayout.Pane">GitHub's file tree</div></div>
+<div id="github-diff" data-component="SplitPageLayout.Content" style="flex:1;height:3000px">GitHub's diff</div>
+</div><aside id="docked-side-panel-content" style="width:320px"><textarea aria-label="Reply"></textarea>
+<div id="panelpullrequestreview-1"><h2><a id="outdated-link" href="/flohub/split-diff/pull/1/changes/aaaaaaa1?new_files_changed=true#r888">README.md</a></h2>
+<div class="markdown-body"><p>Is this still true? See <a id="text-link" href="/flohub/split-diff/pull/1/changes#r777">the newer one</a>.</p></div></div>
+<div id="panelpullrequestreview-2"><h2><a id="current-link" href="/flohub/split-diff/pull/1/changes#r777">README.md</a></h2></div>
+</aside></div></body></html>`;
+await light.route("https://github.com/flohub/split-diff/**", async (route) => route.fulfill({ body: SPLIT_PAGE, contentType: "text/html" }));
+const splitPage = await light.newPage();
+await splitPage.goto("https://github.com/flohub/split-diff/pull/1/changes?flohub-versions=");
+const docked = splitPage.locator("flohub-versions");
+await docked.locator("details.file").first().waitFor();
+const dockedLayout = await splitPage.evaluate(() => {
+  const host = document.querySelector<HTMLElement>("flohub-versions");
+  const box = host?.getBoundingClientRect();
+  return {
+    mode: host?.dataset.mode,
+    top: host && getComputedStyle(host).top,
+    fits: box !== undefined && Math.round(box.top) === 60 && box.bottom <= innerHeight,
+    box: box && [Math.round(box.top), Math.round(box.bottom), innerHeight, Math.round(scrollY)],
+    hidden: ["github-pane", "github-diff"].map((id) => getComputedStyle(document.getElementById(id)!).display),
+  };
+});
+check(
+  dockedLayout.mode === "docked" && dockedLayout.top === "60px" && dockedLayout.hidden.join(",") === "none,none" && dockedLayout.fits,
+  `on GitHub's split layout the versions view takes the place of the file tree and diff, scrolled to fit under the toolbar: ${JSON.stringify(dockedLayout)}`,
+);
+await splitPage.getByLabel("Reply").fill("Looks good now");
+check((await splitPage.getByLabel("Reply").inputValue()) === "Looks good now", "the comments beside the docked view stay usable");
+const jumpLink = splitPage.locator("#outdated-link");
+await jumpLink.click();
+const jumpMenu = splitPage.locator("flohub-jump-menu");
+await jumpMenu.getByRole("menuitem", { name: /^Changes since v1/u }).waitFor();
+check(
+  !splitPage.url().includes("#r888") &&
+    (await jumpMenu.getByRole("menuitem", { name: /^In the current diff/u }).isDisabled()),
+  "a comment's link to its code opens FloHub's menu instead of GitHub's jump, and an outdated comment has no current lines",
+);
+await jumpMenu.getByRole("menuitem", { name: /^Changes since v1/u }).click();
+const target = docked.locator("details.file", { hasText: "README.md" }).locator(".line.target");
+await target.first().waitFor();
+check(
+  (await docked.getByLabel("From").inputValue()) === "1" &&
+    (await docked.getByLabel("To").inputValue()) === "3" &&
+    (await target.count()) === 1 &&
+    (await target.innerText()).includes("Diverged stacks") &&
+    (await target.evaluate((row) => {
+      const box = row.getBoundingClientRect();
+      const pane = row.closest("main")!.getBoundingClientRect();
+      return box.top >= pane.top && box.bottom <= pane.bottom;
+    })),
+  "Changes since v1 compares v1 with the head and marks the commented line, found by the number v1 gave it",
+);
+await jumpLink.click();
+await jumpMenu.getByRole("menuitem", { name: /^Code at v1/u }).click();
+await docked.getByText("Shows the pull request's changes as v1 made them").waitFor();
+check(
+  (await docked.getByLabel("From").inputValue()) === "0" &&
+    (await docked.locator(".line.target").innerText()).includes("Diverged stacks") &&
+    splitPage.url().includes("flohub-versions=base..aaaaaaa"),
+  "Code at v1 shows v1 against the base branch, at the commented line, and the URL says so",
+);
+await splitPage.locator("#current-link").click();
+await jumpMenu.getByRole("menuitem", { name: /^In the current diff/u }).click();
+await docked.getByText("Shows the pull request's changes as v3 made them").waitFor();
+check(
+  (await docked.getByLabel("From").inputValue()) === "0" &&
+    (await docked.getByLabel("To").inputValue()) === "3" &&
+    (await docked.locator(".line.target").innerText()).includes("Diverged stacks"),
+  "a current comment's In the current diff shows the head against the base branch, at the line as the head numbers it",
+);
+await docked.getByRole("button", { name: "Close" }).click();
+check(
+  (await splitPage.evaluate(() => getComputedStyle(document.getElementById("github-diff")!).display)) !== "none" &&
+    !splitPage.url().includes("flohub-versions"),
+  "closing the docked view shows GitHub's diff again and takes the range off the URL",
+);
+await splitPage.locator("#text-link").click();
+check(
+  (await jumpMenu.count()) === 0 && splitPage.url().endsWith("#r777"),
+  "a link in a comment's text stays GitHub's, even when it points at a comment",
+);
+await splitPage.close();
 
 const tree = page.getByRole("tree", { name: "File Tree" });
 const viewedToggle = (path: string) => tree.locator(`flohub-viewed[data-path="${path}"]`);
@@ -990,6 +1178,8 @@ const longestGap = await cachedPage.evaluate(
 );
 check(longestGap < 150, `once shown, the cached stack stays while GitHub re-renders the header (longest gap ${Math.round(longestGap)}ms)`);
 
+// An overview still on its way would store this layer's own entry again over the one the next check plants.
+await inlineBar(cachedPage).locator('.refresh:not([aria-busy="true"])').waitFor({ timeout: 10_000 });
 const [cachedWorker] = cached.serviceWorkers();
 await cachedWorker?.evaluate(async (current) => {
   // oxlint-disable-next-line unicorn/consistent-function-scoping -- the function runs in the service worker, where outer scopes don't exist
@@ -1235,7 +1425,7 @@ await inlineBar(darkPage).getByRole("button", { name: "Compare versions" }).clic
 await darkPage.locator("flohub-versions details.file").first().waitFor();
 await darkPage.waitForTimeout(250);
 await darkPage.screenshot({ path: `${SCREENSHOTS}/versions-dark.png` });
-await darkPage.keyboard.press("Escape");
+await darkPage.locator("flohub-versions").getByRole("button", { name: "Close" }).click();
 await darkPage.mouse.wheel(0, 2400);
 await floatingBar(darkPage).locator(".pill").click();
 await floatingBar(darkPage).locator(".panel").waitFor();

@@ -37,6 +37,15 @@ export const PRIMER_LIGHT: Record<string, string> = {
   "--diffBlob-deletionNum-bgColor": "#ffcecb",
   "--diffBlob-hunkLine-bgColor": "#ddf4ff",
   "--diffBlob-hunkNum-bgColor-rest": "#b6e3ff",
+  "--diffBlob-additionWord-bgColor": "#aceebb",
+  "--diffBlob-deletionWord-bgColor": "rgba(255, 129, 130, 0.4)",
+  "--color-prettylights-syntax-keyword": "#cf222e",
+  "--color-prettylights-syntax-string": "#0a3069",
+  "--color-prettylights-syntax-comment": "#59636e",
+  "--color-prettylights-syntax-constant": "#0550ae",
+  "--color-prettylights-syntax-entity": "#6639ba",
+  "--color-prettylights-syntax-variable": "#953800",
+  "--color-prettylights-syntax-string-regexp": "#116329",
 };
 
 /** The same tokens with GitHub's dark values. */
@@ -70,6 +79,15 @@ export const PRIMER_DARK: Record<string, string> = {
   "--diffBlob-deletionNum-bgColor": "rgba(248, 81, 73, 0.3)",
   "--diffBlob-hunkLine-bgColor": "rgba(56, 139, 253, 0.1)",
   "--diffBlob-hunkNum-bgColor-rest": "rgba(56, 139, 253, 0.4)",
+  "--diffBlob-additionWord-bgColor": "rgba(46, 160, 67, 0.4)",
+  "--diffBlob-deletionWord-bgColor": "rgba(248, 81, 73, 0.4)",
+  "--color-prettylights-syntax-keyword": "#ff7b72",
+  "--color-prettylights-syntax-string": "#a5d6ff",
+  "--color-prettylights-syntax-comment": "#9198a1",
+  "--color-prettylights-syntax-constant": "#79c0ff",
+  "--color-prettylights-syntax-entity": "#d2a8ff",
+  "--color-prettylights-syntax-variable": "#ffa657",
+  "--color-prettylights-syntax-string-regexp": "#7ee787",
 };
 
 /**

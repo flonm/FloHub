@@ -11,6 +11,10 @@ const SCENARIOS: Record<string, { when: string; overrides: Partial<RawStackPull>
   Merging: { when: "In the merge queue", overrides: { isInMergeQueue: true, reviewDecision: "APPROVED" } },
   Draft: { when: "Still a draft", overrides: { isDraft: true } },
   "Merge conflict": { when: "Conflicts with its base", overrides: { mergeable: "CONFLICTING" } },
+  "Do not merge": {
+    when: "Labelled do-not-merge, its label check failing",
+    overrides: { labels: { nodes: [{ name: "do-not-merge" }] }, statusCheckRollup: { state: "FAILURE" } },
+  },
   "Checks failed": { when: "A required check failed", overrides: { statusCheckRollup: { state: "FAILURE" } } },
   "Changes requested": { when: "A reviewer requested changes", overrides: { reviewDecision: "CHANGES_REQUESTED" } },
   "Unresolved comments": {
@@ -69,7 +73,7 @@ const meta = {
     docs: {
       description: {
         component:
-          "The badge on every stack layer, derived from the pull request's state, reviews, checks and conversations. The order matters: a merge conflict outranks failing checks, which outrank a change request, which outranks a bot's opinion. Hover a badge for the reason it says what it says.",
+          "The badge on every stack layer, derived from the pull request's state, reviews, checks and conversations. The order matters: a merge conflict outranks a do-not-merge label, which outranks failing checks, which outrank a change request, which outranks a bot's opinion. Hover a badge for the reason it says what it says.",
       },
     },
   },
@@ -91,6 +95,7 @@ export const AllStatuses: Story = {
   },
 };
 
+export const DoNotMerge: Story = { args: { scenario: "Do not merge" } };
 export const Merging: Story = { args: { scenario: "Merging" } };
 export const UnresolvedComments: Story = { args: { scenario: "Unresolved comments" } };
 export const ReadyToMerge: Story = { args: { scenario: "Ready to merge" } };

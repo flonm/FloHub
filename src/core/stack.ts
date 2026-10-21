@@ -23,6 +23,8 @@ export interface RawStackPull {
   lastEditedAt: string | null;
   mergedAt: string | null;
   statusCheckRollup: { state: "ERROR" | "EXPECTED" | "FAILURE" | "PENDING" | "SUCCESS" } | null;
+  /** Missing in overviews and inboxes cached before FloHub asked for it. */
+  labels?: { nodes: { name: string }[] };
   /** `__typename` is missing in overviews and inboxes cached before FloHub asked for it. */
   latestOpinionatedReviews: { nodes: { state: string; author?: { __typename?: string; login: string } | null }[] };
   reviewThreads: { totalCount: number; nodes: { isResolved: boolean }[] };
@@ -136,6 +138,7 @@ function toEntry(pull: RawStackPull, position: number, current: boolean): StackE
  * `reviewDecision` empty; their decision comes from the latest approvals and change requests.
  * While branch rules still require more reviews, such as a code owner's, a pull request with approvals
  * still needs review, with a detail that says it has approvals.
+ * A `do-not-merge` label outranks the checks, since such a pull request often fails a check on purpose to block merging.
  * An approved pull request is only ready to merge once every conversation is resolved and its checks have finished.
  * A bot's approval or change request, such as an AI reviewer's, never decides the status: only people's reviews count,
  * and a review decision that only a bot's review explains is read as still needing review.
@@ -148,6 +151,9 @@ export function deriveStatus(pull: RawStackPull): { tone: StackTone; label: stri
   if (pull.isInMergeQueue) return { tone: "done", label: "Merging…", detail: "In the merge queue." };
   if (pull.isDraft) return { tone: "neutral", label: "Draft", detail: null };
   if (pull.mergeable === "CONFLICTING") return { tone: "danger", label: "Merge conflict", detail: null };
+  if (pull.labels?.nodes.some((label) => label.name.toLowerCase() === "do-not-merge")) {
+    return { tone: "danger", label: "Do not merge", detail: "Labelled do-not-merge." };
+  }
   const checks = pull.statusCheckRollup?.state;
   if (checks === "FAILURE" || checks === "ERROR") return { tone: "danger", label: "Checks failed", detail: null };
 
