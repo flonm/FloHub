@@ -20,7 +20,8 @@ const thread = (overrides: Partial<ReviewThread> & { on?: string }): ReviewThrea
     originalLine: null,
     originalStartLine: null,
     side: "RIGHT",
-    comments: [{ id: 1, author: "ana", avatarUrl: null, html: "<p>Why?</p>", createdAt: "2026-10-01T00:00:00Z", url: "", pending: false, originalCommit: on }],
+    resolvedBy: null,
+    comments: [{ id: 1, author: "ana", avatarUrl: null, html: "<p>Why?</p>", createdAt: "2026-10-01T00:00:00Z", url: "", pending: false, association: null, originalCommit: on }],
     ...rest,
   };
 };

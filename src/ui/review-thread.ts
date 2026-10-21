@@ -14,28 +14,75 @@ export const THREAD_STYLES = `
   white-space: normal;
 }
 .thread { border: 1px solid var(--vd-border); border-radius: 6px; background: var(--vd-bg); overflow: hidden; }
-.thread > summary { display: flex; align-items: center; gap: 8px; padding: 6px 12px; color: var(--vd-muted); font-size: 12px; cursor: pointer; list-style: none; }
+.thread svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.thread > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--vd-bg-muted);
+  color: var(--vd-muted);
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+}
 .thread > summary::-webkit-details-marker { display: none; }
 .thread[open] > summary { border-bottom: 1px solid var(--vd-border); }
-.thread svg { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
-.thread .chip { padding: 0 6px; border: 1px solid var(--vd-border); border-radius: 2em; font-weight: 600; }
-.thread .chip[data-tone="done"] { color: var(--vd-done, #8250df); border-color: currentColor; }
-.thread .chip[data-tone="attention"] { color: var(--vd-attention); border-color: currentColor; }
-.thread ol { margin: 0; padding: 0; list-style: none; }
-.thread li + li { border-top: 1px solid var(--vd-border); }
-.comment { padding: 8px 12px; }
-.comment header { display: flex; align-items: center; gap: 6px; padding: 0; border: 0; font-size: 12px; color: var(--vd-muted); }
-.comment header img { width: 20px; height: 20px; border-radius: 50%; }
-.comment header strong { color: var(--vd-fg); }
-.comment header a { margin-left: auto; color: var(--vd-accent); text-decoration: none; }
-.comment .body { margin-top: 4px; overflow-wrap: anywhere; }
+.thread .twist { transform: rotate(90deg); transition: transform 120ms; }
+.thread[open] .twist { transform: rotate(180deg); }
+.thread .labels { display: flex; gap: 4px; margin-left: auto; }
+.thread .label {
+  padding: 0 7px;
+  border: 1px solid var(--vd-border);
+  border-radius: 2em;
+  color: var(--vd-muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.thread .label[data-tone="attention"] { border-color: var(--vd-attention); color: var(--vd-attention); }
+.comment { padding: 12px; }
+.comment + .comment { border-top: 1px solid var(--vd-border); }
+.comment-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.comment-head .avatar { width: 24px; height: 24px; border-radius: 50%; }
+.comment-head strong { color: var(--vd-fg); font-weight: 600; }
+.comment-head .age { color: var(--vd-muted); font-size: 12px; }
+.comment-head .view { margin-left: 4px; color: var(--vd-muted); font-size: 12px; text-decoration: none; }
+.comment-head .view:hover { color: var(--vd-accent); }
+.comment .body { margin-top: 8px; overflow-wrap: anywhere; }
 .comment .body > :first-child { margin-top: 0; }
 .comment .body > :last-child { margin-bottom: 0; }
 .comment .body pre { padding: 8px; border-radius: 6px; background: var(--vd-bg-muted); overflow: auto; }
 .comment .body code { font: 12px var(--vd-mono); }
 .comment .body img { max-width: 100%; }
-.thread-actions { display: flex; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--vd-border); }
-.thread-actions .resolve { margin-left: auto; }
+.reply-row { padding: 8px 12px; border-top: 1px solid var(--vd-border); background: var(--vd-bg-muted); }
+.reply-row .box { padding: 0; border-top: 0; }
+.write-reply {
+  width: 100%;
+  padding: 5px 12px;
+  border: 1px solid var(--vd-border);
+  border-radius: 6px;
+  background: var(--vd-bg);
+  color: var(--vd-muted);
+  font: inherit;
+  text-align: left;
+  cursor: text;
+}
+.write-reply:focus-visible { outline: 2px solid var(--vd-accent); outline-offset: -1px; }
+.thread-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--vd-border);
+  background: var(--vd-bg-muted);
+  color: var(--vd-muted);
+  font-size: 12px;
+}
+.thread-foot strong { color: var(--vd-fg); font-weight: 600; }
+.thread-foot .problem { flex-basis: 100%; }
 .box { display: flex; flex-direction: column; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--vd-border); }
 .composer { border: 1px solid var(--vd-border); border-radius: 6px; background: var(--vd-bg); }
 .composer > .box { border-top: 0; }
@@ -52,8 +99,8 @@ export const THREAD_STYLES = `
 }
 .box textarea:focus { outline: 2px solid var(--vd-accent); outline-offset: -1px; }
 .box .buttons { display: flex; justify-content: flex-end; gap: 8px; }
-.box .problem { margin: 0; color: var(--vd-danger, #d1242f); font-size: 12px; }
-.box .problem:empty { display: none; }
+.problem { margin: 0; color: var(--vd-danger, #d1242f); font-size: 12px; }
+.problem:empty { display: none; }
 .btn {
   min-height: 28px;
   padding: 0 12px;
@@ -84,41 +131,111 @@ export interface ThreadActions {
   closed?: () => void;
 }
 
+/** How GitHub labels an author's relation to the repository, for the relations it labels. */
+const ASSOCIATIONS: Record<string, string> = {
+  OWNER: "Owner",
+  MEMBER: "Member",
+  COLLABORATOR: "Collaborator",
+  CONTRIBUTOR: "Contributor",
+  FIRST_TIME_CONTRIBUTOR: "First-time contributor",
+};
+
 /**
- * A review thread as the versions view shows it under its line: open while it's unresolved, folded to one line once
- * resolved, with the comments' authors, ages and bodies as GitHub renders them.
  * @param thread The thread.
- * @param now The current time.
+ * @returns Where the thread is, the way GitHub's own thread header says it: "Comment on line R809", with R for the
+ * head side and L for the base side.
+ */
+export function threadPlace(thread: ReviewThread): string {
+  const line = thread.line ?? thread.originalLine;
+  if (line === null) return "Comment on the file";
+  const start = thread.line === null ? thread.originalStartLine : thread.startLine;
+  const side = thread.side === "LEFT" ? "L" : "R";
+  return start === null || start === line ? `Comment on line ${side}${line}` : `Comment on lines ${side}${start} to ${side}${line}`;
+}
+
+/**
+ * A review thread as the versions view shows it under its line, laid out like GitHub's own: open while it's
+ * unresolved, folded to its header once resolved, with the comments' authors, ages and bodies as GitHub renders them.
+ * @param thread The thread.
+ * @param options The current time, what the viewer can do to the thread (read-only without), and the pull request's
+ * author, whose comments are labelled Author.
  * @returns The thread.
  */
-export function renderThread(thread: ReviewThread, now: number, actions?: ThreadActions): HTMLDetailsElement {
+export function renderThread(
+  thread: ReviewThread,
+  options: { now: number; actions?: ThreadActions | undefined; pullAuthor?: string | null },
+): HTMLDetailsElement {
   const details = el("details", { class: "thread", "data-thread": thread.id });
   details.open = !thread.resolved;
   const summary = el("summary");
-  summary.append(icon("comment"));
-  const [first] = thread.comments;
-  const count = thread.comments.length;
-  summary.append(el("span", {}, `${first?.author ?? "Someone"}${count > 1 ? ` and ${count - 1} more ${count === 2 ? "reply" : "replies"}` : ""}`));
-  if (thread.resolved) summary.append(el("span", { class: "chip", "data-tone": "done" }, "Resolved"));
-  if (thread.outdated) summary.append(el("span", { class: "chip", "data-tone": "attention" }, "Outdated"));
-  if (thread.comments.some((comment) => comment.pending)) summary.append(el("span", { class: "chip" }, "Pending"));
-  const list = el("ol");
-  for (const comment of thread.comments) list.append(renderComment(comment, now));
-  details.append(summary, list);
-  if (actions) details.append(threadActions(thread, actions));
+  summary.append(icon("chevron", "twist"), el("span", {}, threadPlace(thread)));
+  const labels = el("span", { class: "labels" });
+  if (thread.outdated) labels.append(el("span", { class: "label", "data-tone": "attention" }, "Outdated"));
+  if (thread.comments.some((comment) => comment.pending)) labels.append(el("span", { class: "label" }, "Pending"));
+  if (thread.resolved) labels.append(el("span", { class: "label" }, "Resolved"));
+  summary.append(labels);
+  details.append(summary);
+  for (const comment of thread.comments) details.append(renderComment(comment, options.now, options.pullAuthor ?? null));
+  if (options.actions) details.append(...threadActions(thread, options.actions));
+  else if (thread.resolved) details.append(resolvedNote(thread));
   return details;
+}
+
+function renderComment(comment: ThreadComment, now: number, pullAuthor: string | null): HTMLElement {
+  const item = el("div", { class: "comment" });
+  // A div, not a header: the versions view styles its own header element.
+  const head = el("div", { class: "comment-head" });
+  if (comment.avatarUrl) head.append(el("img", { class: "avatar", src: comment.avatarUrl, alt: "" }));
+  head.append(el("strong", {}, comment.author ?? "ghost"), el("span", { class: "age" }, formatAge(comment.createdAt, now).spoken));
+  const labels = el("span", { class: "labels" });
+  const association = comment.association ? ASSOCIATIONS[comment.association] : undefined;
+  if (association) labels.append(el("span", { class: "label" }, association));
+  if (comment.author !== null && comment.author === pullAuthor) labels.append(el("span", { class: "label" }, "Author"));
+  if (comment.pending) labels.append(el("span", { class: "label" }, "Pending"));
+  head.append(labels);
+  if (comment.url) head.append(el("a", { class: "view", href: comment.url, target: "_blank", rel: "noopener", title: "View on GitHub" }, "View"));
+  const body = el("div", { class: "body" });
+  body.append(renderRichText(comment.html) ?? el("p", {}, "This comment can't be shown here."));
+  item.append(head, body);
+  return item;
+}
+
+/** @returns The footer's note on who resolved the thread, or a plain footer while nobody did. */
+function resolvedNote(thread: ReviewThread): HTMLElement {
+  const foot = el("div", { class: "thread-foot" });
+  if (thread.resolvedBy) {
+    const note = el("span");
+    note.append(el("strong", {}, thread.resolvedBy), " marked this thread as resolved");
+    foot.append(note);
+  }
+  return foot;
 }
 
 /**
  * @param thread The thread.
  * @param actions What the viewer can do to it.
- * @returns The thread's Reply and Resolve buttons, and the reply box Reply opens.
+ * @returns The thread's "Write a reply" row, which opens a reply box, and its footer with Resolve or Unresolve.
  */
-function threadActions(thread: ReviewThread, actions: ThreadActions): HTMLElement {
-  const footer = el("div");
-  const buttons = el("div", { class: "thread-actions" });
-  const replyButton = el("button", { type: "button", class: "btn" }, "Reply");
-  const resolve = el("button", { type: "button", class: "btn resolve" }, thread.resolved ? "Unresolve conversation" : "Resolve conversation");
+function threadActions(thread: ReviewThread, actions: ThreadActions): HTMLElement[] {
+  const replyRow = el("div", { class: "reply-row" });
+  const writeReply = el("button", { type: "button", class: "write-reply" }, "Write a reply");
+  writeReply.addEventListener("click", () => {
+    const box = writeBox({
+      title: null,
+      placeholder: "Write a reply",
+      submits: [{ label: actions.replyLabel, primary: true, run: actions.reply }],
+      cancel: () => {
+        box.replaceWith(writeReply);
+        actions.closed?.();
+      },
+    });
+    writeReply.replaceWith(box);
+    box.querySelector("textarea")?.focus();
+  });
+  replyRow.append(writeReply);
+
+  const foot = resolvedNote(thread);
+  const resolve = el("button", { type: "button", class: "btn" }, thread.resolved ? "Unresolve comment" : "Resolve comment");
   const problem = el("p", { class: "problem", role: "alert" });
   const toggle = async () => {
     resolve.disabled = true;
@@ -130,24 +247,9 @@ function threadActions(thread: ReviewThread, actions: ThreadActions): HTMLElemen
     }
   };
   resolve.addEventListener("click", () => void toggle());
-  buttons.append(replyButton, resolve);
-  replyButton.addEventListener("click", () => {
-    const box = writeBox({
-      title: null,
-      placeholder: "Reply…",
-      submits: [{ label: actions.replyLabel, primary: true, run: actions.reply }],
-      cancel: () => {
-        box.remove();
-        buttons.hidden = false;
-        actions.closed?.();
-      },
-    });
-    buttons.hidden = true;
-    footer.append(box);
-    box.querySelector("textarea")?.focus();
-  });
-  footer.append(buttons, problem);
-  return footer;
+  foot.prepend(resolve);
+  foot.append(problem);
+  return [replyRow, foot];
 }
 
 /** One way to post what's written in a box. */
@@ -234,17 +336,4 @@ export function renderComposer(options: {
     options.mode === "blocked" ? "Your pending review is on an older version. Submit it, then comment on the current one." : undefined;
   composer.append(writeBox({ title: options.title, placeholder: "Leave a comment", submits, ...(note && { note }), cancel: options.cancel }));
   return composer;
-}
-
-function renderComment(comment: ThreadComment, now: number): HTMLLIElement {
-  const item = el("li", { class: "comment" });
-  const header = el("header");
-  if (comment.avatarUrl) header.append(el("img", { src: comment.avatarUrl, alt: "" }));
-  header.append(el("strong", {}, comment.author ?? "ghost"), el("span", {}, formatAge(comment.createdAt, now).spoken));
-  if (comment.pending) header.append(el("span", { class: "chip" }, "Pending"));
-  if (comment.url) header.append(el("a", { href: comment.url, target: "_blank", rel: "noopener" }, "View on GitHub"));
-  const body = el("div", { class: "body" });
-  body.append(renderRichText(comment.html) ?? el("p", {}, "This comment can't be shown here."));
-  item.append(header, body);
-  return item;
 }

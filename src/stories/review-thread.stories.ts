@@ -32,6 +32,7 @@ const comment = (overrides: Partial<ThreadComment> = {}): ThreadComment => ({
   createdAt: new Date(NOW - 5 * HOUR).toISOString(),
   url: "https://github.com/octo-org/api/pull/344#discussion_r1",
   pending: false,
+  association: "MEMBER",
   originalCommit: "2222222",
   ...overrides,
 });
@@ -46,6 +47,7 @@ const thread = (overrides: Partial<ReviewThread> = {}): ReviewThread => ({
   originalLine: 13,
   originalStartLine: null,
   side: "RIGHT",
+  resolvedBy: null,
   comments: [comment()],
   ...overrides,
 });
@@ -85,7 +87,7 @@ function inRow(content: HTMLElement, className = "thread-row"): HTMLElement {
  * @returns The thread under its line.
  */
 function render(shown: ReviewThread, actions?: ThreadActions): HTMLElement {
-  return inRow(renderThread(shown, NOW, actions));
+  return inRow(renderThread(shown, { now: NOW, actions, pullAuthor: "mona" }));
 }
 
 /**
@@ -135,7 +137,7 @@ export const Conversation: Story = {
 };
 
 /** A resolved thread folds to its summary line; a click opens it. */
-export const Resolved: Story = { render: () => render(thread({ resolved: true })) };
+export const Resolved: Story = { render: () => render(thread({ resolved: true, resolvedBy: "mona" })) };
 
 /** An outdated thread: its lines are gone from the current diff, but the view shows it where it was written. */
 export const Outdated: Story = { render: () => render(thread({ outdated: true, line: null })) };
@@ -152,7 +154,7 @@ export const WithActions: Story = { render: () => render(thread(), ACTIONS) };
 export const ReplyingInAReview: Story = { render: () => render(thread(), { ...ACTIONS, replyLabel: "Add review comment" }) };
 
 /** A resolved thread can be unresolved. */
-export const Unresolve: Story = { render: () => render(thread({ resolved: true }), ACTIONS) };
+export const Unresolve: Story = { render: () => render(thread({ resolved: true, resolvedBy: "mona" }), ACTIONS) };
 
 /** A new comment without a pending review: on its own, or starting a review. ⌘↵ posts, Escape cancels. */
 export const NewComment: Story = { render: () => composer("fresh") };

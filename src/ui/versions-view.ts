@@ -60,6 +60,8 @@ type PlaceThreads = (threads: ReviewThread[], compared: Compared) => void;
 interface ReviewHooks {
   /** A thread's Reply and Resolve, or undefined while the view can't post. */
   threadActions: (thread: ReviewThread) => ThreadActions | undefined;
+  /** The pull request's author, whose comments are labelled Author, once known. */
+  pullAuthor: () => string | null;
   /** New comments on the head's lines, or null when this diff doesn't show GitHub's lines of the head. */
   comment: {
     mode: () => PostingMode;
@@ -652,6 +654,7 @@ export class VersionsView {
           const commentable = Boolean(request.post) && newer.current && after.base === versions.baseRefOid;
           const review: ReviewHooks = {
             threadActions,
+            pullAuthor: () => discussion?.author ?? null,
             comment: commentable ? { mode: () => postingMode(discussion?.pending ?? null, newer.oid), post, released: release } : null,
           };
           const show = renderResult({ main, review, summary, legend, files, signal: tracking.signal }, diff, {
@@ -1009,7 +1012,7 @@ function renderResult(
         seen.add(thread.id);
         const block = blocks.get(thread.id);
         if (block?.isConnected && holdsText(block)) continue;
-        const drawn = renderThread(thread, now, review.threadActions(thread));
+        const drawn = renderThread(thread, { now, actions: review.threadActions(thread), pullAuthor: review.pullAuthor() });
         const open = block?.querySelector("details")?.open;
         if (open !== undefined) drawn.open = open;
         if (block?.isConnected) {
@@ -1161,6 +1164,8 @@ function renderFileTree(
   const rows = new Map<HTMLDetailsElement, HTMLButtonElement>();
   let current: HTMLButtonElement | null = null;
   let picked: HTMLDetailsElement | null = null;
+  /** Whether a jump's smooth scroll is still under way, which passes the files between before reaching the picked one. */
+  let landing = false;
   const mark = (row: HTMLButtonElement | undefined) => {
     if (!row || row === current) return;
     current?.removeAttribute("aria-current");
@@ -1171,6 +1176,13 @@ function renderFileTree(
   const jump = (section: HTMLDetailsElement) => {
     section.open = true;
     picked = section;
+    landing = true;
+    const landed = () => {
+      landing = false;
+    };
+    main.addEventListener("scrollend", landed, { once: true, signal });
+    // A jump to a file already in place doesn't scroll, so nothing would end it.
+    setTimeout(landed, JUMP_SETTLE_MS);
     mark(rows.get(section));
     section.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
     section.querySelector("summary")?.focus({ preventScroll: true });
@@ -1214,6 +1226,7 @@ function renderFileTree(
   const follow = () => {
     frame = 0;
     const { top, bottom } = main.getBoundingClientRect();
+    if (picked && landing) return;
     if (picked) {
       const rect = picked.getBoundingClientRect();
       if (rect.bottom > top && rect.top < bottom) return;
@@ -1279,6 +1292,9 @@ function firstVisibleLine(main: HTMLElement): HTMLElement | null {
   const { top } = main.getBoundingClientRect();
   return [...main.querySelectorAll<HTMLElement>(".line")].find((line) => line.getBoundingClientRect().bottom > top) ?? null;
 }
+
+/** How long a file tree jump keeps its file marked when it doesn't scroll, so no scroll end comes. */
+const JUMP_SETTLE_MS = 1500;
 
 /** How many lines around a line taken out of a fold come out with it. */
 const UNFOLD_CONTEXT = 3;

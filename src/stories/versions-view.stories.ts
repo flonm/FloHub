@@ -265,7 +265,7 @@ function view(
       versions: () => pendingHistory(kind),
       threads: async () => {
         await settle();
-        return { threads, pullRequestId: "PR_1", head: V3.oid, pending: null };
+        return { threads, pullRequestId: "PR_1", head: V3.oid, author: "mona", pending: null };
       },
       // Posting only waits a moment here: the rows show their + and the threads their Reply and Resolve.
       post: async () => {
@@ -390,6 +390,7 @@ function thread(id: string, on: Version, path: string, line: number, body: strin
     originalLine: line,
     originalStartLine: null,
     side: "RIGHT",
+    resolvedBy: overrides.resolved ? "mona" : null,
     comments: [
       {
         id: Number(id.slice(1)),
@@ -399,6 +400,7 @@ function thread(id: string, on: Version, path: string, line: number, body: strin
         createdAt: on.at,
         url: `https://github.com/octo-org/api/pull/344#discussion_r${id.slice(1)}`,
         pending: false,
+        association: "MEMBER",
         originalCommit: on.oid,
       },
     ],
@@ -423,6 +425,7 @@ const THREADS: ReviewThread[] = [
         createdAt: V3.at,
         url: "",
         pending: true,
+        association: "MEMBER",
         originalCommit: V3.oid,
       },
     ],

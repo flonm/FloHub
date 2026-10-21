@@ -525,12 +525,13 @@ query ($owner: String!, $name: String!, $number: Int!) {
     pullRequest(number: $number) {
       id
       headRefOid
+      author { login }
       reviews(states: PENDING, first: 1) { nodes { id commit { oid } } }
       reviewThreads(last: 100) {
         nodes {
-          id isResolved isOutdated path line startLine originalLine originalStartLine diffSide
+          id isResolved isOutdated path line startLine originalLine originalStartLine diffSide resolvedBy { login }
           comments(first: 50) {
-            nodes { databaseId author { login avatarUrl } bodyHTML createdAt url state originalCommit { oid } }
+            nodes { databaseId author { login avatarUrl } authorAssociation bodyHTML createdAt url state originalCommit { oid } }
           }
         }
       }
@@ -548,10 +549,12 @@ interface RawReviewThread {
   originalLine: number | null;
   originalStartLine: number | null;
   diffSide: "LEFT" | "RIGHT";
+  resolvedBy: { login: string } | null;
   comments: {
     nodes: {
       databaseId: number | null;
       author: { login: string; avatarUrl: string } | null;
+      authorAssociation: string | null;
       bodyHTML: string;
       createdAt: string;
       url: string;
@@ -573,6 +576,7 @@ export async function fetchReviewDiscussion(ref: PullRef): Promise<ReviewDiscuss
       pullRequest: {
         id: string;
         headRefOid: string;
+        author: { login: string } | null;
         reviews: { nodes: ({ id: string; commit: { oid: string } | null } | null)[] };
         reviewThreads: { nodes: (RawReviewThread | null)[] };
       } | null;
@@ -593,6 +597,7 @@ export async function fetchReviewDiscussion(ref: PullRef): Promise<ReviewDiscuss
       originalLine: raw.originalLine,
       originalStartLine: raw.originalStartLine,
       side: raw.diffSide,
+      resolvedBy: raw.resolvedBy?.login ?? null,
       comments: raw.comments.nodes.map((comment) => ({
         id: comment.databaseId ?? 0,
         author: comment.author?.login ?? null,
@@ -601,6 +606,7 @@ export async function fetchReviewDiscussion(ref: PullRef): Promise<ReviewDiscuss
         createdAt: comment.createdAt,
         url: comment.url,
         pending: comment.state === "PENDING",
+        association: comment.authorAssociation,
         originalCommit: comment.originalCommit?.oid ?? null,
       })),
     }));
@@ -608,6 +614,7 @@ export async function fetchReviewDiscussion(ref: PullRef): Promise<ReviewDiscuss
     threads,
     pullRequestId: pull.id,
     head: pull.headRefOid,
+    author: pull.author?.login ?? null,
     pending: pending?.commit ? { id: pending.id, commit: pending.commit.oid } : null,
   };
 }

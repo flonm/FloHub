@@ -11,6 +11,8 @@ export interface ThreadComment {
   url: string;
   /** Whether the comment is a draft in the viewer's pending review, which only the viewer sees. */
   pending: boolean;
+  /** How the author is related to the repository, as GitHub labels it: OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, … */
+  association: string | null;
   /** The commit the comment was written on. */
   originalCommit: string | null;
 }
@@ -29,6 +31,8 @@ export interface ReviewThread {
   originalLine: number | null;
   originalStartLine: number | null;
   side: "LEFT" | "RIGHT";
+  /** Who resolved the thread, while it's resolved. */
+  resolvedBy: string | null;
   comments: ThreadComment[];
 }
 
@@ -184,6 +188,8 @@ export interface ReviewDiscussion {
   pullRequestId: string;
   /** The pull request's head commit now, which a new comment's lines have to be on. */
   head: string;
+  /** The pull request's author, whose comments GitHub labels Author. */
+  author: string | null;
   /** The viewer's pending review, which only the viewer sees, and the commit it was started on. */
   pending: { id: string; commit: string } | null;
 }

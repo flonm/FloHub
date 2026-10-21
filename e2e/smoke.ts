@@ -421,9 +421,10 @@ function createFixture(
           originalLine: line,
           originalStartLine: null,
           diffSide: "RIGHT",
+          resolvedBy: null,
           comments: {
             nodes: [
-              { databaseId: 1, author: { login: "octocat", avatarUrl: "" }, bodyHTML: `<p>${body}</p>`, createdAt: ago(30), url: "", state: "SUBMITTED", originalCommit: { oid: on } },
+              { databaseId: 1, author: { login: "octocat", avatarUrl: "" }, authorAssociation: "MEMBER", bodyHTML: `<p>${body}</p>`, createdAt: ago(30), url: "", state: "SUBMITTED", originalCommit: { oid: on } },
             ],
           },
         });
@@ -434,6 +435,7 @@ function createFixture(
                 pullRequest: {
                   id: "PR_split",
                   headRefOid: created.threadsHead,
+                  author: { login: "hubot" },
                   reviews: { nodes: created.pendingReview ? [{ id: "PRR_pending", commit: { oid: created.pendingReview.commit } }] : [] },
                   reviewThreads: {
                     nodes: [
@@ -1029,15 +1031,15 @@ check(
   `Start a review starts a pending review on the head and adds the comment to it: ${fixture.reviewActions.slice(-2).join(" | ")}`,
 );
 const readmeThread = docked.locator(".thread-row", { hasText: "Is this still true" });
-await readmeThread.getByRole("button", { name: "Reply" }).click();
+await readmeThread.getByRole("button", { name: "Write a reply" }).click();
 await readmeThread.getByRole("textbox").fill("Yes, still true.");
 await readmeThread.locator(".box").getByRole("button", { name: "Reply" }).click();
 await readmeThread.locator(".box").waitFor({ state: "detached" });
 check(lastAction() === 'POST pulls/1/comments/1/replies {"body":"Yes, still true."}', `a reply goes out at once without a pending review: ${lastAction()}`);
 fixture.pendingReview = { commit: "ccccccc3" };
-await readmeThread.getByRole("button", { name: "Resolve conversation" }).click();
-await readmeThread.getByRole("button", { name: "Reply" }).waitFor();
-check(lastAction() === 'resolveReviewThread {"id":"PRRT_1"}', `Resolve conversation resolves the thread: ${lastAction()}`);
+await readmeThread.getByRole("button", { name: "Resolve comment" }).click();
+for (let tries = 0; tries < 50 && !lastAction().startsWith("resolveReviewThread"); tries++) await splitPage.waitForTimeout(100);
+check(lastAction() === 'resolveReviewThread {"id":"PRRT_1"}', `Resolve comment resolves the thread: ${lastAction()}`);
 await addOn("log(branch)");
 check(
   JSON.stringify(await composer.getByRole("button").allInnerTexts()) === JSON.stringify(["Cancel", "Add review comment"]),
@@ -1051,7 +1053,7 @@ check(
   `Add review comment adds to the pending review: ${lastAction()}`,
 );
 fixture.pendingReview = { commit: "aaaaaaa1" };
-await readmeThread.getByRole("button", { name: "Reply" }).click();
+await readmeThread.getByRole("button", { name: "Write a reply" }).click();
 await readmeThread.getByRole("textbox").fill("Noted.");
 await readmeThread.locator(".box").getByRole("button", { name: "Add review comment" }).click();
 await readmeThread.locator(".box").waitFor({ state: "detached" });
