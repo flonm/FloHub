@@ -25,8 +25,8 @@ import {
   type VersionHistory,
 } from "../core/versions";
 
-export interface VersionsDialogRequest {
-  /** Names the pull request: opening the same one again shows what the dialog showed last, refreshed. */
+export interface VersionsViewRequest {
+  /** Names the pull request: opening the same one again shows what the view showed last, refreshed. */
   key: string;
   number: number;
   /** The repository's URL, like https://github.com/owner/repo. */
@@ -41,10 +41,14 @@ export interface VersionsDialogRequest {
   savedRange?: () => Promise<SavedRange | null>;
   /** Remembers a range the viewer picked. */
   saveRange?: (range: SavedRange) => void;
+  /** Called with each pair of versions the view starts comparing. */
+  onShow?: (older: Version, newer: Version) => void;
+  /** Called when the viewer closes the view. */
+  onClose?: () => void;
 }
 
 
-const DIALOG_STYLES = `
+const VIEW_STYLES = `
 :host {
   --vd-fg: var(--fgColor-default, #1f2328);
   --vd-muted: var(--fgColor-muted, #59636e);
@@ -77,20 +81,29 @@ const DIALOG_STYLES = `
   color: var(--vd-fg);
 }
 * { box-sizing: border-box; }
-dialog {
-  width: min(1200px, calc(100vw - 32px));
-  height: calc(100vh - 48px);
-  max-height: none;
-  padding: 0;
+:host { display: block; }
+:host([data-mode="docked"]) {
+  box-sizing: border-box;
+  position: sticky;
+  top: var(--flohub-top, 0px);
+  flex: 1 1 100%;
+  width: 100%;
+  min-width: 0;
+  height: calc(100vh - var(--flohub-top, 0px));
+  padding: 16px 0 8px;
+}
+:host([data-mode="docked"]) main, :host([data-mode="docked"]) nav.files { overscroll-behavior: auto; }
+:host([data-mode="floating"]) { position: fixed; z-index: 100; inset: 72px 16px 16px; box-shadow: var(--vd-shadow); border-radius: 12px; }
+.surface {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   border: 1px solid var(--vd-border);
   border-radius: 12px;
   background: var(--vd-bg);
   color: var(--vd-fg);
-  box-shadow: var(--vd-shadow);
+  overflow: hidden;
 }
-dialog[open] { display: flex; flex-direction: column; animation: appear 140ms ease-out; }
-dialog::backdrop { background: rgba(31, 35, 40, 0.4); }
-@keyframes appear { from { opacity: 0; transform: translateY(6px); } }
 header { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-bottom: 1px solid var(--vd-border); }
 .title-row { display: flex; align-items: center; gap: 8px; }
 h2 { margin: 0; font-size: 16px; }
@@ -269,66 +282,136 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 details.unchanged > summary { color: var(--vd-muted); cursor: pointer; }
 details.unchanged ul { margin: 6px 0 0; padding-left: 20px; font: 12px/20px var(--vd-mono); color: var(--vd-muted); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; user-select: none; }
-@media (prefers-reduced-motion: reduce) { dialog[open] { animation: none; } .chevron, .files .folder svg { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .chevron, .files .folder svg { transition: none; } }
 `;
 
-/** A modal that shows how a pull request's own changes differ between two of its versions. */
-export class VersionsDialog {
-  private readonly host: HTMLElement;
-  private readonly dialog: HTMLDialogElement;
+/** How long after docking the view keeps scrolling to its sticky place while the page above it grows. */
+const ALIGN_MS = 3000;
+/** Marks the element the view is docked in, so the page's own file tree and diff beside it hide. */
+const DOCKED = "data-flohub-versions";
+/** Hides GitHub's file tree and diff while the view takes their place. */
+const PAGE_STYLES = `
+[${DOCKED}] > :has(> [data-component="SplitPageLayout.Pane"]),
+[${DOCKED}] > [data-component="SplitPageLayout.Content"] { display: none !important; }
+`;
+
+/** Where the view goes on GitHub's Files changed page: in place of its file tree and diff, under its sticky toolbar. */
+interface Dock {
+  parent: Element;
+  before: Element;
+  /** How far below the top of the window the page's file tree sticks, which the view sticks at too. */
+  top: number;
+}
+
+/**
+ * @param root The page.
+ * @returns Where the view takes the place of the file tree and diff, or null on a page without GitHub's split layout.
+ */
+function findDock(root: ParentNode): Dock | null {
+  const content = root.querySelector('[data-component="SplitPageLayout.Content"]');
+  const parent = content?.parentElement;
+  if (!content || !parent?.closest("#diff-comparison-viewer-container")) return null;
+  const pane = [...parent.children].find((child) => child.querySelector(':scope > [data-component="SplitPageLayout.Pane"]'));
+  const before = pane ?? content;
+  // A sticky element's top is in pixels; "auto" leaves the view at the top of the window.
+  const top = Number(getComputedStyle(before).top.replace(/px$/u, ""));
+  return { parent, before, top: Number.isFinite(top) ? top : 0 };
+}
+
+/** Shows the page's own file tree and diff again. */
+function undock(): void {
+  for (const docked of document.querySelectorAll(`[${CSS.escape(DOCKED)}]`)) docked.removeAttribute(DOCKED);
+}
+
+/**
+ * Shows how a pull request's own changes differ between two of its versions. It takes the place of GitHub's file tree
+ * and diff on the Files changed page, so the page's header, toolbar and comments stay usable beside it; elsewhere it
+ * floats over the page.
+ */
+export class VersionsView {
+  readonly host: HTMLElement;
+  private readonly surface: HTMLElement;
   private generation = 0;
-  /** Gives the page its scrolling back, while the dialog holds it. */
-  private releasePage: (() => void) | null = null;
-  /** The pull request the dialog shows, and how to fetch its versions again when it opens on it once more. */
+  /** The pull request the view shows, and how to fetch its versions again when it opens on it once more. */
   private shown: { key: string; revalidate: () => Promise<void> } | null = null;
+  private onClose: (() => void) | undefined;
+  /** Until when the view keeps scrolling the page to its sticky place, while the page above it still grows. */
+  private alignUntil = 0;
 
   constructor() {
     this.host = document.createElement("flohub-versions");
     const shadow = this.host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
-    style.textContent = DIALOG_STYLES;
-    this.dialog = el("dialog", { "aria-labelledby": "versions-title" });
-    shadow.append(style, this.dialog);
+    style.textContent = VIEW_STYLES;
+    this.surface = el("section", { class: "surface", "aria-labelledby": "versions-title" });
+    shadow.append(style, this.surface);
     for (const type of ["keydown", "keyup", "keypress"]) {
       shadow.addEventListener(type, (event) => event.stopPropagation());
     }
-    // Closing keeps what the dialog shows, so opening it on the same pull request again picks up where it was.
-    this.dialog.addEventListener("close", () => {
-      this.releasePage?.();
-      this.releasePage = null;
+    shadow.addEventListener("keydown", (event) => {
+      if ((event as KeyboardEvent).key === "Escape" && !(event as KeyboardEvent).defaultPrevented) this.dismiss();
     });
-    let pressedOutside = false;
-    this.dialog.addEventListener("pointerdown", (event) => {
-      pressedOutside = this.isBackdrop(event);
-    });
-    this.dialog.addEventListener("click", (event) => {
-      if (pressedOutside && this.isBackdrop(event)) this.dialog.close();
-      pressedOutside = false;
-    });
+  }
+
+  /** @returns Whether the view is on the page. */
+  get isOpen(): boolean {
+    return this.host.isConnected;
   }
 
   /**
-   * A click on the backdrop targets the dialog itself, at a point outside its box.
-   * @param event The pointer event.
-   * @returns Whether it hit the backdrop.
+   * Puts the view back in its place when the page re-rendered around it, or moves it there once the page has one.
+   * Opening the view does it too.
    */
-  private isBackdrop(event: MouseEvent): boolean {
-    if (event.target !== this.dialog) return false;
-    const box = this.dialog.getBoundingClientRect();
-    return event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom;
+  place(): void {
+    const dock = findDock(document);
+    if (dock) {
+      const moved = this.host.parentElement !== dock.parent || this.host.dataset.mode !== "docked";
+      if (moved) {
+        dock.parent.setAttribute(DOCKED, "");
+        dock.before.before(this.host);
+      }
+      this.host.dataset.mode = "docked";
+      this.host.style.setProperty("--flohub-top", `${dock.top}px`);
+      // Below the page's header the view would reach past the window; scrolled up to its sticky place, it fits. The
+      // header may still grow after the view docks (the bar mounts, GitHub renders lazily), so it keeps that place a
+      // little longer, until the viewer scrolls themselves.
+      if (moved) {
+        this.alignUntil = Date.now() + ALIGN_MS;
+        const stop = () => {
+          this.alignUntil = 0;
+        };
+        for (const type of ["wheel", "touchstart", "keydown"]) addEventListener(type, stop, { once: true, passive: true });
+      }
+      const below = this.host.getBoundingClientRect().top - dock.top;
+      if (Date.now() < this.alignUntil && below > 0) scrollBy({ top: below });
+    } else if (!this.host.isConnected || this.host.dataset.mode !== "floating") {
+      undock();
+      this.host.dataset.mode = "floating";
+      document.body.append(this.host);
+    }
+    if (!document.getElementById("flohub-versions-page")) {
+      document.head.append(Object.assign(document.createElement("style"), { id: "flohub-versions-page", textContent: PAGE_STYLES }));
+    }
   }
 
-  /** @returns Whether the dialog is showing. */
-  get isOpen(): boolean {
-    return this.dialog.open;
+  /** Takes the view off the page, which shows the page's own diff again. It keeps what it shows for the next open. */
+  close(): void {
+    undock();
+    this.host.remove();
   }
+
+  /** Closes the view because the viewer asked to. */
+  private dismiss(): void {
+    this.close();
+    this.onClose?.();
+  }
+
 
   /** @param request Where the versions come from. */
-  open(request: VersionsDialogRequest): void {
-    if (!this.host.isConnected) document.body.append(this.host);
+  open(request: VersionsViewRequest): void {
+    this.onClose = request.onClose;
+    this.place();
     if (this.shown?.key === request.key) {
-      this.show();
-      this.dialog.querySelector<HTMLElement>("button.close")?.focus();
       void this.shown.revalidate();
       return;
     }
@@ -337,7 +420,7 @@ export class VersionsDialog {
     const live = () => run === this.generation;
 
     const close = el("button", { type: "button", class: "close" }, "Close");
-    close.addEventListener("click", () => this.dialog.close());
+    close.addEventListener("click", () => this.dismiss());
     const titleRow = el("div", { class: "title-row" });
     titleRow.append(el("h2", { id: "versions-title" }, `Compare versions of #${request.number}`), close);
     const controls = el("div", { class: "controls" });
@@ -351,9 +434,7 @@ export class VersionsDialog {
     main.append(el("p", { class: "message", role: "status" }, "Loading versions…"));
     const body = el("div", { class: "body" });
     body.append(files, main);
-    this.dialog.replaceChildren(header, body);
-    this.show();
-    close.focus();
+    this.surface.replaceChildren(header, body);
 
     let history: VersionHistory | null = null;
     let picker: { from: HTMLSelectElement; to: HTMLSelectElement; link: HTMLAnchorElement } | null = null;
@@ -373,6 +454,7 @@ export class VersionsDialog {
       const showing = ++shown;
       const versions = history;
       const oids = `${older.oid}|${newer.oid}`;
+      request.onShow?.(older, newer);
       const kept = quiet && onScreen?.oids === oids ? onScreen : null;
       picker.link.href = `${request.repoUrl}/compare/${older.oid}..${newer.oid}`;
       picker.link.title = "GitHub's plain compare of the two heads, including everything the base branch gained in between";
@@ -489,11 +571,6 @@ export class VersionsDialog {
     void start();
   }
 
-  private show(): void {
-    if (this.dialog.open) return;
-    this.dialog.showModal();
-    this.releasePage = holdPageScroll();
-  }
 }
 
 /**
@@ -504,19 +581,6 @@ export class VersionsDialog {
  */
 function comparedKey(history: VersionHistory, older: Version, newer: Version): string {
   return [older, newer].map((version) => `${version.oid}:${baseCandidates(history, version).join(",")}`).join("|");
-}
-
-/**
- * Stops the page behind the dialog from scrolling, which a wheel turn that a pane can't use would otherwise reach.
- * @returns A function that restores the page's own overflow.
- */
-function holdPageScroll(): () => void {
-  const root = document.documentElement;
-  const previous = root.style.overflow;
-  root.style.overflow = "hidden";
-  return () => {
-    root.style.overflow = previous;
-  };
 }
 
 function versionSelect(name: string, versions: Version[], selected: number, now: number) {

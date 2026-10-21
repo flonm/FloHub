@@ -4,7 +4,7 @@ import { DiffHighlights, type HighlightStatus } from "./ui/diff-highlights";
 import { Favicon, faviconUrl } from "./ui/favicon";
 import { ViewedTree } from "./ui/file-tree";
 import { send } from "./api/messages";
-import { type PullRef, parsePullRef, pullKey, pullTab } from "./core/pull-ref";
+import { isWholeFilesTab, type PullRef, parsePullRef, pullKey, pullTab } from "./core/pull-ref";
 import { ReviewDialog } from "./ui/review-dialog";
 import { deriveDiscussion, lastReviewBy } from "./core/discussion";
 import { deriveReviewers, type Reviewer } from "./core/reviewers";
@@ -13,9 +13,9 @@ import type { Overview } from "./api/github";
 import { readCachedOverview } from "./api/overview-cache";
 import { deriveStack } from "./core/stack";
 import { Toast } from "./ui/toast";
-import { baseCandidates, keepRecentRanges, type SavedRange } from "./core/versions";
+import { baseCandidates, formatRangeParam, keepRecentRanges, parseRangeParam, type SavedRange } from "./core/versions";
 import { readCachedHistory } from "./api/version-cache";
-import { VersionsDialog } from "./ui/versions-dialog";
+import { VersionsView } from "./ui/versions-view";
 
 const AUTO_REFRESH_GAP_MS = 15_000;
 const STICKY_HEADER_HEIGHT = 96;
@@ -29,6 +29,8 @@ const SEEN_KEY = "discussionSeen";
 const SEEN_MEMORY_MS = 60 * 86_400_000;
 /** The range of versions the viewer last compared, by pull request. */
 const RANGES_KEY = "versionRanges";
+/** The URL parameter that keeps the versions view open on the Files changed tab, with the range it compares. */
+const VERSIONS_PARAM = "flohub-versions";
 
 let current: PullRef | null = null;
 let state: BarState = { kind: "loading" };
@@ -49,11 +51,20 @@ let pokes: Record<string, number> = {};
 let highlight: HighlightStatus | null = null;
 let discussionExpanded = false;
 let showBots = false;
+/**
+ * The pull request whose Files changed tab shows the versions view in place of GitHub's diff. It outlasts GitHub's own
+ * navigations, which drop the URL parameter that mirrors it.
+ */
+let versionsWanted: string | null = null;
+/** The range the URL asked for, which the view opens on once. */
+let versionsFromUrl: SavedRange | null = null;
+/** The URL parameter's value for the range on screen. */
+let versionsParam = "";
 /** When the viewer last opened the pull request on screen before this visit, once read from storage. */
 let visit: { key: string; previous: string | null } | null = null;
 const busy = new Set<string>();
 const dialog = new ReviewDialog();
-const versionsDialog = new VersionsDialog();
+const versionsView = new VersionsView();
 const toast = new Toast();
 const favicon = new Favicon();
 const matchShortcut = createShortcutMatcher();
@@ -180,7 +191,36 @@ function sync(): void {
   if (!inline.host.isConnected) mountInline(ref);
   viewedTree.sync(ref);
   highlights.sync(ref);
+  syncVersions(ref);
   updateVisibility();
+}
+
+/** Shows the versions view on the Files changed tab while the viewer keeps it open, and nowhere else. */
+function syncVersions(ref: PullRef): void {
+  const key = pullKey(ref);
+  const param = new URL(location.href).searchParams.get(VERSIONS_PARAM);
+  if (param !== null && versionsWanted !== key) {
+    versionsWanted = key;
+    versionsFromUrl = parseRangeParam(param, Date.now());
+    versionsParam = param;
+  }
+  if (versionsWanted !== key || !isWholeFilesTab(location.pathname)) {
+    versionsView.close();
+    return;
+  }
+  if (param === null) writeVersionsParam(versionsParam);
+  if (versionsView.isOpen) versionsView.place();
+  else openVersions(ref);
+}
+
+/** @param value The range to keep in the URL, or null to drop the parameter. */
+function writeVersionsParam(value: string | null): void {
+  const url = new URL(location.href);
+  if (url.searchParams.get(VERSIONS_PARAM) === value) return;
+  if (value === null) url.searchParams.delete(VERSIONS_PARAM);
+  else url.searchParams.set(VERSIONS_PARAM, value);
+  // GitHub's router keeps its own state in the history entry, so it stays.
+  history.replaceState(history.state, "", url);
 }
 
 /**
@@ -393,7 +433,7 @@ async function rerequest(reviewer: Reviewer): Promise<void> {
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  if (!current || dialog.isOpen || versionsDialog.isOpen) return;
+  if (!current || dialog.isOpen) return;
   const { action, claim } = matchShortcut({
     key: event.key,
     metaKey: event.metaKey,
@@ -465,7 +505,9 @@ function navigateStack(direction: 1 | -1): void {
     toast.show(direction === 1 ? "Already at the top of the stack." : "Already at the bottom of the stack.", "info");
     return;
   }
-  location.assign(`${target.url}${pullTab(location.pathname)}`);
+  // The versions view is a setting of the page, so the next layer opens on it too, on its own range.
+  const versions = versionsView.isOpen ? `?${VERSIONS_PARAM}=` : "";
+  location.assign(`${target.url}${pullTab(location.pathname)}${versions}`);
 }
 
 async function approveNow(): Promise<void> {
@@ -504,10 +546,27 @@ async function submitReview(ref: PullRef, event: ReviewEvent, body: string): Pro
   return null;
 }
 
+/** Opens the versions view on the Files changed tab, or closes it when it's open. */
 function compareVersions(): void {
   const ref = current;
   if (!ref) return;
-  versionsDialog.open({
+  if (versionsView.isOpen) {
+    closeVersions();
+    return;
+  }
+  versionsWanted = pullKey(ref);
+  if (isWholeFilesTab(location.pathname)) syncVersions(ref);
+  else location.assign(`https://github.com/${ref.owner}/${ref.repo}/pull/${ref.number}/changes?${VERSIONS_PARAM}=${versionsParam}`);
+}
+
+function closeVersions(): void {
+  versionsWanted = null;
+  versionsView.close();
+  writeVersionsParam(null);
+}
+
+function openVersions(ref: PullRef): void {
+  versionsView.open({
     key: pullKey(ref),
     number: ref.number,
     repoUrl: `https://github.com/${ref.owner}/${ref.repo}`,
@@ -523,10 +582,17 @@ function compareVersions(): void {
       return reply.value;
     },
     savedRange: async () => {
+      const fromUrl = versionsFromUrl;
+      versionsFromUrl = null;
       const ranges = await readSavedRanges();
-      return ranges[pullKey(ref)] ?? null;
+      return fromUrl ?? ranges[pullKey(ref)] ?? null;
     },
     saveRange: (range) => void saveRange(pullKey(ref), range),
+    onShow: (older, newer) => {
+      versionsParam = formatRangeParam(older, newer);
+      if (versionsView.isOpen) writeVersionsParam(versionsParam);
+    },
+    onClose: closeVersions,
   });
 }
 
