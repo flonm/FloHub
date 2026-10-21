@@ -13,6 +13,7 @@ import {
   splitLine,
   uniformKind,
   type VersionFile,
+  versionDiff,
   wordDiff,
 } from "./interdiff";
 
@@ -336,5 +337,34 @@ describe("diffstat", () => {
     [30, 20, ["add", "add", "add", "del", "del"]],
   ])("%p added and %p removed fill the squares in proportion", (added, removed, squares) => {
     expect(diffstat(added, removed)).toEqual(squares as ReturnType<typeof diffstat>);
+  });
+});
+
+describe("versionDiff", () => {
+  const modified = { filename: "src/a.ts", status: "modified", sha: "a1", patch: "@@ -1,3 +1,3 @@\n keep\n-old\n+new\n tail" };
+
+  test("shows one version's own changes as a plain diff, marked by what the pull request does", () => {
+    const [diff] = versionDiff([modified]);
+    expect(diff?.lines.map((line) => `${line.mark}${line.left ?? ""}/${line.right ?? ""}`)).toEqual([" /", " 1/1", "-2/", "+/2", " 3/3"]);
+    expect([diff?.added, diff?.removed, diff?.change]).toEqual([1, 1, "changed"]);
+    expect(diff?.hunks).toHaveLength(1);
+  });
+
+  test("a file the version adds or deletes reads as new or deleted", () => {
+    const [added] = versionDiff([{ ...modified, status: "added", patch: "@@ -0,0 +1 @@\n+new" }]);
+    expect(fileVerdict(added!).label).toBe("New file");
+    const [removed] = versionDiff([{ ...modified, status: "removed", patch: "@@ -1 +0,0 @@\n-old" }]);
+    expect(fileVerdict(removed!).label).toBe("Deleted");
+  });
+});
+
+describe("a kept line remembers where the older version had it", () => {
+  test("so a comment on the older version finds it, though the newer one numbers it differently", () => {
+    const before = { filename: "a.ts", status: "modified", sha: "a1", patch: "@@ -10,2 +10,3 @@\n keep\n+added\n tail" };
+    const after = { filename: "a.ts", status: "modified", sha: "a2", patch: "@@ -20,2 +20,4 @@\n+first\n keep\n+added\n tail" };
+    const [compared] = interdiff([before], [after]);
+    const kept = compared?.lines.find((line) => line.display === "+added");
+    expect([kept?.mark, kept?.right, kept?.origin?.right]).toEqual([" ", 22, 11]);
+    expect(compared?.lines.find((line) => line.display === "+first")?.origin).toBeUndefined();
   });
 });

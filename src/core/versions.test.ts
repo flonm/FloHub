@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  BASE,
   baseBranches,
   baseCandidates,
   carryRange,
+  commentVersion,
   defaultRange,
   deriveVersions,
   formatRangeParam,
@@ -10,6 +12,7 @@ import {
   lastReviewedVersion,
   parseRangeParam,
   pickBase,
+  rangeParam,
   rangeToSave,
   type RawVersionPull,
   restoreRange,
@@ -315,5 +318,46 @@ describe("the range in the URL", () => {
 
   test.each(["", "..", "main..HEAD", "a1a1..", "a1a1a1a"])("%p opens on the remembered range instead", (value) => {
     expect(parseRangeParam(value, NOW)).toBeNull();
+  });
+});
+
+describe("the base branch as the older side", () => {
+  const NOW = Date.parse("2026-10-21T12:00:00Z");
+  const { versions } = deriveVersions(pull(), [], "me");
+
+  test("is saved, linked and restored as base, so the view shows a version's own changes", () => {
+    const saved = rangeToSave(versions, 0, 2, NOW);
+    expect(saved).toEqual({ from: BASE, to: "v2", toCurrent: false, at: NOW });
+    expect(restoreRange(versions, saved)).toEqual({ from: 0, to: 2 });
+    expect(formatRangeParam(null, versions[2]!)).toBe("base..");
+    expect(restoreRange(versions, parseRangeParam("base..", NOW))).toEqual({ from: 0, to: 3 });
+  });
+
+  test("stays the base through a refresh", () => {
+    expect(carryRange(versions, versions, 0, 3)).toEqual({ from: 0, to: 3 });
+  });
+});
+
+describe("commentVersion", () => {
+  const { versions } = deriveVersions(pull(), [], "me");
+
+  test("is the version the comment was written on", () => {
+    expect(commentVersion(versions, "v2", "2026-10-02T12:00:00Z")).toEqual({ version: versions[1]!, exact: true });
+  });
+
+  test("for a commit no version lists, is the head when the comment was written", () => {
+    expect(commentVersion(versions, "gone", "2026-10-02T12:00:00Z")).toEqual({ version: versions[1]!, exact: false });
+    expect(commentVersion(versions, "gone", "2026-09-01T00:00:00Z")).toEqual({ version: versions[0]!, exact: false });
+  });
+
+  test("finds nothing without versions", () => {
+    expect(commentVersion([], "v1", "2026-10-02T12:00:00Z")).toBeNull();
+  });
+});
+
+describe("rangeParam", () => {
+  test("writes a saved range as the URL keeps it", () => {
+    expect(rangeParam({ from: "a1a1a1a1a1", to: "", toCurrent: true, at: 0 })).toBe("a1a1a1a..");
+    expect(rangeParam({ from: BASE, to: "c3c3c3c3c3", toCurrent: false, at: 0 })).toBe("base..c3c3c3c");
   });
 });

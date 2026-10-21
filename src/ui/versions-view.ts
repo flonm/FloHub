@@ -12,10 +12,12 @@ import {
   isWholeFileHunk,
   splitLine,
   uniformKind,
+  versionDiff,
 } from "../core/interdiff";
 import { buildPathTree, filesInOrder, type PathNode } from "../core/path-tree";
 import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
 import {
+  BASE,
   baseCandidates,
   carryRange,
   rangeToSave,
@@ -24,6 +26,21 @@ import {
   type Version,
   type VersionHistory,
 } from "../core/versions";
+
+/** A line a review comment is on, as GitHub's API names it. */
+export interface CommentLine {
+  path: string;
+  /** The last line the comment covers. */
+  line: number;
+  /** The first line, for a comment on several. */
+  startLine?: number;
+  /** LEFT for the base side of the diff, RIGHT for the head side. */
+  side: "LEFT" | "RIGHT";
+}
+
+/** Where scrolling to a commented line got: to the line, only to its file, or nowhere because the diff lacks it. */
+type Revealed = "line" | "file" | "unchanged" | "missing";
+type Reveal = (line: CommentLine) => Revealed;
 
 export interface VersionsViewRequest {
   /** Names the pull request: opening the same one again shows what the view showed last, refreshed. */
@@ -41,8 +58,8 @@ export interface VersionsViewRequest {
   savedRange?: () => Promise<SavedRange | null>;
   /** Remembers a range the viewer picked. */
   saveRange?: (range: SavedRange) => void;
-  /** Called with each pair of versions the view starts comparing. */
-  onShow?: (older: Version, newer: Version) => void;
+  /** Called with each pair of versions the view starts comparing; the older one is null for the base branch. */
+  onShow?: (older: Version | null, newer: Version) => void;
   /** Called when the viewer closes the view. */
   onClose?: () => void;
 }
@@ -58,6 +75,8 @@ const VIEW_STYLES = `
   --vd-success: var(--fgColor-success, #1a7f37);
   --vd-danger: var(--fgColor-danger, #d1242f);
   --vd-accent: var(--fgColor-accent, #0969da);
+  --vd-attention: var(--fgColor-attention, #9a6700);
+  --vd-attention-bg: var(--bgColor-attention-muted, #fff8c5);
   --vd-add-bg: var(--diffBlob-additionLine-bgColor, #dafbe1);
   --vd-add-num-bg: var(--diffBlob-additionNum-bgColor, #d1f8d9);
   --vd-del-bg: var(--diffBlob-deletionLine-bgColor, #ffebe9);
@@ -126,6 +145,10 @@ select {
 .summary strong { color: var(--vd-fg); }
 .error { margin: 0; color: var(--vd-danger); }
 .error:empty { display: none; }
+.notice { margin: 0; color: var(--vd-attention); }
+.notice:empty { display: none; }
+.line.target { box-shadow: inset 4px 0 0 var(--vd-attention); }
+.line.target .code { background: var(--vd-attention-bg); }
 .body { flex: 1; min-height: 0; display: flex; }
 main { position: relative; flex: 1; min-width: 0; overflow: auto; overscroll-behavior: contain; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 
@@ -240,7 +263,7 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 .sign { flex: none; width: 20px; text-align: center; user-select: none; }
 .marker { flex: none; width: 22px; padding-left: 8px; font-weight: 600; user-select: none; }
 .marker { color: var(--vd-muted); }
-.diff[data-uniform] .marker { display: none; }
+.diff[data-uniform] .marker, .diff[data-plain] .marker { display: none; }
 .diff[data-uniform="+"] .num:nth-child(2), .diff[data-uniform="-"] .num:nth-child(3) { display: none; }
 .diff[data-uniform] .expander .num { width: 68px; }
 .code { flex: 1; padding-right: 16px; white-space: pre; }
@@ -337,6 +360,8 @@ export class VersionsView {
   private onClose: (() => void) | undefined;
   /** Until when the view keeps scrolling the page to its sticky place, while the page above it still grows. */
   private alignUntil = 0;
+  /** Shows a range, and a line in it, once the view has its versions. */
+  private target: ((range: SavedRange, line?: CommentLine) => void) | null = null;
 
   constructor() {
     this.host = document.createElement("flohub-versions");
@@ -407,6 +432,15 @@ export class VersionsView {
   }
 
 
+  /**
+   * Shows a range and scrolls to a line in it, as a review comment names them. Open the view first.
+   * @param range The range, as a saved range or a link names it.
+   * @param line The line to scroll to and mark, in the older version's numbers (the newer one's for the base).
+   */
+  goTo(range: SavedRange, line?: CommentLine): void {
+    this.target?.(range, line);
+  }
+
   /** @param request Where the versions come from. */
   open(request: VersionsViewRequest): void {
     this.onClose = request.onClose;
@@ -427,8 +461,9 @@ export class VersionsView {
     const summary = el("p", { class: "summary", "aria-live": "polite" });
     const legend = el("p", { class: "legend" });
     const error = el("p", { class: "error", role: "alert" });
+    const notice = el("p", { class: "notice", role: "status" });
     const header = el("header");
-    header.append(titleRow, controls, summary, legend, error);
+    header.append(titleRow, controls, summary, legend, error, notice);
     const files = el("nav", { class: "files", "aria-label": "Files" });
     const main = el("main");
     main.append(el("p", { class: "message", role: "status" }, "Loading versions…"));
@@ -441,52 +476,71 @@ export class VersionsView {
     /** The compared commits and the bases each was diffed against, so a refresh that changes neither keeps the diff. */
     let compared = "";
     /** The patches on screen, so a refresh whose bases moved only redraws when what the versions change differs. */
-    let onScreen: { oids: string; before: VersionPatch; after: VersionPatch } | null = null;
+    let onScreen: { oids: string; before: VersionPatch | null; after: VersionPatch; reveal: Reveal } | null = null;
+    /** A range to show and a line to scroll to, waiting for the versions or for the range's diff. */
+    let pending: { range: SavedRange; line?: CommentLine; oids?: string } | null = null;
     let shown = 0;
     let tracking: AbortController | undefined;
+
+    const reveal = (show: Reveal, line: CommentLine) => {
+      const found = show(line);
+      notice.textContent = revealNotice(found, line.path);
+    };
 
     /** @param quiet Whether to keep the diff on screen while the same versions are compared again. */
     const compare = async (quiet: boolean) => {
       if (!history || !picker) return;
-      const older = history.versions[Number(picker.from.value) - 1];
+      const fromNumber = Number(picker.from.value);
+      const older = fromNumber === 0 ? null : history.versions[fromNumber - 1];
       const newer = history.versions[Number(picker.to.value) - 1];
-      if (!older || !newer) return;
+      if (older === undefined || !newer) return;
       const showing = ++shown;
       const versions = history;
-      const oids = `${older.oid}|${newer.oid}`;
+      const oids = `${older?.oid ?? BASE}|${newer.oid}`;
       request.onShow?.(older, newer);
       const kept = quiet && onScreen?.oids === oids ? onScreen : null;
-      picker.link.href = `${request.repoUrl}/compare/${older.oid}..${newer.oid}`;
-      picker.link.title = "GitHub's plain compare of the two heads, including everything the base branch gained in between";
+      picker.link.href = `${request.repoUrl}/compare/${older?.oid ?? versions.baseRefOid}...${newer.oid}`;
+      picker.link.title = older
+        ? "GitHub's plain compare of the two heads, including everything the base branch gained in between"
+        : "GitHub's compare of the version with the base branch's current head";
       if (!kept) {
         onScreen = null;
         tracking?.abort();
         error.textContent = "";
+        notice.textContent = "";
         summary.textContent = "";
         legend.replaceChildren();
         files.replaceChildren();
-        main.replaceChildren(el("p", { class: "message", role: "status" }, `Comparing v${older.number} with v${newer.number}…`));
+        const loading = older ? `Comparing v${older.number} with v${newer.number}…` : `Loading v${newer.number}…`;
+        main.replaceChildren(el("p", { class: "message", role: "status" }, loading));
       }
       try {
-        const [before, after] = await Promise.all([request.patch(versions, older), request.patch(versions, newer)]);
+        const [before, after] = await Promise.all([older ? request.patch(versions, older) : null, request.patch(versions, newer)]);
         if (!live() || showing !== shown) return;
         compared = comparedKey(versions, older, newer);
-        if (kept && samePatch(before, kept.before) && samePatch(after, kept.after)) return;
-        tracking?.abort();
-        tracking = new AbortController();
-        error.textContent = "";
-        summary.textContent = "";
-        legend.replaceChildren();
-        files.replaceChildren();
-        renderResult({ main, summary, legend, files, signal: tracking.signal }, interdiff(before.files, after.files), {
-          older,
-          newer,
-          before,
-          after,
-          history: versions,
-          repoUrl: request.repoUrl,
-        });
-        onScreen = { oids, before, after };
+        const same = kept && (before && kept.before ? samePatch(before, kept.before) : before === kept.before) && samePatch(after, kept.after);
+        if (!same) {
+          tracking?.abort();
+          tracking = new AbortController();
+          error.textContent = "";
+          summary.textContent = "";
+          legend.replaceChildren();
+          files.replaceChildren();
+          const diff = before ? interdiff(before.files, after.files) : versionDiff(after.files);
+          const show = renderResult({ main, summary, legend, files, signal: tracking.signal }, diff, {
+            older,
+            newer,
+            before,
+            after,
+            history: versions,
+            repoUrl: request.repoUrl,
+          });
+          onScreen = { oids, before, after, reveal: show };
+        }
+        if (pending?.line && pending.oids === oids && onScreen) {
+          reveal(onScreen.reveal, pending.line);
+          pending = null;
+        }
       } catch (failure) {
         if (!live() || showing !== shown) return;
         const message = failure instanceof Error ? failure.message : "Could not compare the versions.";
@@ -497,6 +551,33 @@ export class VersionsView {
         main.replaceChildren();
         error.textContent = message;
       }
+    };
+
+    /** Shows the range a target names, then the line once its diff is on screen. */
+    const aim = () => {
+      if (!history || !picker || !pending) return;
+      const range = restoreRange(history.versions, pending.range);
+      if (!range) return;
+      fillVersions(picker.from, history.versions, range.from, Date.now(), true);
+      fillVersions(picker.to, history.versions, range.to, Date.now());
+      const remembered = rangeToSave(history.versions, range.from, range.to, Date.now());
+      if (remembered) request.saveRange?.(remembered);
+      const older = range.from === 0 ? null : (history.versions[range.from - 1] ?? null);
+      const newer = history.versions[range.to - 1];
+      if (!newer) return;
+      pending.oids = `${older?.oid ?? BASE}|${newer.oid}`;
+      if (!pending.line) pending = null;
+      const current = onScreen;
+      if (pending && current !== null && current.oids === pending.oids && compared === comparedKey(history, older, newer)) {
+        if (pending.line) reveal(current.reveal, pending.line);
+        pending = null;
+        return;
+      }
+      void compare(false);
+    };
+    this.target = (range, line) => {
+      pending = { range, ...(line && { line }) };
+      aim();
     };
 
     const onlyOne = () => {
@@ -513,17 +594,17 @@ export class VersionsView {
       history = next;
       const range =
         (previous && picker && carryRange(previous.versions, next.versions, Number(picker.from.value), Number(picker.to.value))) ??
-        restoreRange(next.versions, saved);
+        restoreRange(next.versions, pending?.range ?? saved);
       if (!range) {
         onlyOne();
         return;
       }
       const now = Date.now();
       if (picker) {
-        fillVersions(picker.from, next.versions, range.from, now);
+        fillVersions(picker.from, next.versions, range.from, now, true);
         fillVersions(picker.to, next.versions, range.to, now);
       } else {
-        const from = versionSelect("From", next.versions, range.from, now);
+        const from = versionSelect("From", next.versions, range.from, now, true);
         const to = versionSelect("To", next.versions, range.to, now);
         const link = el("a", { target: "_blank", rel: "noopener" }, "GitHub's compare");
         const wrap = el("input", { type: "checkbox" });
@@ -541,9 +622,13 @@ export class VersionsView {
         from.select.addEventListener("change", picked);
         to.select.addEventListener("change", picked);
       }
-      const older = next.versions[range.from - 1];
+      if (pending && !previous) {
+        aim();
+        return;
+      }
+      const older = range.from === 0 ? null : next.versions[range.from - 1];
       const newer = next.versions[range.to - 1];
-      if (older && newer && comparedKey(next, older, newer) !== compared) void compare(true);
+      if (older !== undefined && newer && comparedKey(next, older, newer) !== compared) void compare(true);
     };
 
     const start = async () => {
@@ -574,31 +659,64 @@ export class VersionsView {
 }
 
 /**
+ * @param found Where scrolling to a commented line got.
+ * @param path The commented file.
+ * @returns What to tell the viewer when it didn't get to the line.
+ */
+function revealNotice(found: Revealed, path: string): string {
+  switch (found) {
+    case "line": {
+      return "";
+    }
+    case "unchanged": {
+      return `${path} makes the same change in both versions, so the commented line isn't in this diff.`;
+    }
+    case "file": {
+      return `The commented line is in a part of ${path} this diff doesn't show.`;
+    }
+    case "missing": {
+      return `${path} isn't in this diff.`;
+    }
+  }
+}
+
+/**
  * @param history The versions.
  * @param older The older compared version.
  * @param newer The newer compared version.
  * @returns What decides the comparison: both commits and the bases each is diffed against.
  */
-function comparedKey(history: VersionHistory, older: Version, newer: Version): string {
-  return [older, newer].map((version) => `${version.oid}:${baseCandidates(history, version).join(",")}`).join("|");
+function comparedKey(history: VersionHistory, older: Version | null, newer: Version): string {
+  return [older, newer].map((version) => (version ? `${version.oid}:${baseCandidates(history, version).join(",")}` : BASE)).join("|");
 }
 
-function versionSelect(name: string, versions: Version[], selected: number, now: number) {
+function versionSelect(name: string, versions: Version[], selected: number, now: number, base = false) {
   const select = el("select");
-  fillVersions(select, versions, selected, now);
+  fillVersions(select, versions, selected, now, base);
   const label = el("label", {}, name);
   label.append(select);
   return { label, select };
 }
 
-function fillVersions(select: HTMLSelectElement, versions: Version[], selected: number, now: number): void {
-  select.replaceChildren(
-    ...versions.toReversed().map((version) => {
-      const option = el("option", { value: String(version.number) }, describeVersion(version, now));
-      option.selected = version.number === selected;
-      return option;
-    }),
-  );
+/**
+ * @param select The select to fill.
+ * @param versions Oldest first.
+ * @param selected The version to select, 0 for the base branch.
+ * @param now The current time.
+ * @param base Whether to offer the base branch, last, which shows the newer version's own changes.
+ */
+function fillVersions(select: HTMLSelectElement, versions: Version[], selected: number, now: number, base = false): void {
+  const options = versions.toReversed().map((version) => {
+    const option = el("option", { value: String(version.number) }, describeVersion(version, now));
+    option.selected = version.number === selected;
+    return option;
+  });
+  if (base) {
+    const option = el("option", { value: "0" }, "Base · the base branch, for the version's own changes");
+    option.selected = selected === 0;
+    options.push(option);
+  }
+  select.replaceChildren(...options);
 }
 
 /**
@@ -617,9 +735,10 @@ function describeVersion(version: Version, now: number): string {
 }
 
 interface Context {
-  older: Version;
+  /** The older version, or null when the newer one shows against the base branch. */
+  older: Version | null;
   newer: Version;
-  before: VersionPatch;
+  before: VersionPatch | null;
   after: VersionPatch;
   history: VersionHistory;
   repoUrl: string;
@@ -635,20 +754,34 @@ interface Slots {
   signal: AbortSignal;
 }
 
-function renderResult({ main, summary, legend, files: nav, signal }: Slots, files: FileInterdiff[], context: Context): void {
+/**
+ * @param slots Where the result goes.
+ * @param files The compared files.
+ * @param context The versions compared.
+ * @returns A function that scrolls to a commented line and marks it.
+ */
+function renderResult({ main, summary, legend, files: nav, signal }: Slots, files: FileInterdiff[], context: Context): Reveal {
+  const { older, newer } = context;
   // Past GitHub's file limit, a file only one version lists may just be cut off from the other's list.
-  const truncated = context.before.truncated || context.after.truncated;
-  const shown = truncated ? files.filter((file) => file.change !== "added" && file.change !== "dropped") : files;
+  const truncated = Boolean(context.before?.truncated) || context.after.truncated;
+  const shown = truncated && older ? files.filter((file) => file.change !== "added" && file.change !== "dropped") : files;
   const differing = shown.filter((file) => file.change !== "unchanged" && file.change !== "opaque");
   const opaque = shown.filter((file) => file.change === "opaque");
   const unchanged = shown.filter((file) => file.change === "unchanged");
-  const headline = differing.length === 0 ? "No differences." : `${differing.length} of ${shown.length} files differ.`;
-  const uncompared = opaque.length === 0 ? "" : ` ${opaque.length} can't be compared.`;
-  summary.replaceChildren(
-    el("strong", {}, `${headline}${uncompared}`),
-    ` Shows the pull request's own changes, and how they differ between v${context.older.number} and v${context.newer.number}, ignoring what the base branch gained.`,
-  );
-  if (differing.length > 0) {
+  if (older) {
+    const headline = differing.length === 0 ? "No differences." : `${differing.length} of ${shown.length} files differ.`;
+    const uncompared = opaque.length === 0 ? "" : ` ${opaque.length} can't be compared.`;
+    summary.replaceChildren(
+      el("strong", {}, `${headline}${uncompared}`),
+      ` Shows the pull request's own changes, and how they differ between v${older.number} and v${newer.number}, ignoring what the base branch gained.`,
+    );
+  } else {
+    summary.replaceChildren(
+      el("strong", {}, `${shown.length} ${shown.length === 1 ? "file" : "files"} changed.`),
+      ` Shows the pull request's changes as v${newer.number} made them, against the base branch it was made on.`,
+    );
+  }
+  if (older && differing.length > 0) {
     const marks = el("span");
     marks.append(
       el("kbd", {}, "+"),
@@ -656,7 +789,7 @@ function renderResult({ main, summary, legend, files: nav, signal }: Slots, file
       el("kbd", {}, "−"),
       " beside the code: what the pull request does to the line",
     );
-    legend.replaceChildren(legendEntry("new", `Only in v${context.newer.number}`), legendEntry("gone", `Only in v${context.older.number}`), marks);
+    legend.replaceChildren(legendEntry("new", `Only in v${newer.number}`), legendEntry("gone", `Only in v${older.number}`), marks);
   }
 
   const content: Node[] = [];
@@ -665,11 +798,13 @@ function renderResult({ main, summary, legend, files: nav, signal }: Slots, file
       el(
         "p",
         { class: "hint" },
-        "GitHub lists at most 300 files per version, so files only one version lists are left out: they may just be past the cut.",
+        older
+          ? "GitHub lists at most 300 files per version, so files only one version lists are left out: they may just be past the cut."
+          : "GitHub lists at most 300 files per version, so files past the cut are missing.",
       ),
     );
   }
-  const offBase = [context.before, context.after].some((patch) => !patch.onBase) && context.history.baseHeads.length > 0;
+  const offBase = [context.before, context.after].some((patch) => patch && !patch.onBase) && context.history.baseHeads.length > 0;
   if (offBase) {
     content.push(
       el(
@@ -681,13 +816,15 @@ function renderResult({ main, summary, legend, files: nav, signal }: Slots, file
   }
   const tree = buildPathTree([...differing, ...opaque], (file) => file.path);
   const sections = new Map<FileInterdiff, HTMLDetailsElement>();
+  const rowAt = new Map<FileInterdiff, (index: number) => HTMLElement | null>();
   for (const file of filesInOrder(tree)) {
-    const section = renderFile(file, context);
+    const { section, row } = renderFile(file, context);
     sections.set(file, section);
+    rowAt.set(file, row);
     content.push(section);
   }
+  const details = el("details", { class: "unchanged" });
   if (unchanged.length > 0) {
-    const details = el("details", { class: "unchanged" });
     details.append(el("summary", {}, `${unchanged.length} ${unchanged.length === 1 ? "file makes" : "files make"} the same change in both versions`));
     const list = el("ul");
     for (const file of unchanged) list.append(el("li", {}, file.oldPath ? `${file.oldPath} → ${file.path}` : file.path));
@@ -696,6 +833,37 @@ function renderResult({ main, summary, legend, files: nav, signal }: Slots, file
   }
   main.replaceChildren(...content);
   if (sections.size > 0) renderFileTree(nav, tree, sections, main, signal);
+
+  return (line) => {
+    for (const marked of main.querySelectorAll(".line.target")) marked.classList.remove("target");
+    const named = (file: FileInterdiff) => file.path === line.path || file.oldPath === line.path;
+    if (unchanged.some((file) => named(file))) {
+      details.open = true;
+      details.scrollIntoView({ block: "start" });
+      return "unchanged";
+    }
+    const file = [...sections.keys()].find((each) => named(each));
+    const section = file && sections.get(file);
+    if (!file || !section) return "missing";
+    section.open = true;
+    // A comment names its lines as the version it was written on numbers them, which the lines keep as their origin.
+    const at = (number: number) =>
+      file.lines.findIndex((each) => (line.side === "LEFT" ? each.origin?.left : each.origin?.right) === number);
+    const last = at(line.line);
+    if (last < 0) {
+      section.scrollIntoView({ block: "start" });
+      return "file";
+    }
+    const first = line.startLine === undefined ? last : at(line.startLine);
+    const marked: HTMLElement[] = [];
+    for (let index = first < 0 ? last : first; index <= last; index++) {
+      const row = rowAt.get(file)?.(index);
+      if (row) marked.push(row);
+    }
+    for (const row of marked) row.classList.add("target");
+    marked.at(-1)?.scrollIntoView({ block: "center" });
+    return marked.length > 0 ? "line" : "file";
+  };
 }
 
 /**
@@ -818,7 +986,17 @@ function legendEntry(className: string, text: string): HTMLElement {
   return item;
 }
 
-function renderFile(file: FileInterdiff, context: Context): HTMLDetailsElement {
+/** @returns No row: a file without a diff has none. */
+function noRow(): null {
+  return null;
+}
+
+/**
+ * @param file The file's interdiff.
+ * @param context The versions compared.
+ * @returns The file's section, and a function that gives the row of one of its lines, unfolding it if it has to.
+ */
+function renderFile(file: FileInterdiff, context: Context): { section: HTMLDetailsElement; row: (index: number) => HTMLElement | null } {
   const change = fileVerdict(file);
   const details = el("details", { class: "file", open: "" });
   const head = el("summary");
@@ -837,13 +1015,13 @@ function renderFile(file: FileInterdiff, context: Context): HTMLDetailsElement {
   details.append(head);
 
   if (file.hunks.length === 0) {
-    if (!file.diffless) return details;
+    if (!file.diffless) return { section: details, row: noRow };
     const reason =
       file.change === "opaque"
         ? "GitHub shows no diff for this file (binary, or too large), so it can't be compared. Its content differs between the versions, which may only be because the base branch changed it."
         : "GitHub shows no diff for this file (binary, or too large).";
     details.append(el("p", { class: "note" }, reason));
-    return details;
+    return { section: details, row: noRow };
   }
   const diff = el("div", { class: "diff" });
   const language = languageFor(file.path);
@@ -851,16 +1029,32 @@ function renderFile(file: FileInterdiff, context: Context): HTMLDetailsElement {
   // A new file's patch is all added lines: its markers and its empty base-side numbers would only repeat that.
   const uniform = uniformKind(file.lines);
   if (uniform) diff.dataset.uniform = uniform;
-  const rows = (start: number, end: number) => file.lines.slice(start, end).map((line, index) => renderLine(line, context, syntax[start + index]));
+  if (!context.older) diff.dataset.plain = "";
+  const rows = (start: number, end: number) =>
+    file.lines.slice(start, end).map((line, index) => {
+      const row = renderLine(line, context, syntax[start + index]);
+      row.dataset.index = String(start + index);
+      return row;
+    });
+  const folds: { start: number; end: number; button: HTMLButtonElement }[] = [];
+  const fold = (start: number, end: number) => {
+    const button = expander(end - start, rows.bind(null, start, end));
+    folds.push({ start, end, button });
+    diff.append(button);
+  };
   let shown = 0;
   for (const hunk of file.hunks) {
-    if (hunk.start > shown) diff.append(expander(hunk.start - shown, rows.bind(null, shown, hunk.start)));
+    if (hunk.start > shown) fold(shown, hunk.start);
     diff.append(...rows(hunk.start, hunk.start + hunk.lines.length));
     shown = hunk.start + hunk.lines.length;
   }
-  if (shown < file.lines.length) diff.append(expander(file.lines.length - shown, rows.bind(null, shown, file.lines.length)));
+  if (shown < file.lines.length) fold(shown, file.lines.length);
   details.append(diff);
-  return details;
+  const row = (index: number) => {
+    folds.find((each) => index >= each.start && index < each.end && each.button.isConnected)?.button.click();
+    return [...diff.querySelectorAll<HTMLElement>(".line")].find((line) => line.dataset.index === String(index)) ?? null;
+  };
+  return { section: details, row };
 }
 
 function copyButton(path: string): HTMLButtonElement {
@@ -899,7 +1093,7 @@ function renderStat(file: FileInterdiff): HTMLElement {
 function viewLink(file: FileInterdiff, context: Context): HTMLAnchorElement | null {
   const [version, path] = exists(file.status.after)
     ? [context.newer, file.path]
-    : (exists(file.status.before) ? [context.older, file.oldPath ?? file.path] : [null, null]);
+    : (exists(file.status.before) && context.older ? [context.older, file.oldPath ?? file.path] : [null, null]);
   if (!version || !path) return null;
   const href = `${context.repoUrl}/blob/${version.oid}/${path.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
   return el("a", { class: "view", href, target: "_blank", rel: "noopener" }, `View file at v${version.number}`);
@@ -926,6 +1120,7 @@ function expander(count: number, rows: () => HTMLElement[]): HTMLButtonElement {
 }
 
 function outerLabel(mark: "+" | "-", context: Context): string {
+  if (!context.older) return mark === "+" ? "Added" : "Removed";
   return mark === "+" ? `Only in v${context.newer.number}` : `Only in v${context.older.number}`;
 }
 

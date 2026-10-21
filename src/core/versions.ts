@@ -197,6 +197,7 @@ export function defaultRange(versions: Version[]): { from: number; to: number } 
 
 /** A pair of versions the viewer compared, by commit so it survives versions being renumbered. */
 export interface SavedRange {
+  /** The older side's commit, or {@link BASE} for the base branch. */
   from: string;
   to: string;
   /** Whether `to` was the current head then, so the range follows the head to later pushes. */
@@ -204,6 +205,12 @@ export interface SavedRange {
   /** When the viewer picked the range. */
   at: number;
 }
+
+/**
+ * The older side of a range that shows one version's own changes against the base branch, as GitHub's Files changed
+ * tab shows them: number 0 among the versions, and `base` in a saved range or a link.
+ */
+export const BASE = "base";
 
 /** How long a pull request keeps the range the viewer last compared. */
 const RANGE_MEMORY_MS = 30 * 86_400_000;
@@ -221,10 +228,10 @@ export function restoreRange(versions: Version[], saved: SavedRange | null): { f
   const fallback = defaultRange(versions);
   if (!fallback || !saved) return fallback;
   // A range from a link names its commits by their short form.
-  const from = versions.find((version) => version.oid.startsWith(saved.from));
+  const from = saved.from === BASE ? 0 : versions.find((version) => version.oid.startsWith(saved.from))?.number;
   const to = saved.toCurrent ? versions.at(-1) : versions.find((version) => version.oid.startsWith(saved.to));
-  if (!from || !to || from === to) return fallback;
-  return { from: from.number, to: to.number };
+  if (from === undefined || !to || from === to.number) return fallback;
+  return { from, to: to.number };
 }
 
 /**
@@ -239,9 +246,9 @@ export function restoreRange(versions: Version[], saved: SavedRange | null): { f
 export function carryRange(before: Version[], after: Version[], from: number, to: number): { from: number; to: number } | null {
   const older = before[from - 1];
   const newer = before[to - 1];
-  const carriedFrom = older && after.find((version) => version.oid === older.oid);
+  const carriedFrom = from === 0 ? 0 : older && after.find((version) => version.oid === older.oid)?.number;
   const carriedTo = newer && (newer.current ? after.at(-1) : after.find((version) => version.oid === newer.oid));
-  return carriedFrom && carriedTo ? { from: carriedFrom.number, to: carriedTo.number } : null;
+  return carriedFrom !== undefined && carriedTo ? { from: carriedFrom, to: carriedTo.number } : null;
 }
 
 /**
@@ -252,20 +259,44 @@ export function carryRange(before: Version[], after: Version[], from: number, to
  * @returns The range to remember, or null for one not worth restoring: a version compared with itself.
  */
 export function rangeToSave(versions: Version[], from: number, to: number, now: number): SavedRange | null {
-  const older = versions[from - 1];
+  const older = from === 0 ? BASE : versions[from - 1]?.oid;
   const newer = versions[to - 1];
-  if (!older || !newer || older === newer) return null;
-  return { from: older.oid, to: newer.oid, toCurrent: newer.current, at: now };
+  if (!older || !newer || older === newer.oid) return null;
+  return { from: older, to: newer.oid, toCurrent: newer.current, at: now };
 }
 
 /**
- * @param older The older compared version.
+ * Finds the version a review comment was written on. A comment's commit is nearly always one, since a review makes its
+ * commit a version; a comment drafted on a commit that was pushed over before the review was submitted may not be.
+ * @param versions Oldest first.
+ * @param oid The commit the comment was written on.
+ * @param at When the comment was written.
+ * @returns That version, or else the head at the time the comment was written, and whether it is the comment's own.
+ */
+export function commentVersion(versions: Version[], oid: string, at: string): { version: Version; exact: boolean } | null {
+  const own = versions.find((version) => version.oid === oid);
+  if (own) return { version: own, exact: true };
+  const written = Date.parse(at);
+  const then = versions.findLast((version) => Date.parse(version.at) <= written) ?? versions[0];
+  return then ? { version: then, exact: false } : null;
+}
+
+/**
+ * @param older The older compared version, or null for the base branch.
  * @param newer The newer compared version.
  * @returns The range as the page's URL keeps it, like `1a2b3c4..5d6e7f8`; a newer side that is the head is left
  * empty, so a link or a reload follows later pushes.
  */
-export function formatRangeParam(older: Version, newer: Version): string {
-  return `${older.oid.slice(0, 7)}..${newer.current ? "" : newer.oid.slice(0, 7)}`;
+export function formatRangeParam(older: Version | null, newer: Version): string {
+  return `${older ? older.oid.slice(0, 7) : BASE}..${newer.current ? "" : newer.oid.slice(0, 7)}`;
+}
+
+/**
+ * @param range A saved range, or one a review comment names.
+ * @returns The range as the page's URL keeps it, like {@link formatRangeParam} writes it.
+ */
+export function rangeParam(range: SavedRange): string {
+  return `${range.from === BASE ? BASE : range.from.slice(0, 7)}..${range.toCurrent ? "" : range.to.slice(0, 7)}`;
 }
 
 /**
@@ -274,7 +305,7 @@ export function formatRangeParam(older: Version, newer: Version): string {
  * @returns The range to open on, or null for an empty or malformed value, which opens on the remembered range.
  */
 export function parseRangeParam(value: string, now: number): SavedRange | null {
-  const match = /^([\da-f]{7,40})\.\.([\da-f]{7,40})?$/u.exec(value);
+  const match = /^(base|[\da-f]{7,40})\.\.([\da-f]{7,40})?$/u.exec(value);
   if (!match?.[1]) return null;
   return { from: match[1], to: match[2] ?? "", toCurrent: match[2] === undefined, at: now };
 }

@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
 import type { VersionPatch } from "../api/github";
-import type { SavedRange, Version, VersionHistory } from "../core/versions";
+import { BASE, type SavedRange, type Version, type VersionHistory } from "../core/versions";
 import { el } from "../ui/dom";
-import { VersionsView } from "../ui/versions-view";
+import { type CommentLine, VersionsView } from "../ui/versions-view";
 import { NOW } from "./shadow";
 
 const HOUR = 3_600_000;
@@ -231,6 +231,7 @@ function githubPage(): HTMLElement {
  * @param patches What each version changes.
  * @param stored What the extension kept from an earlier visit: the versions fetched then and the range compared.
  * @param docked Whether the page has GitHub's split layout to dock in.
+ * @param target A range to show and a commented line to scroll to, as a comment's menu asks for them.
  * @returns The page.
  */
 function view(
@@ -238,12 +239,14 @@ function view(
   patches = PATCHES,
   stored: { cached?: VersionHistory; saved?: SavedRange } = {},
   docked = true,
+  target?: { range: SavedRange; line?: CommentLine },
 ): HTMLElement {
   for (const previous of document.querySelectorAll("flohub-versions")) previous.remove();
   const page = docked ? githubPage() : el("p", {}, "A page without GitHub's split layout: the view floats over it.");
   // The view finds its place in the page, so it opens once Storybook has put the page in the document.
   requestAnimationFrame(() => {
-    new VersionsView().open({
+    const versions = new VersionsView();
+    versions.open({
       key: "octo-org/api#344",
       number: 344,
       repoUrl: "https://github.com/octo-org/api",
@@ -263,6 +266,7 @@ function view(
       },
       saveRange: () => undefined,
     });
+    if (target) versions.goTo(target.range, target.line);
   });
   return page;
 }
@@ -341,3 +345,20 @@ export const RefreshFails: Story = { render: () => view("failing", PATCHES, { ca
 
 /** On a page without GitHub's split layout, like the classic Files changed tab, the view floats over the page. */
 export const Floating: Story = { render: () => view(3, PATCHES, {}, false) };
+
+/** Code at a version: v2's own changes against the base branch, as GitHub's Files changed tab showed them then. */
+export const CodeAtAVersion: Story = {
+  render: () => view(3, PATCHES, {}, true, { range: { from: BASE, to: V2.oid, toCurrent: false, at: NOW } }),
+};
+
+/**
+ * Changes since a comment: opened from a comment on v2's `src/core/retry.ts`, line 13, the view compares v2 with the
+ * head and marks the line, though the file has been renamed since and the line changed.
+ */
+export const ChangesSinceAComment: Story = {
+  render: () =>
+    view(3, PATCHES, {}, true, {
+      range: { from: V2.oid, to: "", toCurrent: true, at: NOW },
+      line: { path: "src/core/retry.ts", line: 13, side: "RIGHT" },
+    }),
+};

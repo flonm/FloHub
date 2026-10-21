@@ -5,6 +5,7 @@ import type { ReviewEvent } from "../core/shortcuts";
 import type { RawPullRequest } from "../core/reviewers";
 import type { RawStack, RawStackPull } from "../core/stack";
 import type { ViewedFile, ViewedFiles } from "../core/viewed";
+import { type CommentLink, type CommentPlace, threadNumber } from "../core/comment-jump";
 import type { VersionFile } from "../core/interdiff";
 import { baseBranches, deriveVersions, pickBase, type RawBasePull, type RawVersionPull, type VersionHistory } from "../core/versions";
 
@@ -504,6 +505,59 @@ export async function submitReview(ref: PullRef, event: ReviewEvent, body: strin
 async function findPendingReview(ref: PullRef): Promise<{ id: number } | null> {
   const reviews = (await request(`${pullPath(ref)}/reviews?per_page=100`, {})) as { id: number; state: string }[];
   return reviews.find((review) => review.state === "PENDING") ?? null;
+}
+
+const THREADS_QUERY = `
+query ($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(last: 100) { nodes { id comments(first: 1) { nodes { databaseId } } } }
+    }
+  }
+}`;
+
+/**
+ * @param ref The pull request.
+ * @param link The comment, or the thread an outdated comment's link names instead.
+ * @returns Where the comment sits.
+ */
+export async function fetchReviewComment(ref: PullRef, link: CommentLink): Promise<CommentPlace> {
+  const id = link.kind === "comment" ? link.id : await firstCommentOf(ref, link.id);
+  const raw = (await request(`/repos/${ref.owner}/${ref.repo}/pulls/comments/${id}`, {})) as {
+    path: string;
+    original_commit_id: string;
+    original_line: number | null;
+    original_start_line: number | null;
+    line: number | null;
+    start_line: number | null;
+    side: "LEFT" | "RIGHT" | null;
+    created_at: string;
+  };
+  return {
+    path: raw.path,
+    originalCommit: raw.original_commit_id,
+    originalLine: raw.original_line,
+    originalStartLine: raw.original_start_line,
+    line: raw.line,
+    startLine: raw.start_line,
+    side: raw.side ?? "RIGHT",
+    createdAt: raw.created_at,
+  };
+}
+
+/**
+ * @param ref The pull request.
+ * @param thread The thread's number, as GitHub links an outdated comment.
+ * @returns The number of the thread's first comment, the one the thread's position belongs to.
+ */
+async function firstCommentOf(ref: PullRef, thread: number): Promise<number> {
+  const { data } = await graphql<{
+    repository: { pullRequest: { reviewThreads: { nodes: { id: string; comments: { nodes: { databaseId: number | null }[] } }[] } } | null } | null;
+  }>(THREADS_QUERY, { owner: ref.owner, name: ref.repo, number: ref.number });
+  const found = data.repository?.pullRequest?.reviewThreads.nodes.find((node) => threadNumber(node.id) === thread);
+  const id = found?.comments.nodes[0]?.databaseId;
+  if (id === undefined || id === null) throw new GitHubError("failed", "Could not find the comment among the pull request's last 100 threads.");
+  return id;
 }
 
 function pullPath(ref: PullRef): string {
