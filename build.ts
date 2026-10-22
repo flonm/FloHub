@@ -4,6 +4,7 @@ import type { BunPlugin } from "bun";
 const TARGETS = {
   chrome: "dist",
   firefox: "dist-firefox",
+  safari: "dist-safari",
 } as const;
 
 type Target = keyof typeof TARGETS;
@@ -82,13 +83,28 @@ if (!VERSION_FORMAT.test(version)) {
   process.exit(1);
 }
 manifest.version = version;
-await Bun.write(`${OUT}/manifest.json`, `${JSON.stringify(target === "firefox" ? toFirefox(manifest) : manifest, null, 2)}\n`);
+const TO_TARGET = { chrome: (m) => m, firefox: toFirefox, safari: toSafari } satisfies Record<
+  Target,
+  (m: Record<string, unknown>) => Record<string, unknown>
+>;
+await Bun.write(`${OUT}/manifest.json`, `${JSON.stringify(TO_TARGET[target](manifest), null, 2)}\n`);
 
-console.log(
-  target === "firefox"
-    ? `Built ${result.outputs.length} scripts into ${OUT}/. Load it via about:debugging → This Firefox → Load Temporary Add-on.`
-    : `Built ${result.outputs.length} scripts into ${OUT}/. Load it via chrome://extensions → Load unpacked.`,
-);
+const LOAD_HINTS: Record<Target, string> = {
+  chrome: "Load it via chrome://extensions → Load unpacked.",
+  firefox: "Load it via about:debugging → This Firefox → Load Temporary Add-on.",
+  safari: "Wrap it in an app with `bun run install:safari`.",
+};
+console.log(`Built ${result.outputs.length} scripts into ${OUT}/. ${LOAD_HINTS[target]}`);
+
+/**
+ * Safari ignores Chrome's minimum version key and warns about it in the converter.
+ * @param chromeManifest The Chrome manifest.
+ * @returns The same manifest for Safari.
+ */
+function toSafari(chromeManifest: Record<string, unknown>): Record<string, unknown> {
+  const { minimum_chrome_version: _, ...rest } = chromeManifest;
+  return rest;
+}
 
 /**
  * Firefox runs Manifest V3 background code as an event page, not a service worker, and needs an add-on ID.
