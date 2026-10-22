@@ -42,6 +42,8 @@ const SEEN_MEMORY_MS = 60 * 86_400_000;
 const RANGES_KEY = "versionRanges";
 /** GitHub's comments panel beside the Files changed diff. */
 const COMMENTS_PANEL = "#docked-side-panel-content";
+/** Whether the viewer reads the versions view side by side. */
+const SPLIT_KEY = "versionsSplitView";
 /** The URL parameter that keeps the versions view open on the Files changed tab, with the range it compares. */
 const VERSIONS_PARAM = "flohub-versions";
 
@@ -728,6 +730,15 @@ function openVersions(ref: PullRef): void {
       if (versionsView.isOpen) writeVersionsParam(versionsParam);
     },
     onClose: closeVersions,
+    splitView: async () => {
+      try {
+        const stored = await chrome.storage.local.get(SPLIT_KEY);
+        return stored[SPLIT_KEY] === true;
+      } catch {
+        return false;
+      }
+    },
+    saveSplitView: (split) => void chrome.storage.local.set({ [SPLIT_KEY]: split }).catch(() => undefined),
   });
 }
 

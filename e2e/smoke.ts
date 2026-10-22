@@ -1021,6 +1021,24 @@ await docked.locator(".thread-row").nth(1).waitFor();
 await docked.getByLabel("Comments").uncheck();
 check(await threadRows.first().isHidden(), "the Comments toggle hides the threads");
 await docked.getByLabel("Comments").check();
+await docked.getByLabel("Split view").check();
+const changedPair = docked.locator("details.file", { hasText: "README.md" }).locator(".line.split", { hasText: "Sync adopts server rebases." });
+await changedPair.waitFor();
+check(
+  (await changedPair.locator(".cell.left").innerText()).includes("Sync adopts server rebases.") &&
+    (await changedPair.locator(".cell.right").innerText()).includes("If GitHub already rebased") &&
+    (await docked.locator(".thread-row").count()) === 2,
+  "side by side, a line that changed between the versions sits beside its replacement, and the threads stay at their lines",
+);
+check(
+  await (light.serviceWorkers()[0] ?? (await light.waitForEvent("serviceworker"))).evaluate(async () => {
+    const layout = await chrome.storage.local.get("versionsSplitView");
+    return layout.versionsSplitView === true;
+  }),
+  "the layout is remembered",
+);
+await docked.getByLabel("Split view").uncheck();
+await docked.locator("details.file", { hasText: "README.md" }).locator(".line:not(.split)", { hasText: "Sync adopts server rebases." }).waitFor();
 
 // Commenting from the view, on v3, the head; the fixture records what would go to GitHub.
 const rebaseRow = (code: string) => docked.locator("details.file", { hasText: "cmd/rebase.go" }).locator(".line", { hasText: code });
