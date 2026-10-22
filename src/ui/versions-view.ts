@@ -200,6 +200,8 @@ main.hide-threads :is(.thread-row, .other-threads, .elsewhere) { display: none; 
   justify-content: center;
   width: 20px;
   height: 18px;
+  /* The view's general button rule would make it 32px tall and swap its colour on hover. */
+  min-height: 0;
   padding: 0;
   border: 0;
   border-radius: 4px;
@@ -209,6 +211,7 @@ main.hide-threads :is(.thread-row, .other-threads, .elsewhere) { display: none; 
   cursor: pointer;
 }
 .line:hover .add-comment, .add-comment:focus-visible { display: flex; }
+.line .add-comment:hover { background: var(--vd-accent); transform: scale(1.15); }
 .line.selected .code { background: var(--vd-attention-bg); }
 .elsewhere { margin-left: 6px; padding: 0 6px; border: 1px solid var(--vd-border); border-radius: 2em; color: var(--vd-muted); font-size: 12px; font-weight: 400; }
 .other-threads { margin: 0; padding: 8px 12px; list-style: none; border-bottom: 1px solid var(--vd-border); background: var(--vd-bg-muted); }
