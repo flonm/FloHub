@@ -1,0 +1,12 @@
+# This repository is public. A commit whose message, or whose added lines, name something from private work is
+# refused. The terms are listed one per line, case-insensitive, in .git/info/private-terms, which git never tracks, so
+# the list itself stays private; without the file nothing is checked.
+terms="$(git rev-parse --git-path info/private-terms)"
+[ -f "$terms" ] || exit 0
+found="$( { grep -v '^#' "$1"; git diff --cached -U0 | grep '^+' | grep -v '^+++'; } | grep -i -o -F -f "$terms" | sort -u)"
+if [ -n "$found" ]; then
+  echo "This repository is public, and the commit names private work:" >&2
+  echo "$found" | sed 's/^/  /' >&2
+  echo "Describe it without the names; the terms are listed in $terms." >&2
+  exit 1
+fi
