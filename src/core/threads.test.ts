@@ -2,9 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { interdiff, versionDiff } from "./interdiff";
 import { commentableLine, commentRange, type Compared, placeThreads, postingMode, type ReviewThread } from "./threads";
 
-// v1 adds a line after line 10; v2 adds another line above it, so the kept lines are renumbered, and drops one.
-const V1 = { filename: "a.ts", status: "modified", sha: "a1", patch: "@@ -10,3 +10,4 @@\n keep\n+added\n-gone\n tail" };
-const V2 = { filename: "a.ts", status: "modified", sha: "a2", patch: "@@ -20,2 +20,4 @@\n+first\n keep\n+added\n tail" };
+// v1 adds two lines after line 10 and removes one; v2 adds another line above them, so the kept lines are
+// renumbered, and no longer adds only1.
+const V1 = { filename: "a.ts", status: "modified", sha: "a1", patch: "@@ -10,3 +10,4 @@\n keep\n+added\n+only1\n-gone\n tail" };
+const V2 = { filename: "a.ts", status: "modified", sha: "a2", patch: "@@ -20,3 +20,4 @@\n+first\n keep\n+added\n-gone\n tail" };
 const SINCE: Compared = { older: "v1", newer: "v2", newerIsHead: true };
 const [FILE] = interdiff([V1], [V2]);
 
@@ -103,14 +104,14 @@ describe("commenting", () => {
 
   test("a hunk header, and a row only the older version has, take none", () => {
     expect(commentableLine(plain.lines[0]!, true)).toBeNull();
-    expect(commentableLine(FILE!.lines[at(FILE!.lines, "-gone")]!, false)).toBeNull();
+    expect(commentableLine(FILE!.lines[at(FILE!.lines, "+only1")]!, false)).toBeNull();
     expect(commentableLine(FILE!.lines[at(FILE!.lines, "+first")]!, false)).toEqual({ side: "RIGHT", line: 20 });
   });
 
   test("a comment on several rows names its first and last line, in either order", () => {
     const keep = at(plain.lines, " keep");
     const tail = at(plain.lines, " tail");
-    expect(commentRange(plain.lines, tail, keep, true)).toEqual({ side: "RIGHT", line: 12, startSide: "RIGHT", startLine: 10 });
+    expect(commentRange(plain.lines, tail, keep, true)).toEqual({ side: "RIGHT", line: 13, startSide: "RIGHT", startLine: 10 });
     expect(commentRange(plain.lines, keep, keep, true)).toEqual({ side: "RIGHT", line: 10 });
   });
 

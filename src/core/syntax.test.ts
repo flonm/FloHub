@@ -162,7 +162,7 @@ describe("highlightLine", () => {
   });
 });
 
-const line = (mark: InterdiffLine["mark"], display: string): InterdiffLine => ({ mark, text: display, display, left: null, right: null });
+const line = (mark: InterdiffLine["mark"], display: string): InterdiffLine => ({ mark, effect: mark, text: display, display, left: null, right: null });
 
 describe("highlightLines", () => {
   test("hunk headers and the no-newline note get no tokens", () => {

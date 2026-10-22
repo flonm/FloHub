@@ -1084,7 +1084,10 @@ function renderResult(
       const { placed, elsewhere } = placeThreads(file, threads, compared);
       const at = rowAt.get(file);
       const here = at ? placed : [];
-      for (const { thread, first, last, column } of here) {
+      for (const { thread, first, last, column: written } of here) {
+        // Side by side, a line only one version's code has sits in that version's column, and its thread with it.
+        const effect = file.lines[last]?.effect;
+        const column = effect === "-" ? "older" : (effect === "+" ? "newer" : written);
         seen.add(thread.id);
         const block = blocks.get(thread.id);
         if (block?.isConnected && holdsText(block)) continue;
@@ -1496,7 +1499,9 @@ function renderFile(
     const lines = file.lines.slice(start, end);
     const sides = lines.map((line): SplitSide => {
       const { kind } = splitLine(line.display);
-      return kind === "hunk" || kind === "\\" ? "full" : line.mark;
+      // Side by side follows the code, as GitHub's split of one version against the other: a line only the older
+      // version's code has on the left, one only the newer's has on the right.
+      return kind === "hunk" || kind === "\\" ? "full" : line.effect;
     });
     return splitRows(sides).flatMap((pair) => {
       if (pair.kind === "full") {
@@ -1633,11 +1638,11 @@ function outerLabel(mark: "+" | "-", context: Context): string {
  */
 function renderLine(line: InterdiffLine, context: Context, tokens?: Token[] | null): HTMLElement {
   const { kind, code } = splitLine(line.display);
-  const row = el("div", { class: "line", "data-outer": line.mark, "data-kind": kind });
+  const row = el("div", { class: "line", "data-outer": line.effect, "data-kind": kind });
   if (kind === "hunk" && isWholeFileHunk(code)) row.hidden = true;
   const marker = kind === "+" || kind === "-" ? kind : "";
   row.append(
-    el("span", { class: "sign", "aria-hidden": "true" }, line.mark === " " ? "" : (line.mark === "+" ? "+" : "−")),
+    el("span", { class: "sign", "aria-hidden": "true" }, line.effect === " " ? "" : (line.effect === "+" ? "+" : "−")),
     el("span", { class: "num left" }, line.left === null ? "" : String(line.left)),
     el("span", { class: "num right" }, line.right === null ? "" : String(line.right)),
     el("span", { class: "marker", "data-kind": kind }, marker === "-" ? "−" : marker),
@@ -1657,7 +1662,7 @@ function renderLine(line: InterdiffLine, context: Context, tokens?: Token[] | nu
  */
 function renderCell(line: InterdiffLine, side: "left" | "right", context: Context, tokens?: Token[] | null): HTMLElement {
   const { kind, code } = splitLine(line.display);
-  const mark = side === "left" ? (line.mark === "+" ? " " : line.mark) : (line.mark === "-" ? " " : line.mark);
+  const mark = side === "left" ? (line.effect === "+" ? " " : line.effect) : (line.effect === "-" ? " " : line.effect);
   const cell = el("div", { class: `cell ${side}`, "data-outer": mark, "data-kind": kind });
   // A plain diff is GitHub's own: the left side numbers the base, the right the head. Between versions each side
   // numbers its version's lines, a removed one by the base side it was removed from.
@@ -1680,7 +1685,7 @@ function renderCell(line: InterdiffLine, side: "left" | "right", context: Contex
  */
 function renderCode(line: InterdiffLine, code: string, context: Context, tokens?: Token[] | null): HTMLElement {
   const text = el("span", { class: "code" });
-  if (line.mark !== " ") text.append(el("span", { class: "visually-hidden" }, `${outerLabel(line.mark, context)}: `));
+  if (line.effect !== " ") text.append(el("span", { class: "visually-hidden" }, `${outerLabel(line.effect, context)}: `));
   const segments = line.segments ?? [{ text: code, changed: false }];
   let word: HTMLElement | null = null;
   const pieces = overlay(tokens ?? [{ text: code, kind: null }], segments);
