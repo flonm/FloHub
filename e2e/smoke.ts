@@ -441,6 +441,8 @@ function createFixture(
                     nodes: [
                       reviewThread("PRRT_1", "README.md", 305, "aaaaaaa1", "Is this still true?"),
                       reviewThread("PRRT_2", "cmd/rebase.go", 44, "ccccccc3", "Log at debug level?"),
+                      reviewThread("PRRT_3", "cmd/rebase.go", 44, "bbbbbbb2", "Was logging here before?"),
+                      reviewThread("PRRT_4", "docs/same.md", 2, "aaaaaaa1", "Say which rebases."),
                     ],
                   },
                 },
@@ -987,6 +989,35 @@ check(
     (await docked.locator("nav.files button.file", { hasText: "README.md" }).locator(".comment-count").innerText()) === "1",
   `review threads sit under their lines, by the numbers of the version each was written on, and the file tree counts them: ${JSON.stringify(placedThreads)}`,
 );
+const otherRow = docked.locator("details.file", { hasText: "cmd/rebase.go" }).locator(".other-threads button", { hasText: "Was logging here before?" });
+check(
+  (await otherRow.innerText()).includes("Changes since v2"),
+  "a thread written on a version the diff doesn't show is listed at the top of its file, with where to see it",
+);
+await otherRow.click();
+// The fixture's v2 has the head's files, so the thread's file makes the same change in both: the view says so.
+await docked.locator(".notice", { hasText: "makes the same change in both versions" }).waitFor();
+check(
+  (await docked.getByLabel("From").inputValue()) === "2" && (await docked.getByLabel("To").inputValue()) === "3",
+  "its row opens how the code changed since that version",
+);
+await docked.getByLabel("From").selectOption("1");
+await docked.locator("details.unchanged").evaluate((details) => {
+  (details as HTMLDetailsElement).open = true;
+});
+const unchangedRow = docked.locator("details.unchanged .other-threads button", { hasText: "Say which rebases." });
+check((await unchangedRow.innerText()).includes("Code at v1"), "a thread on a file that makes the same change in both versions is listed under it");
+await unchangedRow.click();
+await docked.locator(".line.target").waitFor();
+check(
+  (await docked.getByLabel("From").inputValue()) === "0" &&
+    (await docked.getByLabel("To").inputValue()) === "1" &&
+    (await docked.locator(".line.target").innerText()).includes("Adopts server rebases."),
+  "its row opens the code as the thread saw it, at its line",
+);
+await docked.getByLabel("To").selectOption("3");
+await docked.getByLabel("From").selectOption("1");
+await docked.locator(".thread-row").nth(1).waitFor();
 await docked.getByLabel("Comments").uncheck();
 check(await threadRows.first().isHidden(), "the Comments toggle hides the threads");
 await docked.getByLabel("Comments").check();

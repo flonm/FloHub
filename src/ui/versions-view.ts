@@ -26,7 +26,9 @@ import {
   type ReviewDiscussion,
   type ReviewThread,
 } from "../core/threads";
-import { renderComposer, renderThread, THREAD_STYLES, type ThreadActions } from "./review-thread";
+import { renderComposer, renderThread, THREAD_STYLES, type ThreadActions, threadPlace } from "./review-thread";
+import { renderRichText } from "../core/rich-text";
+import { type JumpTarget, threadElsewhere } from "../core/comment-jump";
 import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
 import {
   BASE,
@@ -62,6 +64,8 @@ interface ReviewHooks {
   threadActions: (thread: ReviewThread) => ThreadActions | undefined;
   /** The pull request's author, whose comments are labelled Author, once known. */
   pullAuthor: () => string | null;
+  /** Shows a range and scrolls to a thread's lines in it, for a thread the diff on screen has no line for. */
+  show: (target: JumpTarget) => void;
   /** New comments on the head's lines, or null when this diff doesn't show GitHub's lines of the head. */
   comment: {
     mode: () => PostingMode;
@@ -185,7 +189,7 @@ select {
 .line.target .code { background: var(--vd-attention-bg); }
 .body { flex: 1; min-height: 0; display: flex; }
 main { position: relative; flex: 1; min-width: 0; overflow: auto; overscroll-behavior: contain; padding: 16px; display: flex; flex-direction: column; gap: 12px; container-type: inline-size; }
-main.hide-threads :is(.thread-row, .elsewhere) { display: none; }
+main.hide-threads :is(.thread-row, .other-threads, .elsewhere) { display: none; }
 .line { position: relative; }
 .add-comment {
   position: absolute;
@@ -207,6 +211,31 @@ main.hide-threads :is(.thread-row, .elsewhere) { display: none; }
 .line:hover .add-comment, .add-comment:focus-visible { display: flex; }
 .line.selected .code { background: var(--vd-attention-bg); }
 .elsewhere { margin-left: 6px; padding: 0 6px; border: 1px solid var(--vd-border); border-radius: 2em; color: var(--vd-muted); font-size: 12px; font-weight: 400; }
+.other-threads { margin: 0; padding: 8px 12px; list-style: none; border-bottom: 1px solid var(--vd-border); background: var(--vd-bg-muted); }
+details.unchanged .other-threads { margin: 4px 0 8px; border: 1px solid var(--vd-border); border-radius: 6px; font: 14px/1.5 var(--fontStack-sansSerif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif); }
+.other-threads .heading { margin: 0 0 4px; color: var(--vd-muted); font-size: 12px; }
+.other-threads button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--vd-fg);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.other-threads button:hover { background: var(--vd-bg); }
+.other-threads button:focus-visible { outline: 2px solid var(--vd-accent); outline-offset: -2px; }
+.other-threads svg { color: var(--vd-muted); }
+.other-threads .where { flex: none; color: var(--vd-muted); font-size: 12px; }
+.other-threads .excerpt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.other-threads .go { flex: none; color: var(--vd-accent); font-size: 12px; }
 .files .comment-count { display: inline-flex; align-items: center; gap: 2px; color: var(--vd-muted); }
 .files .comment-count svg { width: 12px; height: 12px; }
 .files.hide-threads .comment-count { display: none; }
@@ -655,6 +684,7 @@ export class VersionsView {
           const review: ReviewHooks = {
             threadActions,
             pullAuthor: () => discussion?.author ?? null,
+            show: (target) => this.goTo(target.range, target.line),
             comment: commentable ? { mode: () => postingMode(discussion?.pending ?? null, newer.oid), post, released: release } : null,
           };
           const show = renderResult({ main, review, summary, legend, files, signal: tracking.signal }, diff, {
@@ -1000,7 +1030,7 @@ function renderResult(
     // Threads above the line the viewer reads, or was taken to, would push it down: it keeps its place on screen.
     const kept = main.querySelector<HTMLElement>(".line.target") ?? firstVisibleLine(main);
     const keptTop = kept?.getBoundingClientRect().top;
-    for (const earlier of main.querySelectorAll(".elsewhere")) earlier.remove();
+    for (const earlier of main.querySelectorAll(".elsewhere, .other-threads")) earlier.remove();
     for (const row of treeRows.values()) row.querySelector(".comment-count")?.remove();
     const now = Date.now();
     const seen = new Set<string>();
@@ -1030,8 +1060,9 @@ function renderResult(
         blocks.set(thread.id, added);
       }
       if (elsewhere.length > 0) {
-        const count = `${elsewhere.length} ${elsewhere.length === 1 ? "comment" : "comments"} on other versions`;
-        section.querySelector(":scope > summary")?.append(el("span", { class: "elsewhere", title: "Written on a version this diff doesn't show, and outdated since" }, count));
+        const way = (thread: ReviewThread) => threadElsewhere(context.history.versions, thread, compared, false, now);
+        const list = otherThreads(elsewhere, "Written on a version this diff doesn't show, and outdated since", way, review.show);
+        section.querySelector(":scope > summary")?.after(list);
       }
       const treeRow = treeRows.get(section);
       if (!treeRow || placed.length === 0) continue;
@@ -1041,13 +1072,14 @@ function renderResult(
       if (lineCounts) lineCounts.before(badge);
       else treeRow.append(badge);
     }
-    // A file that makes the same change in both versions has no diff to put its threads in: they're counted instead.
+    // A file that makes the same change in both versions has no diff to put its threads in: they're listed under it.
     let unchangedThreads = 0;
     for (const [file, item] of unchangedItems) {
-      const count = threads.filter((thread) => thread.path === file.path || thread.path === file.oldPath).length;
-      if (count === 0) continue;
-      unchangedThreads += count;
-      item.append(el("span", { class: "elsewhere" }, `${count} ${count === 1 ? "comment" : "comments"}`));
+      const here = threads.filter((thread) => thread.path === file.path || thread.path === file.oldPath);
+      if (here.length === 0) continue;
+      unchangedThreads += here.length;
+      const way = (thread: ReviewThread) => threadElsewhere(context.history.versions, thread, compared, true, now);
+      item.append(otherThreads(here, null, way, review.show));
     }
     if (unchangedThreads > 0) {
       details.querySelector(":scope > summary")?.append(el("span", { class: "elsewhere" }, `${unchangedThreads} ${unchangedThreads === 1 ? "comment" : "comments"}`));
@@ -1274,6 +1306,44 @@ function legendEntry(className: string, text: string): HTMLElement {
   const item = el("span", { class: className });
   item.append(el("i", { "aria-hidden": "true" }), text);
   return item;
+}
+
+/**
+ * @param threads Threads the diff on screen has no line for.
+ * @param heading What they have in common, or null.
+ * @param way Where to see each one.
+ * @param show Opens a range at a thread's lines.
+ * @returns A list of the threads, one row each, which opens the range where the thread has its line.
+ */
+function otherThreads(
+  threads: ReviewThread[],
+  heading: string | null,
+  way: (thread: ReviewThread) => { label: string; target: JumpTarget } | null,
+  show: (target: JumpTarget) => void,
+): HTMLUListElement {
+  const list = el("ul", { class: "other-threads" });
+  if (heading) list.append(el("li", { class: "heading" }, heading));
+  for (const thread of threads) {
+    const [first] = thread.comments;
+    const go = way(thread);
+    const button = el("button", { type: "button", title: go ? go.label : "" });
+    button.disabled = go === null;
+    const excerpt = first ? (renderRichText(first.html)?.textContent ?? "").replaceAll(/\s+/gu, " ").trim() : "";
+    button.append(
+      icon("comment"),
+      el("strong", {}, first?.author ?? "ghost"),
+      el("span", { class: "where" }, threadPlace(thread).replace("Comment on ", "")),
+      el("span", { class: "excerpt" }, excerpt),
+    );
+    if (go) {
+      button.append(el("span", { class: "go" }, `${go.label} →`));
+      button.addEventListener("click", () => show(go.target));
+    }
+    const item = el("li");
+    item.append(button);
+    list.append(item);
+  }
+  return list;
 }
 
 /**

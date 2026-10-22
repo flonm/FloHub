@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { type CommentPlace, commentJump, parseCommentLink, storedVersionsWillDo, threadNumber } from "./comment-jump";
+import { type CommentPlace, commentJump, parseCommentLink, storedVersionsWillDo, threadElsewhere, threadNumber } from "./comment-jump";
+import type { ReviewThread } from "./threads";
 import type { Version } from "./versions";
 
 const NOW = Date.parse("2026-10-21T12:00:00Z");
@@ -119,5 +120,44 @@ describe("storedVersionsWillDo", () => {
     expect(storedVersionsWillDo(stored, "v3")).toBe(false);
     expect(storedVersionsWillDo(stored, "v4")).toBe(false);
     expect(storedVersionsWillDo(null, "v1")).toBe(false);
+  });
+});
+
+/** @returns A thread started on a version, outdated since. */
+const outdatedThread = (on: string, overrides: Partial<ReviewThread> = {}): ReviewThread => ({
+  id: "PRRT_1",
+  path: "src/a.ts",
+  resolved: false,
+  outdated: true,
+  line: null,
+  startLine: null,
+  originalLine: 8,
+  originalStartLine: null,
+  side: "RIGHT",
+  resolvedBy: null,
+  comments: [{ id: 1, author: "ana", avatarUrl: null, html: "", createdAt: "2026-10-02T12:00:00Z", url: "", pending: false, association: null, originalCommit: on }],
+  ...overrides,
+});
+
+describe("threadElsewhere", () => {
+  const SINCE_V1 = { older: "v1", newer: "v3", newerIsHead: true };
+
+  test("a thread written on a version the diff doesn't show goes to how its code changed since", () => {
+    expect(threadElsewhere(VERSIONS, outdatedThread("v2"), SINCE_V1, false, NOW)).toEqual({
+      label: "Changes since v2",
+      target: { range: { from: "v2", to: "", toCurrent: true, at: NOW }, line: { path: "src/a.ts", line: 8, side: "RIGHT" } },
+    });
+  });
+
+  test("on a file that makes the same change in both versions, it goes to the code as the thread saw it", () => {
+    expect(threadElsewhere(VERSIONS, outdatedThread("v1"), SINCE_V1, true, NOW)?.label).toBe("Code at v1");
+  });
+
+  test("it never goes to the range already on screen", () => {
+    expect(threadElsewhere(VERSIONS, outdatedThread("v1"), SINCE_V1, false, NOW)?.label).toBe("Code at v1");
+  });
+
+  test("a thread on the head goes to the head's code", () => {
+    expect(threadElsewhere(VERSIONS, outdatedThread("v3"), SINCE_V1, true, NOW)?.target.range).toEqual({ from: "base", to: "v3", toCurrent: true, at: NOW });
   });
 });
