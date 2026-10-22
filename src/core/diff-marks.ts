@@ -1,4 +1,4 @@
-import { compareFile, diffLines, type FileChange, lineNumbers, pairFiles, patchBody, patchHeader, patchLines, type VersionFile } from "./interdiff";
+import { compareFile, type FileChange, lineNumbers, pairFiles, patchBody, patchHeader, type VersionFile } from "./interdiff";
 
 /** A line of GitHub's diff, the way its line anchors name it: `L` for the base side, `R` for the head side. */
 export interface LineRef {
@@ -30,7 +30,7 @@ export interface FileMarks {
  */
 export function markChanges(before: VersionFile[], after: VersionFile[]): FileMarks[] {
   return pairFiles(before, after).map(([old, current]) => {
-    const { path, change } = compareFile(old, current);
+    const { path, change, lines } = compareFile(old, current);
     const marks: FileMarks = { path, change, changed: [], removed: [] };
     if (current?.patch === undefined || change === "unchanged" || change === "opaque") return marks;
 
@@ -40,19 +40,22 @@ export function markChanges(before: VersionFile[], after: VersionFile[]): FileMa
       return marks;
     }
 
-    let index = 0;
+    // The versions view's rows: every row of the current patch, in order, and the older patch's rows it lacks.
+    // A row is a change when it changes the code between the versions, so lines only one patch shows as context
+    // around its changes are none.
+    let index = patchHeader(current).length;
     let previous: LineRef | null = null;
     let removed: RemovedLines | null = null;
-    const lines = diffLines(patchLines(old), patchLines(current));
     for (const line of lines) {
       if (line.mark === "-") {
+        if (line.effect === " ") continue;
         if (!removed) marks.removed.push((removed = { after: previous, lines: [] }));
         removed.lines.push(line.text);
         continue;
       }
       removed = null;
       const position = positions[index++] ?? null;
-      if (line.mark === "+" && position) marks.changed.push(position);
+      if (line.effect !== " " && position) marks.changed.push(position);
       if (position) previous = position;
     }
     return marks;

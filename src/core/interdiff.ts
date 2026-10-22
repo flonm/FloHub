@@ -11,8 +11,18 @@ export interface Segment {
   changed: boolean;
 }
 
-/** A line of the pull request's patch, marked by how it changed between the versions. */
+/**
+ * A line of the pull request's patch. Its mark says which version's patch it comes from: the older one's only, the
+ * newer one's only, or both.
+ */
 export interface InterdiffLine extends DiffLine {
+  /**
+   * What the difference between the versions does to the code, as GitHub's diff of one version against the other
+   * shows it: + the newer version's code has the line and the older one's doesn't, − the reverse, blank both have it.
+   * The older version's patch adding a line means it's gone from the newer code; the older patch removing a base line
+   * the newer one keeps means it's back.
+   */
+  effect: Mark;
   /** The line as the version it comes from has it: hunk headers keep their line numbers. */
   display: string;
   /** The line's number in the base side of the file, as GitHub's diff numbers it; null where it has none. */
@@ -101,6 +111,18 @@ export function interdiff(before: VersionFile[], after: VersionFile[]): FileInte
 }
 
 /**
+ * @param mark Which version's patch the line comes from: − the older one's only, + the newer one's only.
+ * @param kind What the pull request does to the line.
+ * @returns What that does to the code between the versions: a line only one patch adds is in only that version's
+ * code, and a base line only one patch removes is in only the other version's.
+ */
+function effectOf(mark: Mark, kind: LineKind): Mark {
+  if (mark === " " || (kind !== "+" && kind !== "-")) return " ";
+  if (kind === "+") return mark;
+  return mark === "+" ? "-" : "+";
+}
+
+/**
  * One version's own changes against its base, as a plain diff: each line is marked by what the pull request does to
  * it, as GitHub's Files changed tab shows the version.
  * @param files The files the version changes against its base.
@@ -113,9 +135,10 @@ export function versionDiff(files: VersionFile[]): FileInterdiff[] {
       // The lines are this call's own copies, so marking them in place is safe.
       const lines = plain.lines.map((line) => {
         const { kind } = splitLine(line.display);
-        return Object.assign(line, { mark: kind === "+" || kind === "-" ? kind : " ", origin: { left: line.left, right: line.right } });
+        const mark: Mark = kind === "+" || kind === "-" ? kind : " ";
+        return Object.assign(line, { mark, effect: mark, origin: { left: line.left, right: line.right } });
       });
-      const changed = lines.filter((line) => line.mark !== " ");
+      const changed = lines.filter((line) => line.effect !== " ");
       return {
         ...plain,
         change: file.status === "added" || file.status === "removed" ? ("added" as const) : ("changed" as const),
@@ -123,8 +146,8 @@ export function versionDiff(files: VersionFile[]): FileInterdiff[] {
         lines,
         // The patch is GitHub's diff of the version, context and all, so none of it folds away.
         hunks: lines.length > 0 ? [{ start: 0, lines }] : [],
-        added: changed.filter((line) => line.mark === "+").length,
-        removed: changed.filter((line) => line.mark === "-").length,
+        added: changed.filter((line) => line.effect === "+").length,
+        removed: changed.filter((line) => line.effect === "-").length,
       };
     })
     .toSorted((a, b) => (a.path < b.path ? -1 : (a.path > b.path ? 1 : 0)));
@@ -173,7 +196,7 @@ export function compareFile(old: VersionFile | null, current: VersionFile | null
   if (!file) throw new Error("compareFile needs a file from at least one version");
   const header = diffLines(old ? patchHeader(old) : [], current ? patchHeader(current) : []);
   const result = (change: FileChange, lines: InterdiffLine[] = []): FileInterdiff => {
-    const marked = [...header, ...lines].filter((line) => line.mark !== " ");
+    const marked = [...header.map((line) => line.mark), ...lines.map((line) => line.effect)].filter((effect) => effect !== " ");
     return {
       path: file.filename,
       oldPath: old && current && old.filename !== current.filename ? old.filename : null,
@@ -181,8 +204,8 @@ export function compareFile(old: VersionFile | null, current: VersionFile | null
       header,
       lines,
       hunks: toHunks(lines),
-      added: marked.filter((line) => line.mark === "+").length,
-      removed: marked.filter((line) => line.mark === "-").length,
+      added: marked.filter((effect) => effect === "+").length,
+      removed: marked.filter((effect) => effect === "-").length,
       diffless: [old, current].some((side) => side !== null && side.patch === undefined),
       status: { before: old?.status ?? null, after: current?.status ?? null },
     };
@@ -192,7 +215,7 @@ export function compareFile(old: VersionFile | null, current: VersionFile | null
     const mark: Mark = old ? "-" : "+";
     return result(
       old ? "dropped" : "added",
-      patchRows(patchBody(file)).map((row) => Object.assign(row, { mark })),
+      patchRows(patchBody(file)).map((row) => Object.assign(row, { mark, effect: effectOf(mark, splitLine(row.display).kind) })),
     );
   }
   if (old.patch === undefined || current.patch === undefined) {
@@ -200,7 +223,8 @@ export function compareFile(old: VersionFile | null, current: VersionFile | null
     return result(same ? "unchanged" : "opaque");
   }
   const lines = interdiffLines(patchBody(old), patchBody(current));
-  return result([...header, ...lines].some((line) => line.mark !== " ") ? "changed" : "unchanged", lines);
+  const changed = header.some((line) => line.mark !== " ") || lines.some((line) => line.effect !== " ");
+  return result(changed ? "changed" : "unchanged", lines);
 }
 
 /**
@@ -215,35 +239,86 @@ function interdiffLines(before: string[], after: string[]): InterdiffLine[] {
   const newRows = patchRows(after);
   let x = 0;
   let y = 0;
-  const lines: InterdiffLine[] = [];
+  // A base line is the same line whether a patch keeps it as context or removes it, so they're compared alike: one
+  // patch removing it and the other keeping it is then one row, the line being in only one version's code.
   const diff = diffLines(
-    oldRows.map((row) => row.text),
-    newRows.map((row) => row.text),
+    oldRows.map((row) => baseLineKey(row.text)),
+    newRows.map((row) => baseLineKey(row.text)),
   );
-  for (const { mark } of diff) {
-    // A kept line shows as the newer version has it.
+  // Each row with the hunk it's in, in each patch that has it, to tell whether the other patch covers its place.
+  let oldHunk = 0;
+  let newHunk = 0;
+  const entries = diff.map(({ mark }) => {
     const old = mark === "+" ? undefined : oldRows[x++];
-    const row = mark === "-" ? old : newRows[y++];
+    const current = mark === "-" ? undefined : newRows[y++];
+    if (old && splitLine(old.display).kind === "hunk") oldHunk++;
+    if (current && splitLine(current.display).kind === "hunk") newHunk++;
+    return { mark, old, current, oldHunk: old ? oldHunk : null, newHunk: current ? newHunk : null };
+  });
+  /**
+   * Whether the other version's patch shows the place of a row only one patch has: its rows just before and after
+   * are in one hunk. A base line it shows there would be in it, as context or removed.
+   */
+  const covered = (index: number, side: "oldHunk" | "newHunk") => {
+    const prior = entries.slice(0, index).findLast((entry) => entry[side] !== null);
+    const next = entries.slice(index + 1).find((entry) => entry[side] !== null);
+    return prior !== undefined && prior[side] === next?.[side];
+  };
+  const lines: InterdiffLine[] = [];
+  for (const [index, { mark, old, current }] of entries.entries()) {
+    // A kept line shows as the newer version has it.
+    const row = current ?? old;
     if (!row) continue;
+    const { kind } = splitLine(row.display);
+    if (mark === " " && old) {
+      const was = splitLine(old.display).kind;
+      lines.push(Object.assign(row, { mark, effect: matchedEffect(was, kind), origin: { left: old.left, right: old.right } }));
+      continue;
+    }
     // Which lines a patch shows around its changes, and where its hunks start, depends on where its changes are:
     // a context line or hunk header only one patch shows is no change in what the pull request does. The older
     // patch's are left out, so the rows keep the newer version's numbering; the newer patch's stay as context.
-    const { kind } = splitLine(row.display);
-    if ((kind === " " || kind === "hunk") && mark !== " ") {
-      if (mark === "+") lines.push(Object.assign(row, { mark: " " as const }));
+    if (kind === " " || kind === "hunk") {
+      if (mark === "+") lines.push(Object.assign(row, { mark: " " as const, effect: " " as const }));
       continue;
     }
-    lines.push(Object.assign(row, { mark }, old && { origin: { left: old.left, right: old.right } }));
+    // A base line only one patch removes is in the other version's code, unless that version's patch shows the
+    // place without it: then its base lacks the line too, and the line is in neither version's code.
+    const absentFromOtherBase = kind === "-" && covered(index, mark === "-" ? "newHunk" : "oldHunk");
+    if (absentFromOtherBase && mark === "-") continue;
+    const effect = absentFromOtherBase ? " " : effectOf(mark, kind);
+    lines.push(Object.assign(row, { mark, effect }, old && { origin: { left: old.left, right: old.right } }));
   }
   pairReplacements(lines);
   return lines;
 }
 
 /**
+ * @param was What the older patch does to a base line.
+ * @param kind What the newer patch does to it.
+ * @returns What that does to the code between the versions: removed by only one patch, it's in only the other
+ * version's code.
+ */
+function matchedEffect(was: LineKind, kind: LineKind): Mark {
+  if (was === kind) return " ";
+  if (was === "-") return "+";
+  return kind === "-" ? "-" : " ";
+}
+
+/**
+ * @param text A patch line, normalized for comparing.
+ * @returns What it's compared by: an added line by its code and its marker, a base line, kept or removed, by its
+ * code alone.
+ */
+function baseLineKey(text: string): string {
+  return text.startsWith("-") ? ` ${text.slice(1)}` : text;
+}
+
+/**
  * @param body A file's raw patch lines.
  * @returns Each line normalized for comparing, as shown, and numbered.
  */
-function patchRows(body: string[]): Omit<InterdiffLine, "mark">[] {
+function patchRows(body: string[]): Omit<InterdiffLine, "mark" | "effect">[] {
   const numbers = lineNumbers(body);
   return body.map((line, index) => ({
     text: normalizeLine(line),
@@ -520,7 +595,7 @@ function backtrack(a: string[], b: string[], trace: Int32Array[], edits: number)
 
 function toHunks(lines: InterdiffLine[]): Hunk[] {
   const hunks: Hunk[] = [];
-  const changed = lines.flatMap((line, index) => (line.mark === " " ? [] : index));
+  const changed = lines.flatMap((line, index) => (line.effect === " " ? [] : index));
   let index = 0;
   while (index < changed.length) {
     const first = changed[index]!;
@@ -540,14 +615,14 @@ function toHunks(lines: InterdiffLine[]): Hunk[] {
 function pairReplacements(lines: InterdiffLine[]): void {
   let index = 0;
   while (index < lines.length) {
-    if (lines[index]!.mark !== "-") {
+    if (lines[index]!.effect !== "-") {
       index++;
       continue;
     }
     const removedStart = index;
-    while (index < lines.length && lines[index]!.mark === "-") index++;
+    while (index < lines.length && lines[index]!.effect === "-") index++;
     const addedStart = index;
-    while (index < lines.length && lines[index]!.mark === "+") index++;
+    while (index < lines.length && lines[index]!.effect === "+") index++;
     let next = addedStart;
     for (let removed = removedStart; removed < addedStart && next < index; removed++) {
       const before = splitLine(lines[removed]!.display);

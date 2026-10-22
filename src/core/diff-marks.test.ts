@@ -72,3 +72,25 @@ describe("markChanges", () => {
     ]);
   });
 });
+
+/** @returns a.json as a version's patch has it. */
+function version(patch: string): VersionFile {
+  return { filename: "a.json", status: "modified", sha: patch, patch };
+}
+
+describe("markChanges and context", () => {
+
+  test("a context line or hunk header only one patch shows is neither changed nor removed", () => {
+    const older = version("@@ -1,6 +1,7 @@\n a\n b\n c\n+x\n d\n e\n f");
+    const current = version("@@ -2,4 +2,5 @@\n b\n c\n+x\n d\n@@ -20,3 +21,4 @@\n p\n+y\n q");
+    const [marks] = markChanges([older], [current]);
+    expect(marks?.changed).toEqual([{ side: "R", line: 22 }]);
+    expect(marks?.removed).toEqual([]);
+  });
+
+  test("a base line the older version removed and the current one keeps is highlighted as back", () => {
+    const [marks] = markChanges([version("@@ -1,3 +1,3 @@\n a\n-x\n+x,\n b")], [version("@@ -1,3 +1,3 @@\n a\n x\n b")]);
+    expect(marks?.changed).toEqual([{ side: "R", line: 2 }]);
+    expect(marks?.removed.flatMap((group) => group.lines)).toEqual(["+x,"]);
+  });
+});

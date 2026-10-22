@@ -115,9 +115,11 @@ describe("interdiff", () => {
 
   test("reports files only one version touches", () => {
     const results = interdiff([file("old.ts", "@@ -1 +1 @@\n-x\n+y")], [file("new.ts", "@@ -1 +1 @@\n-p\n+q")]);
+    // Counted by what they do to the code, as GitHub's diff of one version against the other: the version that
+    // leaves a file alone has the base's lines, so p and x are in the code it doesn't change, q and y in the other.
     expect(results.map((result) => [result.path, result.change, result.added, result.removed])).toEqual([
-      ["new.ts", "added", 3, 0],
-      ["old.ts", "dropped", 0, 3],
+      ["new.ts", "added", 1, 1],
+      ["old.ts", "dropped", 1, 1],
     ]);
     expect(results.map((result) => result.status)).toEqual([
       { before: null, after: "modified" },
@@ -128,8 +130,9 @@ describe("interdiff", () => {
   test("keeps the new, deleted and renamed lines out of the diff, but counts them", () => {
     const [result] = interdiff([file("a.ts", "@@ -1 +1 @@\n-x\n+y")], [file("a.ts", "@@ -0,0 +1 @@\n+y", { status: "added" })]);
     expect(result?.header).toEqual([{ mark: "+", text: "new file" }]);
-    expect(result?.lines.map((line) => line.text)).toEqual(["@@", "-x", "+y"]);
-    expect(result).toMatchObject({ change: "changed", added: 1, removed: 1 });
+    // Both versions' code is y: the newer one's base has no x, so x is no difference, only the file being new is.
+    expect(result?.lines.map((line) => line.text)).toEqual(["@@", "+y"]);
+    expect(result).toMatchObject({ change: "changed", added: 1, removed: 0 });
   });
 
   test("a header that changed alone still changes the file", () => {
@@ -297,7 +300,7 @@ describe("fileVerdict", () => {
   });
 });
 
-const patchLine = (display: string): InterdiffLine => ({ mark: "-", text: display, display, left: null, right: null });
+const patchLine = (display: string): InterdiffLine => ({ mark: "-", effect: "-", text: display, display, left: null, right: null });
 
 describe("uniformKind", () => {
   test("a new file's lines are all added, hunk headers and the no-newline note aside", () => {
@@ -388,5 +391,29 @@ describe("context lines are not changes", () => {
     const [compared] = interdiff([older], [newer]);
     expect(compared?.lines.map((line) => line.display)).not.toContain(" a");
     expect(compared?.lines.find((line) => line.display === "+x")?.right).toBe(4);
+  });
+});
+
+describe("rows show what the newer version does to the code, as GitHub's diff of one version against the other", () => {
+  // A real pull request's config file in small: v3 replaced a base line and added one after it; v4 leaves the base line be.
+  const v3 = file("a.json", "@@ -1,3 +1,4 @@\n a\n-x\n+x,\n+y\n b");
+  const v4 = file("a.json", "@@ -1,3 +1,3 @@\n a\n x\n b");
+
+  test("a base line only the older version removed is back in the newer code, as one row", () => {
+    const [compared] = interdiff([v3], [v4]);
+    const rows = compared?.lines.map((line) => `${line.effect}${line.display}`);
+    expect(rows).toEqual([" @@ -1,3 +1,3 @@", "  a", "+ x", "-+x,", "-+y", "  b"]);
+    expect([compared?.added, compared?.removed]).toEqual([1, 2]);
+  });
+
+  test("a base line only the newer version removes is gone from its code", () => {
+    const [compared] = interdiff([v4], [file("a.json", "@@ -1,3 +1,2 @@\n a\n-x\n b")]);
+    expect(compared?.lines.map((line) => `${line.effect}${line.display}`)).toEqual([" @@ -1,3 +1,2 @@", "  a", "--x", "  b"]);
+  });
+
+  test("lines both versions add, or both remove, are no change", () => {
+    const [compared] = interdiff([v3], [v3]);
+    expect(compared?.lines.every((line) => line.effect === " ")).toBe(true);
+    expect(compared?.change).toBe("unchanged");
   });
 });
