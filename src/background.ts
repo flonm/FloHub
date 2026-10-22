@@ -2,6 +2,7 @@ import {
   fetchOverview,
   fetchPendingComments,
   fetchReviewComment,
+  fetchReviewThreads,
   fetchVersionPatch,
   fetchVersions,
   fetchViewedFiles,
@@ -95,6 +96,9 @@ async function handle(message: Message): Promise<Reply<ReplyByType[Message["type
       }
       case "review-comment": {
         return { ok: true, value: await fetchReviewComment(message.ref, message.link) };
+      }
+      case "review-threads": {
+        return { ok: true, value: await fetchReviewThreads(message.ref) };
       }
       case "open-options": {
         await chrome.runtime.openOptionsPage();

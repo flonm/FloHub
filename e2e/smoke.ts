@@ -310,6 +310,8 @@ function createFixture(
     reviewState,
     /** Milliseconds to hold back the overview query, to see what the bar shows before it arrives. */
     overviewDelay: 0,
+    /** How long the review threads take to answer, so they can arrive after the diff. */
+    threadsDelay: 0,
     /** An HTTP status to fail the overview query with, or 0 to answer it. */
     overviewFailure: 0,
     async handle(route: Route): Promise<void> {
@@ -373,6 +375,46 @@ function createFixture(
                     ],
                   },
                   reviews: { nodes: [{ author: { login: "octocat" }, commit: commit("aaaaaaa1", 48) }] },
+                },
+              },
+            },
+          },
+        });
+        return;
+      }
+      if (graphql?.query.includes("originalStartLine diffSide")) {
+        if (created.threadsDelay > 0) {
+          await new Promise((resolve) => {
+            setTimeout(resolve, created.threadsDelay);
+          });
+        }
+        const reviewThread = (id: string, path: string, line: number, on: string, body: string) => ({
+          id,
+          isResolved: false,
+          isOutdated: on !== "ccccccc3",
+          path,
+          line: on === "ccccccc3" ? line : null,
+          startLine: null,
+          originalLine: line,
+          originalStartLine: null,
+          diffSide: "RIGHT",
+          comments: {
+            nodes: [
+              { databaseId: 1, author: { login: "octocat", avatarUrl: "" }, bodyHTML: `<p>${body}</p>`, createdAt: ago(30), url: "", state: "SUBMITTED", originalCommit: { oid: on } },
+            ],
+          },
+        });
+        await route.fulfill({
+          json: {
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: {
+                    nodes: [
+                      reviewThread("PRRT_1", "README.md", 305, "aaaaaaa1", "Is this still true?"),
+                      reviewThread("PRRT_2", "cmd/rebase.go", 44, "ccccccc3", "Log at debug level?"),
+                    ],
+                  },
                 },
               },
             },
@@ -903,6 +945,23 @@ check(
   dockedLayout.mode === "docked" && dockedLayout.top === "60px" && dockedLayout.hidden.join(",") === "none,none" && dockedLayout.fits,
   `on GitHub's split layout the versions view takes the place of the file tree and diff, scrolled to fit under the toolbar: ${JSON.stringify(dockedLayout)}`,
 );
+const threadRows = docked.locator(".thread-row");
+await threadRows.nth(1).waitFor();
+const placedThreads = await threadRows.evaluateAll((blocks) =>
+  blocks.map((block) => {
+    const line = block.previousElementSibling?.textContent ?? "";
+    const where = line.includes("Diverged stacks") ? "Diverged stacks" : (line.includes("log(branch)") ? "log(branch)" : line);
+    return `${where} → ${block.textContent.includes("Is this still true") ? "v1 thread" : "v3 thread"}`;
+  }),
+);
+check(
+  JSON.stringify(placedThreads.toSorted((a, b) => a.localeCompare(b))) === JSON.stringify(["Diverged stacks → v1 thread", "log(branch) → v3 thread"]) &&
+    (await docked.locator("nav.files button.file", { hasText: "README.md" }).locator(".comment-count").innerText()) === "1",
+  `review threads sit under their lines, by the numbers of the version each was written on, and the file tree counts them: ${JSON.stringify(placedThreads)}`,
+);
+await docked.getByLabel("Comments").uncheck();
+check(await threadRows.first().isHidden(), "the Comments toggle hides the threads");
+await docked.getByLabel("Comments").check();
 await splitPage.getByLabel("Reply").fill("Looks good now");
 check((await splitPage.getByLabel("Reply").inputValue()) === "Looks good now", "the comments beside the docked view stay usable");
 const jumpLink = splitPage.locator("#outdated-link");
@@ -958,6 +1017,21 @@ check(
   (await jumpMenu.count()) === 0 && splitPage.url().endsWith("#r777"),
   "a link in a comment's text stays GitHub's, even when it points at a comment",
 );
+fixture.threadsDelay = 1500;
+await splitPage.goto("https://github.com/flohub/split-diff/pull/1/changes");
+await splitPage.locator("#outdated-link").click();
+await jumpMenu.getByRole("menuitem", { name: /^Changes since v1/u }).click();
+await docked.locator(".line.target").waitFor();
+await docked.locator(".thread-row").nth(1).waitFor();
+check(
+  await docked.locator(".line.target").evaluate((row) => {
+    const box = row.getBoundingClientRect();
+    const pane = row.closest("main")!.getBoundingClientRect();
+    return box.top >= pane.top && box.bottom <= pane.bottom;
+  }),
+  "threads that arrive after a jump keep the commented line on screen",
+);
+fixture.threadsDelay = 0;
 await splitPage.close();
 
 const tree = page.getByRole("tree", { name: "File Tree" });
@@ -1200,6 +1274,14 @@ check(
 await inlineBar(cachedPage).getByText("Changes requested").first().waitFor({ timeout: 10_000 });
 check(true, "reviewers fill in once the fresh overview arrives");
 await cachedWorker?.evaluate(async (current) => {
+  // The fresh overview is stored after it reaches the page; a write still on its way would undo the edit below.
+  for (let tries = 0; tries < 50; tries++) {
+    const written = (await chrome.storage.local.get("overviewIndex")) as { overviewIndex?: Record<string, { savedAt: number }> };
+    if (Date.now() - (written.overviewIndex?.[`github/gh-stack#${current}`]?.savedAt ?? 0) < 5000) break;
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100);
+    });
+  }
   const { overviewIndex: index } = (await chrome.storage.local.get("overviewIndex")) as {
     overviewIndex: Record<string, { savedAt: number }>;
   };
