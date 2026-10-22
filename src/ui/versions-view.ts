@@ -29,6 +29,7 @@ import {
 import { renderComposer, renderThread, THREAD_STYLES, type ThreadActions, threadPlace } from "./review-thread";
 import { renderRichText } from "../core/rich-text";
 import { type JumpTarget, threadElsewhere } from "../core/comment-jump";
+import { type SplitSide, splitRows } from "../core/split";
 import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
 import {
   BASE,
@@ -99,6 +100,10 @@ export interface VersionsViewRequest {
   onShow?: (older: Version | null, newer: Version) => void;
   /** Called when the viewer closes the view. */
   onClose?: () => void;
+  /** Resolves to whether the viewer last chose the side-by-side layout. */
+  splitView?: () => Promise<boolean>;
+  /** Remembers the layout the viewer chose. */
+  saveSplitView?: (split: boolean) => void;
 }
 
 
@@ -356,7 +361,7 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 .marker { flex: none; width: 22px; padding-left: 8px; font-weight: 600; user-select: none; }
 .marker { color: var(--vd-muted); }
 .diff[data-uniform] .marker, .diff[data-plain] .marker { display: none; }
-.diff[data-uniform="+"] .num:nth-child(2), .diff[data-uniform="-"] .num:nth-child(3) { display: none; }
+.diff[data-uniform="+"] .num.left, .diff[data-uniform="-"] .num.right { display: none; }
 .diff[data-uniform] .expander .num { width: 68px; }
 .code { flex: 1; padding-right: 16px; white-space: pre; }
 .wrap .line { min-width: 0; }
@@ -364,12 +369,23 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 .line[data-kind="hunk"] .code, .line[data-kind="\\\\"] .code { color: var(--vd-muted); }
 .line[data-kind="hunk"][data-outer=" "] { background: var(--vd-hunk-bg); }
 .line[data-kind="hunk"][data-outer=" "] :is(.sign, .num) { background: var(--vd-hunk-num-bg); }
-.line[data-outer="+"] { background: var(--vd-add-bg); }
-.line[data-outer="+"] :is(.sign, .num) { background: var(--vd-add-num-bg); }
-.line[data-outer="-"] { background: var(--vd-del-bg); }
-.line[data-outer="-"] :is(.sign, .num) { background: var(--vd-del-num-bg); }
-.line[data-outer="+"] .word { border-radius: 3px; background: var(--vd-add-word); }
-.line[data-outer="-"] .word { border-radius: 3px; background: var(--vd-del-word); }
+.line[data-outer="+"], .cell[data-outer="+"] { background: var(--vd-add-bg); }
+:is(.line, .cell)[data-outer="+"] :is(.sign, .num) { background: var(--vd-add-num-bg); }
+.line[data-outer="-"], .cell[data-outer="-"] { background: var(--vd-del-bg); }
+:is(.line, .cell)[data-outer="-"] :is(.sign, .num) { background: var(--vd-del-num-bg); }
+:is(.line, .cell)[data-outer="+"] .word { border-radius: 3px; background: var(--vd-add-word); }
+:is(.line, .cell)[data-outer="-"] .word { border-radius: 3px; background: var(--vd-del-word); }
+.line.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); min-width: 0; }
+.cell { position: relative; display: flex; min-width: 0; }
+.cell.right { border-left: 1px solid var(--vd-border); }
+.cell.empty { background: var(--vd-bg-muted); }
+.cell .num { width: 50px; }
+.cell .code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff[data-split] .add-comment { left: 2px; }
+/* Side by side, a thread or comment box sits in its version's column, lined up with that column's code. */
+.diff[data-split] :is(.thread-row, .composer-row) { position: static; width: 50%; padding: 8px 12px 8px 72px; }
+.diff[data-split][data-plain] :is(.thread-row, .composer-row), .diff[data-split][data-uniform] :is(.thread-row, .composer-row) { padding-left: 50px; }
+.diff[data-split] .column-newer { margin-left: 50%; }
 .tok-keyword { color: var(--vd-syntax-keyword); }
 .tok-string { color: var(--vd-syntax-string); }
 .tok-comment { color: var(--vd-syntax-comment); }
@@ -580,6 +596,8 @@ export class VersionsView {
     /** The pull request's review threads and pending review, once fetched, and whether the viewer wants them shown. */
     let discussion: ReviewDiscussion | null = null;
     let threadsShown = true;
+    /** Whether the diff shows side by side. */
+    let split = false;
     const placeAll = () => {
       if (onScreen) onScreen.place(threadsShown ? (discussion?.threads ?? []) : [], onScreen.compared);
     };
@@ -691,6 +709,7 @@ export class VersionsView {
             comment: commentable ? { mode: () => postingMode(discussion?.pending ?? null, newer.oid), post, released: release } : null,
           };
           const show = renderResult({ main, review, summary, legend, files, signal: tracking.signal }, diff, {
+            split,
             older,
             newer,
             before,
@@ -786,11 +805,28 @@ export class VersionsView {
         });
         const commentsLabel = el("label", { class: "wrap-toggle" });
         commentsLabel.append(comments, "Comments");
+        const sideBySide = el("input", { type: "checkbox" });
+        sideBySide.checked = split;
+        sideBySide.addEventListener("change", () => {
+          // Redrawing the diff in the other layout would throw away what's being written.
+          if (drafting()) {
+            sideBySide.checked = split;
+            notice.textContent = "Post or cancel your comment before switching the layout.";
+            return;
+          }
+          split = sideBySide.checked;
+          main.classList.toggle("split", split);
+          request.saveSplitView?.(split);
+          void compare(false);
+        });
+        const splitLabel = el("label", { class: "wrap-toggle" });
+        splitLabel.append(sideBySide, "Split view");
         controls.replaceChildren(
           from.label,
           el("span", { class: "arrow", "aria-hidden": "true" }, "→"),
           to.label,
           link,
+          splitLabel,
           commentsLabel,
           wrapLabel,
         );
@@ -814,8 +850,13 @@ export class VersionsView {
     };
 
     const start = async () => {
-      const [cached, saved] = await Promise.all([request.cachedVersions?.() ?? null, request.savedRange?.() ?? null]);
+      const [cached, saved, sideBySide] = await Promise.all([
+        request.cachedVersions?.() ?? null,
+        request.savedRange?.() ?? null,
+        request.splitView?.() ?? false,
+      ]);
       if (!live()) return;
+      split = sideBySide;
       if (cached) present(cached, saved);
       const revalidate = async () => {
         void loadThreads();
@@ -918,6 +959,8 @@ function describeVersion(version: Version, now: number): string {
 }
 
 interface Context {
+  /** Whether the diff shows side by side, the older side on the left. */
+  split: boolean;
   /** The older version, or null when the newer one shows against the base branch. */
   older: Version | null;
   newer: Version;
@@ -1041,15 +1084,22 @@ function renderResult(
       const { placed, elsewhere } = placeThreads(file, threads, compared);
       const at = rowAt.get(file);
       const here = at ? placed : [];
-      for (const { thread, first, last } of here) {
+      for (const { thread, first, last, column } of here) {
         seen.add(thread.id);
         const block = blocks.get(thread.id);
         if (block?.isConnected && holdsText(block)) continue;
-        const drawn = renderThread(thread, { now, actions: review.threadActions(thread), pullAuthor: review.pullAuthor() });
+        const started = context.history.versions.find((version) => version.oid === thread.comments[0]?.originalCommit);
+        const drawn = renderThread(thread, {
+          now,
+          actions: review.threadActions(thread),
+          pullAuthor: review.pullAuthor(),
+          version: started ? `v${started.number}` : null,
+        });
         const open = block?.querySelector("details")?.open;
         if (open !== undefined) drawn.open = open;
         if (block?.isConnected) {
           block.replaceChildren(drawn);
+          block.className = `thread-row column-${column}`;
           continue;
         }
         // Unfolding the first line before the last keeps the commented lines together.
@@ -1057,7 +1107,7 @@ function renderResult(
         let anchor: Element | null | undefined = at?.(last);
         if (!anchor) continue;
         while (anchor.nextElementSibling?.matches(".thread-row, .composer-row")) anchor = anchor.nextElementSibling;
-        const added = el("div", { class: "thread-row", "data-thread": thread.id });
+        const added = el("div", { class: `thread-row column-${column}`, "data-thread": thread.id });
         added.append(drawn);
         anchor.after(added);
         blocks.set(thread.id, added);
@@ -1135,7 +1185,8 @@ function renderResult(
       },
       cancel: closeDraft,
     });
-    const block = el("div", { class: "composer-row" });
+    // A new comment is on the head's lines, the right column, except a base-side line of a version against the base.
+    const block = el("div", { class: `composer-row column-${!context.older && lines.side === "LEFT" ? "older" : "newer"}` });
     block.append(composer);
     let anchor: Element | null = at(last);
     if (!anchor) return;
@@ -1424,17 +1475,56 @@ function renderFile(
   const uniform = uniformKind(file.lines);
   if (uniform) diff.dataset.uniform = uniform;
   if (!context.older) diff.dataset.plain = "";
-  const rows = (start: number, end: number) =>
+  if (context.split) diff.dataset.split = "";
+  /** A + that opens a box for a new comment on a line, when the line can take one. */
+  const addButton = (index: number): HTMLButtonElement | null => {
+    const line = file.lines[index];
+    if (!onAdd || !line || !commentableLine(line, !context.older)) return null;
+    const add = el("button", { type: "button", class: "add-comment", "aria-label": "Comment on this line", title: "Comment (shift-click to cover the lines up to here)" }, "+");
+    add.addEventListener("click", (event) => onAdd(index, event.shiftKey));
+    return add;
+  };
+  const unified = (start: number, end: number) =>
     file.lines.slice(start, end).map((line, index) => {
       const row = renderLine(line, context, syntax[start + index]);
-      row.dataset.index = String(start + index);
-      if (onAdd && commentableLine(line, !context.older)) {
-        const add = el("button", { type: "button", class: "add-comment", "aria-label": "Comment on this line", title: "Comment (shift-click to cover the lines up to here)" }, "+");
-        add.addEventListener("click", (event) => onAdd(start + index, event.shiftKey));
-        row.prepend(add);
-      }
+      row.dataset.indices = String(start + index);
+      const add = addButton(start + index);
+      if (add) row.prepend(add);
       return row;
     });
+  const sideBySide = (start: number, end: number) => {
+    const lines = file.lines.slice(start, end);
+    const sides = lines.map((line): SplitSide => {
+      const { kind } = splitLine(line.display);
+      return kind === "hunk" || kind === "\\" ? "full" : line.mark;
+    });
+    return splitRows(sides).flatMap((pair) => {
+      if (pair.kind === "full") {
+        const line = lines[pair.index];
+        if (!line) return [];
+        const row = renderLine(line, context, syntax[start + pair.index]);
+        row.dataset.indices = String(start + pair.index);
+        return [row];
+      }
+      const row = el("div", { class: "line split" });
+      const indices = [pair.left, pair.right].filter((index): index is number => index !== null).map((index) => start + index);
+      row.dataset.indices = [...new Set(indices)].join(" ");
+      for (const [side, at] of [["left", pair.left], ["right", pair.right]] as const) {
+        const line = at === null ? undefined : lines[at];
+        if (!line || at === null) {
+          row.append(el("div", { class: `cell ${side} empty` }));
+          continue;
+        }
+        const cell = renderCell(line, side, context, syntax[start + at]);
+        // A line both sides show takes its comment on the right, the side GitHub's diff calls the head.
+        const add = side === "right" || pair.left !== pair.right ? addButton(start + at) : null;
+        if (add) cell.prepend(add);
+        row.append(cell);
+      }
+      return [row];
+    });
+  };
+  const rows = (start: number, end: number) => (context.split ? sideBySide(start, end) : unified(start, end));
   const folds: { start: number; end: number; button: HTMLButtonElement }[] = [];
   const fold = (start: number, end: number) => {
     const button = expander(end - start, rows.bind(null, start, end));
@@ -1461,7 +1551,7 @@ function renderFile(
         ...(to < folded.end ? [fold(to, folded.end)] : []),
       );
     }
-    return [...diff.querySelectorAll<HTMLElement>(".line")].find((line) => line.dataset.index === String(index)) ?? null;
+    return [...diff.querySelectorAll<HTMLElement>(".line")].find((line) => line.dataset.indices?.split(" ").includes(String(index))) ?? null;
   };
   return { section: details, row };
 }
@@ -1546,6 +1636,49 @@ function renderLine(line: InterdiffLine, context: Context, tokens?: Token[] | nu
   const row = el("div", { class: "line", "data-outer": line.mark, "data-kind": kind });
   if (kind === "hunk" && isWholeFileHunk(code)) row.hidden = true;
   const marker = kind === "+" || kind === "-" ? kind : "";
+  row.append(
+    el("span", { class: "sign", "aria-hidden": "true" }, line.mark === " " ? "" : (line.mark === "+" ? "+" : "−")),
+    el("span", { class: "num left" }, line.left === null ? "" : String(line.left)),
+    el("span", { class: "num right" }, line.right === null ? "" : String(line.right)),
+    el("span", { class: "marker", "data-kind": kind }, marker === "-" ? "−" : marker),
+    renderCode(line, code, context, tokens),
+  );
+  return row;
+}
+
+/**
+ * One side of a split row: the line's number in the version it comes from, what the pull request does to it, and its
+ * code. The older side numbers a line both versions have as the older version did.
+ * @param line The line.
+ * @param side The side it's on.
+ * @param context The versions compared.
+ * @param tokens The line's syntax, when its language is known.
+ * @returns The cell.
+ */
+function renderCell(line: InterdiffLine, side: "left" | "right", context: Context, tokens?: Token[] | null): HTMLElement {
+  const { kind, code } = splitLine(line.display);
+  const mark = side === "left" ? (line.mark === "+" ? " " : line.mark) : (line.mark === "-" ? " " : line.mark);
+  const cell = el("div", { class: `cell ${side}`, "data-outer": mark, "data-kind": kind });
+  // A plain diff is GitHub's own: the left side numbers the base, the right the head. Between versions each side
+  // numbers its version's lines, a removed one by the base side it was removed from.
+  const numbers = context.older && side === "left" && line.mark === " " ? (line.origin ?? line) : line;
+  const number = context.older ? (kind === "-" ? numbers.left : numbers.right) : (side === "left" ? line.left : line.right);
+  cell.append(
+    el("span", { class: "num" }, number === null ? "" : String(number)),
+    el("span", { class: "marker", "data-kind": kind }, kind === "-" ? "−" : (kind === "+" ? "+" : "")),
+    renderCode(line, code, context, tokens),
+  );
+  return cell;
+}
+
+/**
+ * @param line The line.
+ * @param code Its code, without the marker.
+ * @param context The versions compared.
+ * @param tokens The line's syntax, when its language is known.
+ * @returns The code, its syntax and the words that differ from the line it replaced highlighted.
+ */
+function renderCode(line: InterdiffLine, code: string, context: Context, tokens?: Token[] | null): HTMLElement {
   const text = el("span", { class: "code" });
   if (line.mark !== " ") text.append(el("span", { class: "visually-hidden" }, `${outerLabel(line.mark, context)}: `));
   const segments = line.segments ?? [{ text: code, changed: false }];
@@ -1557,12 +1690,5 @@ function renderLine(line: InterdiffLine, context: Context, tokens?: Token[] | nu
     else if (!word) text.append((word = el("span", { class: "word" })));
     (word ?? text).append(run);
   }
-  row.append(
-    el("span", { class: "sign", "aria-hidden": "true" }, line.mark === " " ? "" : (line.mark === "+" ? "+" : "−")),
-    el("span", { class: "num" }, line.left === null ? "" : String(line.left)),
-    el("span", { class: "num" }, line.right === null ? "" : String(line.right)),
-    el("span", { class: "marker", "data-kind": kind }, marker === "-" ? "−" : marker),
-    text,
-  );
-  return row;
+  return text;
 }

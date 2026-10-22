@@ -234,7 +234,8 @@ function githubPage(): HTMLElement {
  * without them.
  * @param kind How many versions the pull request has, or "loading"/"failing" for those states.
  * @param patches What each version changes.
- * @param stored What the extension kept from an earlier visit: the versions fetched then and the range compared.
+ * @param stored What the extension kept from an earlier visit: the versions fetched then, the range compared and
+ * whether the viewer chose the side-by-side layout.
  * @param docked Whether the page has GitHub's split layout to dock in.
  * @param target A range to show and a commented line to scroll to, as a comment's menu asks for them.
  * @param threads The pull request's review threads.
@@ -243,7 +244,7 @@ function githubPage(): HTMLElement {
 function view(
   kind: number | "loading" | "failing",
   patches = PATCHES,
-  stored: { cached?: VersionHistory; saved?: SavedRange } = {},
+  stored: { cached?: VersionHistory; saved?: SavedRange; split?: boolean } = {},
   docked = true,
   target?: { range: SavedRange; line?: CommentLine },
   threads: ReviewThread[] = [],
@@ -280,6 +281,10 @@ function view(
         return stored.saved ?? null;
       },
       saveRange: () => undefined,
+      splitView: async () => {
+        await settle();
+        return stored.split ?? false;
+      },
     });
     if (target) versions.goTo(target.range, target.line);
   });
@@ -443,3 +448,15 @@ const THREADS: ReviewThread[] = [
  * lines between.
  */
 export const WithComments: Story = { render: () => view(3, PATCHES, {}, true, undefined, THREADS) };
+
+/**
+ * Side by side, between versions: the older version's patch on the left, the newer one's on the right, a line that
+ * changed between them beside its replacement. Each side numbers its own version's lines; the − and + are what the
+ * pull request does to each line. Long lines wrap.
+ */
+export const SplitView: Story = { render: () => view(3, PATCHES, { split: true }, true, undefined, THREADS) };
+
+/** Side by side, a version against the base branch: GitHub's own split diff, the base on the left. */
+export const SplitCodeAtAVersion: Story = {
+  render: () => view(3, PATCHES, { split: true }, true, { range: { from: BASE, to: V3.oid, toCurrent: true, at: NOW } }),
+};
