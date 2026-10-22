@@ -707,6 +707,10 @@ function openVersions(ref: PullRef): void {
       if (!reply.ok) throw new Error(reply.message);
       return reply.value;
     },
+    post: async (action) => {
+      const reply = await send({ type: "review-action", ref, action });
+      if (!reply.ok) throw new Error(reply.message);
+    },
     patch: async (history, version) => {
       const reply = await send({ type: "version-patch", ref, head: version.oid, bases: baseCandidates(history, version) });
       if (!reply.ok) throw new Error(reply.message);

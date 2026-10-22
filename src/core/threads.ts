@@ -1,4 +1,4 @@
-import type { FileInterdiff, InterdiffLine } from "./interdiff";
+import { type FileInterdiff, type InterdiffLine, splitLine } from "./interdiff";
 
 /** A comment in a review thread. */
 export interface ThreadComment {
@@ -11,6 +11,8 @@ export interface ThreadComment {
   url: string;
   /** Whether the comment is a draft in the viewer's pending review, which only the viewer sees. */
   pending: boolean;
+  /** How the author is related to the repository, as GitHub labels it: OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, … */
+  association: string | null;
   /** The commit the comment was written on. */
   originalCommit: string | null;
 }
@@ -29,6 +31,8 @@ export interface ReviewThread {
   originalLine: number | null;
   originalStartLine: number | null;
   side: "LEFT" | "RIGHT";
+  /** Who resolved the thread, while it's resolved. */
+  resolvedBy: string | null;
   comments: ThreadComment[];
 }
 
@@ -118,3 +122,80 @@ function placeThread(file: FileInterdiff, thread: ReviewThread, compared: Compar
   }
   return null;
 }
+
+/** The lines a new review comment is on, as GitHub's API takes them. */
+export interface NewCommentLines {
+  line: number;
+  side: "LEFT" | "RIGHT";
+  startLine?: number;
+  startSide?: "LEFT" | "RIGHT";
+}
+
+/**
+ * @param line A row of the diff on screen.
+ * @param plain Whether the diff is a version against the base branch, where every row is the version's.
+ * @returns The side and number a new comment on the row names, or null for a row GitHub's current diff doesn't have:
+ * a hunk header, a "no newline" note, or a line only the older version has.
+ */
+export function commentableLine(line: InterdiffLine, plain: boolean): { side: "LEFT" | "RIGHT"; line: number } | null {
+  const { kind } = splitLine(line.display);
+  if (kind === "hunk" || kind === "\\" || (!plain && line.mark === "-")) return null;
+  const number = kind === "-" ? line.left : line.right;
+  return number === null ? null : { side: kind === "-" ? "LEFT" : "RIGHT", line: number };
+}
+
+/**
+ * @param lines A file's rows on screen.
+ * @param from One end of the rows the comment is on.
+ * @param to The other end.
+ * @param plain Whether the diff is a version against the base branch.
+ * @returns The lines to comment on, or null when an end can't take a comment or the rows span more than one hunk,
+ * which GitHub rejects.
+ */
+export function commentRange(lines: InterdiffLine[], from: number, to: number, plain: boolean): NewCommentLines | null {
+  const [first, last] = from <= to ? [from, to] : [to, from];
+  const start = lines[first];
+  const end = lines[last];
+  const startAt = start && commentableLine(start, plain);
+  const endAt = end && commentableLine(end, plain);
+  // GitHub takes a range only within one hunk.
+  const acrossHunks = lines.slice(first, last + 1).some((line) => splitLine(line.display).kind === "hunk");
+  if (!startAt || !endAt || acrossHunks) return null;
+  if (first === last) return endAt;
+  return { ...endAt, startLine: startAt.line, startSide: startAt.side };
+}
+
+/** How a new comment can be posted: on its own or starting a review, into the pending review, or not here at all. */
+export type PostingMode = "fresh" | "review" | "blocked";
+
+/**
+ * Mirrors GitHub's own choice: without a pending review a comment goes out on its own or starts one; with one, it
+ * joins it. A pending review on an older commit would pin the comment's lines to that commit, so it has to be
+ * submitted first.
+ * @param pending The viewer's pending review, if any.
+ * @param head The pull request's head commit.
+ * @returns How a new comment can be posted.
+ */
+export function postingMode(pending: { commit: string } | null, head: string): PostingMode {
+  if (!pending) return "fresh";
+  return pending.commit === head ? "review" : "blocked";
+}
+
+/** The review threads, and what posting to them needs: the pull request's id and the viewer's pending review. */
+export interface ReviewDiscussion {
+  threads: ReviewThread[];
+  /** The pull request's GraphQL id. */
+  pullRequestId: string;
+  /** The pull request's head commit now, which a new comment's lines have to be on. */
+  head: string;
+  /** The pull request's author, whose comments GitHub labels Author. */
+  author: string | null;
+  /** The viewer's pending review, which only the viewer sees, and the commit it was started on. */
+  pending: { id: string; commit: string } | null;
+}
+
+/** Something the viewer does to the review from the versions view. */
+export type ReviewAction =
+  | ({ kind: "comment"; mode: "single" | "review"; head: string; path: string; body: string } & NewCommentLines)
+  | { kind: "reply"; threadId: string; commentId: number; body: string }
+  | { kind: "resolve"; threadId: string; resolved: boolean };

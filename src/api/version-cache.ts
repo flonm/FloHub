@@ -108,10 +108,11 @@ export async function readCachedPatch(key: string): Promise<VersionPatch | null>
     const index = await readPatchIndex();
     if (index[key] === undefined || Date.now() - index[key] > MAX_AGE_MS) return null;
     const stored = await chrome.storage.local.get(PATCH_PREFIX + key);
-    const patch = stored[PATCH_PREFIX + key] as VersionPatch | undefined;
-    if (!patch) return null;
+    const patch = stored[PATCH_PREFIX + key] as Partial<VersionPatch> | undefined;
+    // A patch stored before patches named their base is fetched again, which stores it over the old one.
+    if (patch?.base === undefined) return null;
     if (Date.now() - index[key] > TOUCH_AFTER_MS) await chrome.storage.local.set({ [PATCH_INDEX_KEY]: { ...index, [key]: Date.now() } });
-    return patch;
+    return patch as VersionPatch;
   } catch {
     return null;
   }

@@ -51,6 +51,7 @@ const PATCHES: Record<string, VersionPatch> = {
     mergeBase: "0000000",
     onBase: true,
     truncated: false,
+    base: "0000000",
     files: [
       {
         filename: "src/ui/bar.ts",
@@ -64,6 +65,7 @@ const PATCHES: Record<string, VersionPatch> = {
     mergeBase: "0000000",
     onBase: true,
     truncated: false,
+    base: "0000000",
     files: [
       {
         filename: "src/ui/bar.ts",
@@ -110,6 +112,7 @@ const PATCHES: Record<string, VersionPatch> = {
     mergeBase: "0000000",
     onBase: true,
     truncated: false,
+    base: "0000000",
     files: [
       {
         filename: "src/ui/bar.ts",
@@ -179,6 +182,7 @@ const MANY_PATCHES: Record<string, VersionPatch> = Object.fromEntries(
       mergeBase: "0000000",
       onBase: true,
       truncated: false,
+      base: "0000000",
       files: MANY_PATHS.map((filename, index) => ({
         filename,
         status: "modified",
@@ -261,7 +265,11 @@ function view(
       versions: () => pendingHistory(kind),
       threads: async () => {
         await settle();
-        return threads;
+        return { threads, pullRequestId: "PR_1", head: V3.oid, author: "mona", pending: null };
+      },
+      // Posting only waits a moment here: the rows show their + and the threads their Reply and Resolve.
+      post: async () => {
+        await settle();
       },
       patch: async (_history, current) => {
         await settle();
@@ -382,6 +390,7 @@ function thread(id: string, on: Version, path: string, line: number, body: strin
     originalLine: line,
     originalStartLine: null,
     side: "RIGHT",
+    resolvedBy: overrides.resolved ? "mona" : null,
     comments: [
       {
         id: Number(id.slice(1)),
@@ -391,6 +400,7 @@ function thread(id: string, on: Version, path: string, line: number, body: strin
         createdAt: on.at,
         url: `https://github.com/octo-org/api/pull/344#discussion_r${id.slice(1)}`,
         pending: false,
+        association: "MEMBER",
         originalCommit: on.oid,
       },
     ],
@@ -415,6 +425,7 @@ const THREADS: ReviewThread[] = [
         createdAt: V3.at,
         url: "",
         pending: true,
+        association: "MEMBER",
         originalCommit: V3.oid,
       },
     ],
@@ -428,5 +439,7 @@ const THREADS: ReviewThread[] = [
  * sitting on the removed line; one on v3 covering two lines; a resolved one, folded; the viewer's pending draft; and, in bar.ts's header,
  * one written on v1 that this diff has no line for; and, in the list of files that make the same change in both
  * versions, the count of stack-view.ts's thread. The file tree counts each file's threads, and Comments hides them.
+ * v3 is the head, so a row's + (on hover) opens a box for a new comment; shift-click another row's + to cover the
+ * lines between.
  */
 export const WithComments: Story = { render: () => view(3, PATCHES, {}, true, undefined, THREADS) };

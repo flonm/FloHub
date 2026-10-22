@@ -2,7 +2,7 @@ import {
   fetchOverview,
   fetchPendingComments,
   fetchReviewComment,
-  fetchReviewThreads,
+  fetchReviewDiscussion,
   fetchVersionPatch,
   fetchVersions,
   fetchViewedFiles,
@@ -10,6 +10,7 @@ import {
   pokeReviewer,
   readToken,
   rerequestReview,
+  runReviewAction,
   setFileViewed,
   submitReview,
   type VersionPatch,
@@ -98,7 +99,11 @@ async function handle(message: Message): Promise<Reply<ReplyByType[Message["type
         return { ok: true, value: await fetchReviewComment(message.ref, message.link) };
       }
       case "review-threads": {
-        return { ok: true, value: await fetchReviewThreads(message.ref) };
+        return { ok: true, value: await fetchReviewDiscussion(message.ref) };
+      }
+      case "review-action": {
+        await runReviewAction(message.ref, message.action);
+        return { ok: true, value: null };
       }
       case "open-options": {
         await chrome.runtime.openOptionsPage();

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { interdiff, versionDiff } from "./interdiff";
-import { type Compared, placeThreads, type ReviewThread } from "./threads";
+import { commentableLine, commentRange, type Compared, placeThreads, postingMode, type ReviewThread } from "./threads";
 
 // v1 adds a line after line 10; v2 adds another line above it, so the kept lines are renumbered, and drops one.
 const V1 = { filename: "a.ts", status: "modified", sha: "a1", patch: "@@ -10,3 +10,4 @@\n keep\n+added\n-gone\n tail" };
@@ -20,7 +20,8 @@ const thread = (overrides: Partial<ReviewThread> & { on?: string }): ReviewThrea
     originalLine: null,
     originalStartLine: null,
     side: "RIGHT",
-    comments: [{ id: 1, author: "ana", avatarUrl: null, html: "<p>Why?</p>", createdAt: "2026-10-01T00:00:00Z", url: "", pending: false, originalCommit: on }],
+    resolvedBy: null,
+    comments: [{ id: 1, author: "ana", avatarUrl: null, html: "<p>Why?</p>", createdAt: "2026-10-01T00:00:00Z", url: "", pending: false, association: null, originalCommit: on }],
     ...rest,
   };
 };
@@ -66,5 +67,43 @@ describe("placeThreads", () => {
     const [plain] = versionDiff([V1]);
     const { placed } = placeThreads(plain!, [thread({ originalLine: 11, side: "LEFT" })], { older: null, newer: "v1", newerIsHead: false });
     expect(placed.map(({ last }) => plain!.lines[last]?.display)).toEqual(["-gone"]);
+  });
+});
+
+describe("commenting", () => {
+  const plain = versionDiff([V1])[0]!;
+  const at = (lines: typeof plain.lines, display: string) => lines.findIndex((line) => line.display === display);
+
+  test("a row takes a comment on the side and number GitHub's diff gives it", () => {
+    expect(commentableLine(plain.lines[at(plain.lines, "+added")]!, true)).toEqual({ side: "RIGHT", line: 11 });
+    expect(commentableLine(plain.lines[at(plain.lines, "-gone")]!, true)).toEqual({ side: "LEFT", line: 11 });
+    expect(commentableLine(plain.lines[at(plain.lines, " keep")]!, true)).toEqual({ side: "RIGHT", line: 10 });
+  });
+
+  test("a hunk header, and a row only the older version has, take none", () => {
+    expect(commentableLine(plain.lines[0]!, true)).toBeNull();
+    expect(commentableLine(FILE!.lines[at(FILE!.lines, "-gone")]!, false)).toBeNull();
+    expect(commentableLine(FILE!.lines[at(FILE!.lines, "+first")]!, false)).toEqual({ side: "RIGHT", line: 20 });
+  });
+
+  test("a comment on several rows names its first and last line, in either order", () => {
+    const keep = at(plain.lines, " keep");
+    const tail = at(plain.lines, " tail");
+    expect(commentRange(plain.lines, tail, keep, true)).toEqual({ side: "RIGHT", line: 12, startSide: "RIGHT", startLine: 10 });
+    expect(commentRange(plain.lines, keep, keep, true)).toEqual({ side: "RIGHT", line: 10 });
+  });
+
+  test("a range across hunks, or with an end that takes no comment, is refused", () => {
+    const two = versionDiff([{ ...V1, patch: `${V1.patch}\n@@ -40,1 +41,1 @@\n more` }])[0]!;
+    expect(commentRange(two.lines, at(two.lines, " keep"), at(two.lines, " more"), true)).toBeNull();
+    expect(commentRange(plain.lines, 0, at(plain.lines, " keep"), true)).toBeNull();
+  });
+
+  test.each([
+    [null, "fresh"],
+    [{ commit: "head" }, "review"],
+    [{ commit: "older" }, "blocked"],
+  ] as const)("with pending review %p a comment is posted %p", (pending, mode) => {
+    expect(postingMode(pending, "head")).toBe(mode);
   });
 });

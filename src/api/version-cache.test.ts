@@ -50,6 +50,7 @@ function patch(overrides: Partial<VersionPatch> = {}): VersionPatch {
     mergeBase: "base",
     onBase: true,
     truncated: false,
+    base: "main",
     files: [{ filename: "a.ts", status: "modified", sha: "a1", patch: "@@ -1 +1 @@\n-a\n+b" }],
     ...overrides,
   };

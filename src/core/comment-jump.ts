@@ -1,3 +1,4 @@
+import type { Compared, ReviewThread } from "./threads";
 import { BASE, commentVersion, type SavedRange, type Version, type VersionHistory } from "./versions";
 
 /** Where a review comment sits, as GitHub's API describes it. */
@@ -138,4 +139,44 @@ export function threadNumber(nodeId: string): number | null {
 export function storedVersionsWillDo(stored: VersionHistory | null, commit: string): stored is VersionHistory {
   const version = stored?.versions.find((each) => each.oid === commit);
   return version !== undefined && !version.current;
+}
+
+/**
+ * Where to see a thread the diff on screen has no line for: how its code changed since the version it was written
+ * on, or, for a file that makes the same change in both versions on screen, or when that is the range already on
+ * screen, the code as the thread saw it.
+ * @param versions The pull request's versions, oldest first.
+ * @param thread The thread.
+ * @param onScreen The versions on screen.
+ * @param unchanged Whether the thread's file makes the same change in both versions on screen.
+ * @param now The current time, which stamps the range.
+ * @returns What the way is called and where it goes, or null when FloHub knows no versions.
+ */
+export function threadElsewhere(
+  versions: Version[],
+  thread: ReviewThread,
+  onScreen: Compared,
+  unchanged: boolean,
+  now: number,
+): { label: string; target: JumpTarget } | null {
+  const [first] = thread.comments;
+  const jump = commentJump(
+    versions,
+    {
+      path: thread.path,
+      originalCommit: first?.originalCommit ?? "",
+      originalLine: thread.originalLine,
+      originalStartLine: thread.originalStartLine,
+      line: thread.line,
+      startLine: thread.startLine,
+      side: thread.side,
+      createdAt: first?.createdAt ?? new Date(now).toISOString(),
+    },
+    now,
+  );
+  if (!jump) return null;
+  const name = `v${jump.version.number}`;
+  const sameAsScreen = jump.since !== null && jump.since.range.from === onScreen.older && onScreen.newerIsHead;
+  if (jump.since && !unchanged && !sameAsScreen) return { label: `Changes since ${name}`, target: jump.since };
+  return { label: `Code at ${name}`, target: jump.at };
 }
