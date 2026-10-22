@@ -153,18 +153,19 @@ describe("interdiff", () => {
 
   test("pairs a replaced line with the most similar replacement, not the next one", () => {
     const [result] = interdiff(
-      [file("a.ts", "@@ -1,2 +1,3 @@\n-const RETRIES = 1;\n+const RETRIES = 3;\n+const BACKOFF_MS = 500;")],
-      [file("a.ts", "@@ -1,3 +1,3 @@\n const RETRIES = 3;\n-const BACKOFF_MS = 500;\n+const BACKOFF_MS = 250;")],
+      [file("a.ts", "@@ -1,1 +1,2 @@\n const RETRIES = 3;\n+const BACKOFF_MS = 500;")],
+      [file("a.ts", "@@ -1,1 +1,3 @@\n const RETRIES = 3;\n+const LIMIT = 9;\n+const BACKOFF_MS = 250;")],
     );
-    const words = (result?.lines ?? []).map((line) => [line.text, line.segments?.filter((segment) => segment.changed).map((segment) => segment.text)]);
+    const words = (result?.lines ?? []).map((line) => [
+      `${line.mark}${line.text}`,
+      line.segments?.filter((segment) => segment.changed).map((segment) => segment.text),
+    ]);
     expect(words).toEqual([
-      ["@@", undefined],
-      ["-const RETRIES = 1;", ["1"]],
-      ["+const RETRIES = 3;", undefined],
-      ["+const BACKOFF_MS = 500;", []],
-      [" const RETRIES = 3;", ["3"]],
-      ["-const BACKOFF_MS = 500;", []],
-      ["+const BACKOFF_MS = 250;", undefined],
+      [" @@", undefined],
+      ["  const RETRIES = 3;", undefined],
+      ["-+const BACKOFF_MS = 500;", ["500"]],
+      ["++const LIMIT = 9;", undefined],
+      ["++const BACKOFF_MS = 250;", ["250"]],
     ]);
   });
 
@@ -189,12 +190,13 @@ describe("interdiff", () => {
 
   test("keeps three lines of context around each change", () => {
     const body = Array.from({ length: 20 }, (_, index) => ` line${index}`);
-    const changed = body.map((line, index) => (index === 10 ? "+changed" : line));
+    // The newer version replaces line10, so its patch has it as a removed line where the older one has context.
+    const changed = [...body.slice(0, 10), "-line10", "+changed", ...body.slice(11)];
     const [result] = interdiff([file("a.ts", ["@@ -1 +1 @@", ...body].join("\n"))], [file("a.ts", ["@@ -1 +1 @@", ...changed].join("\n"))]);
     expect(result?.hunks).toHaveLength(1);
     expect(result?.hunks[0]?.start).toBe(8);
     expect(result?.lines).toHaveLength(22);
-    expect(result?.hunks[0]?.lines.map((line) => line.text)).toEqual([" line7", " line8", " line9", " line10", "+changed", " line11", " line12", " line13"]);
+    expect(result?.hunks[0]?.lines.map((line) => line.text)).toEqual([" line7", " line8", " line9", "-line10", "+changed", " line11", " line12", " line13"]);
   });
 });
 
@@ -366,5 +368,25 @@ describe("a kept line remembers where the older version had it", () => {
     const kept = compared?.lines.find((line) => line.display === "+added");
     expect([kept?.mark, kept?.right, kept?.origin?.right]).toEqual([" ", 22, 11]);
     expect(compared?.lines.find((line) => line.display === "+first")?.origin).toBeUndefined();
+  });
+});
+
+describe("context lines are not changes", () => {
+  // Both versions add x. The newer one also adds y further down, so GitHub cuts its hunks differently: its first
+  // hunk shows fewer lines around x, and a second hunk starts.
+  const older = file("a.ts", "@@ -1,6 +1,7 @@\n a\n b\n c\n+x\n d\n e\n f");
+  const newer = file("a.ts", "@@ -2,4 +2,5 @@\n b\n c\n+x\n d\n@@ -20,3 +21,4 @@\n p\n+y\n q");
+
+  test("a context line or hunk header only one version's patch shows is no change between the versions", () => {
+    const [compared] = interdiff([older], [newer]);
+    const changed = compared?.lines.filter((line) => line.mark !== " ").map((line) => `${line.mark}${line.display}`);
+    expect(changed).toEqual(["++y"]);
+    expect([compared?.added, compared?.removed]).toEqual([1, 0]);
+  });
+
+  test("the older version's context the newer one leaves out isn't shown, so the rows keep the newer numbering", () => {
+    const [compared] = interdiff([older], [newer]);
+    expect(compared?.lines.map((line) => line.display)).not.toContain(" a");
+    expect(compared?.lines.find((line) => line.display === "+x")?.right).toBe(4);
   });
 });

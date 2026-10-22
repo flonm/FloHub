@@ -224,7 +224,16 @@ function interdiffLines(before: string[], after: string[]): InterdiffLine[] {
     // A kept line shows as the newer version has it.
     const old = mark === "+" ? undefined : oldRows[x++];
     const row = mark === "-" ? old : newRows[y++];
-    if (row) lines.push(Object.assign(row, { mark }, old && { origin: { left: old.left, right: old.right } }));
+    if (!row) continue;
+    // Which lines a patch shows around its changes, and where its hunks start, depends on where its changes are:
+    // a context line or hunk header only one patch shows is no change in what the pull request does. The older
+    // patch's are left out, so the rows keep the newer version's numbering; the newer patch's stay as context.
+    const { kind } = splitLine(row.display);
+    if ((kind === " " || kind === "hunk") && mark !== " ") {
+      if (mark === "+") lines.push(Object.assign(row, { mark: " " as const }));
+      continue;
+    }
+    lines.push(Object.assign(row, { mark }, old && { origin: { left: old.left, right: old.right } }));
   }
   pairReplacements(lines);
   return lines;
