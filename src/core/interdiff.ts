@@ -32,6 +32,11 @@ export interface InterdiffLine extends DiffLine {
   /** For a line that replaced, or was replaced by, a similar one: its code split by what differs from the other. */
   segments?: Segment[];
   /**
+   * Which row of the newer version's patch the line is, by its index among the patch's lines, or null for a line
+   * GitHub's diff of the newer version doesn't show: only rows it shows can be highlighted there or commented on.
+   */
+  newerIndex?: number | null;
+  /**
    * The line's numbers in the older version's diff, where it has the line: a kept line shows the newer version's
    * numbers, but a comment on the older version names the older ones.
    */
@@ -102,12 +107,23 @@ const PAIR_WINDOW = 8;
  * `git range-diff` shows for each commit.
  * @param before The files the older version changes against its base.
  * @param after The files the newer version changes against its base.
+ * @param options Whether both versions' patches are against the same base.
  * @returns One entry per file either version touches, in path order.
  */
-export function interdiff(before: VersionFile[], after: VersionFile[]): FileInterdiff[] {
+export function interdiff(before: VersionFile[], after: VersionFile[], options: InterdiffOptions = {}): FileInterdiff[] {
   return pairFiles(before, after)
-    .map(([old, current]) => compareFile(old, current))
+    .map(([old, current]) => compareFile(old, current, options))
     .toSorted((a, b) => (a.path < b.path ? -1 : (a.path > b.path ? 1 : 0)));
+}
+
+/** How two versions' patches relate. */
+export interface InterdiffOptions {
+  /**
+   * Whether both patches are against the same base. Then each version's code can be rebuilt where the patches show
+   * it and the two diffed directly, as GitHub's diff of one version against the other does; otherwise the patches
+   * are compared line by line.
+   */
+  sameBase?: boolean;
 }
 
 /**
@@ -133,10 +149,10 @@ export function versionDiff(files: VersionFile[]): FileInterdiff[] {
     .map((file) => {
       const plain = compareFile(null, file);
       // The lines are this call's own copies, so marking them in place is safe.
-      const lines = plain.lines.map((line) => {
+      const lines = plain.lines.map((line, newerIndex) => {
         const { kind } = splitLine(line.display);
         const mark: Mark = kind === "+" || kind === "-" ? kind : " ";
-        return Object.assign(line, { mark, effect: mark, origin: { left: line.left, right: line.right } });
+        return Object.assign(line, { mark, effect: mark, newerIndex, origin: { left: line.left, right: line.right } });
       });
       const changed = lines.filter((line) => line.effect !== " ");
       return {
@@ -191,7 +207,7 @@ function sameOrigin(old: VersionFile, current: VersionFile): boolean {
  * @param current The file in the newer version, or null when only the older one touched it.
  * @returns How the file's change differs between the versions.
  */
-export function compareFile(old: VersionFile | null, current: VersionFile | null): FileInterdiff {
+export function compareFile(old: VersionFile | null, current: VersionFile | null, options: InterdiffOptions = {}): FileInterdiff {
   const file = current ?? old;
   if (!file) throw new Error("compareFile needs a file from at least one version");
   const header = diffLines(old ? patchHeader(old) : [], current ? patchHeader(current) : []);
@@ -222,7 +238,7 @@ export function compareFile(old: VersionFile | null, current: VersionFile | null
     const same = old.patch === current.patch && old.sha === current.sha && old.status === current.status;
     return result(same ? "unchanged" : "opaque");
   }
-  const lines = interdiffLines(patchBody(old), patchBody(current));
+  const lines = options.sameBase ? rebuiltLines(patchBody(old), patchBody(current)) : interdiffLines(patchBody(old), patchBody(current));
   const changed = header.some((line) => line.mark !== " ") || lines.some((line) => line.effect !== " ");
   return result(changed ? "changed" : "unchanged", lines);
 }
@@ -250,10 +266,11 @@ function interdiffLines(before: string[], after: string[]): InterdiffLine[] {
   let newHunk = 0;
   const entries = diff.map(({ mark }) => {
     const old = mark === "+" ? undefined : oldRows[x++];
+    const newerIndex = mark === "-" ? null : y;
     const current = mark === "-" ? undefined : newRows[y++];
     if (old && splitLine(old.display).kind === "hunk") oldHunk++;
     if (current && splitLine(current.display).kind === "hunk") newHunk++;
-    return { mark, old, current, oldHunk: old ? oldHunk : null, newHunk: current ? newHunk : null };
+    return { mark, old, current, newerIndex, oldHunk: old ? oldHunk : null, newHunk: current ? newHunk : null };
   });
   /**
    * Whether the other version's patch shows the place of a row only one patch has: its rows just before and after
@@ -265,21 +282,21 @@ function interdiffLines(before: string[], after: string[]): InterdiffLine[] {
     return prior !== undefined && prior[side] === next?.[side];
   };
   const lines: InterdiffLine[] = [];
-  for (const [index, { mark, old, current }] of entries.entries()) {
+  for (const [index, { mark, old, current, newerIndex }] of entries.entries()) {
     // A kept line shows as the newer version has it.
     const row = current ?? old;
     if (!row) continue;
     const { kind } = splitLine(row.display);
     if (mark === " " && old) {
       const was = splitLine(old.display).kind;
-      lines.push(Object.assign(row, { mark, effect: matchedEffect(was, kind), origin: { left: old.left, right: old.right } }));
+      lines.push(Object.assign(row, { mark, effect: matchedEffect(was, kind), newerIndex, origin: { left: old.left, right: old.right } }));
       continue;
     }
     // Which lines a patch shows around its changes, and where its hunks start, depends on where its changes are:
     // a context line or hunk header only one patch shows is no change in what the pull request does. The older
     // patch's are left out, so the rows keep the newer version's numbering; the newer patch's stay as context.
     if (kind === " " || kind === "hunk") {
-      if (mark === "+") lines.push(Object.assign(row, { mark: " " as const, effect: " " as const }));
+      if (mark === "+") lines.push(Object.assign(row, { mark: " " as const, effect: " " as const, newerIndex }));
       continue;
     }
     // A base line only one patch removes is in the other version's code, unless that version's patch shows the
@@ -287,10 +304,249 @@ function interdiffLines(before: string[], after: string[]): InterdiffLine[] {
     const absentFromOtherBase = kind === "-" && covered(index, mark === "-" ? "newHunk" : "oldHunk");
     if (absentFromOtherBase && mark === "-") continue;
     const effect = absentFromOtherBase ? " " : effectOf(mark, kind);
-    lines.push(Object.assign(row, { mark, effect }, old && { origin: { left: old.left, right: old.right } }));
+    lines.push(Object.assign(row, { mark, effect, newerIndex }, old && { origin: { left: old.left, right: old.right } }));
   }
   pairReplacements(lines);
   return lines;
+}
+
+/** What a patch shows of a base line: its code, whether the patch removes it, its row, and its number in the version. */
+interface BaseLine {
+  code: string;
+  removed: boolean;
+  index: number;
+  /** Its number in the version's code, or null when the version removes it. */
+  right: number | null;
+}
+
+/** A line a patch adds: its code, its row, and its number in the version's code. */
+interface AddedLine {
+  code: string;
+  index: number;
+  right: number | null;
+}
+
+/** What a patch shows: the base lines in its hunks, the lines it adds before each base line, and its hunks. */
+interface PatchView {
+  base: Map<number, BaseLine>;
+  /** By the number of the base line they come before. */
+  added: Map<number, AddedLine[]>;
+  hunks: { oldStart: number; oldLength: number; newLength: number; context: string }[];
+}
+
+const HUNK_LENGTHS = /^@@ -(\d+)(?:,(\d+))? \+\d+(?:,(\d+))? @@ ?(.*)$/u;
+
+/**
+ * @param body A version's raw patch lines.
+ * @returns What the patch shows, by base line.
+ */
+function viewPatch(body: string[]): PatchView {
+  const view: PatchView = { base: new Map(), added: new Map(), hunks: [] };
+  const numbers = lineNumbers(body);
+  let next = 0;
+  for (const [index, raw] of body.entries()) {
+    const line = clean(raw);
+    const { kind, code } = splitLine(line);
+    if (kind === "hunk") {
+      const [, oldStart = "0", oldLength = "1", newLength = "1", context = ""] = HUNK_LENGTHS.exec(line) ?? [];
+      view.hunks.push({ oldStart: Number(oldStart), oldLength: Number(oldLength), newLength: Number(newLength), context });
+      // A hunk that takes no base lines adds after its start line; one that does starts at it.
+      next = Number(oldLength) === 0 ? Number(oldStart) + 1 : Number(oldStart);
+      continue;
+    }
+    const right = numbers[index]?.right ?? null;
+    if (kind === "+") {
+      const before = view.added.get(next) ?? [];
+      before.push({ code, index, right });
+      view.added.set(next, before);
+    } else if (kind === " " || kind === "-") {
+      view.base.set(next, { code, removed: kind === "-", index, right });
+      next++;
+    }
+  }
+  return view;
+}
+
+/**
+ * @param view What a patch shows.
+ * @param base A base line outside its hunks.
+ * @returns The line's number in the version's code: the base line moved by what the hunks before it add or remove.
+ */
+function versionNumber(view: PatchView, base: number): number {
+  let shift = 0;
+  for (const hunk of view.hunks) {
+    const end = hunk.oldLength === 0 ? hunk.oldStart + 1 : hunk.oldStart + hunk.oldLength;
+    if (end <= base) shift += hunk.newLength - hunk.oldLength;
+  }
+  return base + shift;
+}
+
+/** A line of one version's code where a patch shows it: where it is, and what each patch shows of it. */
+interface CodeLine {
+  code: string;
+  /** Sorts the line among the base lines: a base line by twice its number, an added line just before that. */
+  at: number;
+  /** The base line it is, or null for a line a version adds. */
+  base: number | null;
+  older?: BaseLine | AddedLine;
+  newer?: BaseLine | AddedLine;
+  /** The line's number in the older and the newer version's code. */
+  olderRight: number | null;
+  newerRight: number | null;
+}
+
+/**
+ * Rebuilds each version's code wherever either patch shows it, and diffs the two, as GitHub's diff of one version
+ * against the other does. Every base line there is shown by one of the patches, as context or removed, so its code is
+ * known; a line outside both patches' hunks is the base's in both versions, so no difference. Base lines both
+ * versions remove stay in as context, since the pull request still removes them.
+ * @param before The older version's raw patch lines.
+ * @param after The newer version's raw patch lines.
+ * @returns The rows, in the order of the code.
+ */
+function rebuiltLines(before: string[], after: string[]): InterdiffLine[] {
+  const older = viewPatch(before);
+  const newer = viewPatch(after);
+  const places = [...new Set([...older.base.keys(), ...newer.base.keys(), ...older.added.keys(), ...newer.added.keys()])].toSorted(
+    (a, b) => a - b,
+  );
+  const stretches: number[][] = [];
+  for (const place of places) {
+    const last = stretches.at(-1);
+    if (last && place <= (last.at(-1) ?? place) + 1) last.push(place);
+    else stretches.push([place]);
+  }
+  const lines = stretches.flatMap((stretch) => rebuiltStretch(stretch, older, newer));
+  pairReplacements(lines);
+  return lines;
+}
+
+/**
+ * @param stretch The base places, in order, that a run of hunks shows.
+ * @param older What the older patch shows.
+ * @param newer What the newer patch shows.
+ * @returns The stretch's rows: a hunk header, then each line of either version's code there, and the base lines both
+ * remove.
+ */
+function rebuiltStretch(stretch: number[], older: PatchView, newer: PatchView): InterdiffLine[] {
+  const olderCode: CodeLine[] = [];
+  const newerCode: CodeLine[] = [];
+  const bothRemove: CodeLine[] = [];
+  for (const place of stretch) {
+    const addedOlder = older.added.get(place) ?? [];
+    const addedNewer = newer.added.get(place) ?? [];
+    for (const line of addedOlder) {
+      olderCode.push({ code: line.code, at: 2 * place - 1, base: null, older: line, olderRight: line.right, newerRight: null });
+    }
+    for (const line of addedNewer) {
+      newerCode.push({ code: line.code, at: 2 * place - 1, base: null, newer: line, olderRight: null, newerRight: line.right });
+    }
+    const shownOlder = older.base.get(place);
+    const shownNewer = newer.base.get(place);
+    const shown = shownOlder ?? shownNewer;
+    if (!shown) continue;
+    const line: CodeLine = {
+      code: shown.code,
+      at: 2 * place,
+      base: place,
+      ...(shownOlder && { older: shownOlder }),
+      ...(shownNewer && { newer: shownNewer }),
+      olderRight: shownOlder ? shownOlder.right : versionNumber(older, place),
+      newerRight: shownNewer ? shownNewer.right : versionNumber(newer, place),
+    };
+    const keptOlder = shownOlder?.removed !== true;
+    const keptNewer = shownNewer?.removed !== true;
+    if (keptOlder) olderCode.push(line);
+    if (keptNewer) newerCode.push(line);
+    if (!keptOlder && !keptNewer) bothRemove.push(line);
+  }
+
+  const rows: InterdiffLine[] = [];
+  // The diff keeps each version's lines in order; a base line both versions remove goes back before the first line
+  // that comes after it.
+  let flushed = 0;
+  const flush = (before: number) => {
+    const later = bothRemove.slice(flushed).findIndex((line) => line.at >= before);
+    const due = bothRemove.slice(flushed, later === -1 ? undefined : flushed + later);
+    flushed += due.length;
+    rows.push(...due.map((line) => removedRow(line)));
+  };
+  let x = 0;
+  let y = 0;
+  const diff = diffLines(
+    olderCode.map((line) => line.code),
+    newerCode.map((line) => line.code),
+  );
+  for (const { mark } of diff) {
+    const olderLine = mark === "+" ? undefined : olderCode[x++];
+    const newerLine = mark === "-" ? undefined : newerCode[y++];
+    const line = newerLine ?? olderLine;
+    if (!line) continue;
+    flush(line.at);
+    rows.push(codeRow(line, mark, olderLine !== undefined));
+  }
+  flush(Infinity);
+  return [stretchHeader(stretch, older, newer, rows), ...rows];
+}
+
+/**
+ * @param stretch The base places the stretch covers.
+ * @param older What the older patch shows.
+ * @param newer What the newer patch shows.
+ * @param rows The stretch's rows.
+ * @returns A hunk header for the stretch, with the function it is in, as the newer patch's hunk there names it.
+ */
+function stretchHeader(stretch: number[], older: PatchView, newer: PatchView, rows: InterdiffLine[]): InterdiffLine {
+  const first = stretch[0] ?? 0;
+  const inHunk = (hunk: PatchView["hunks"][number]) => hunk.oldStart <= first && first <= hunk.oldStart + Math.max(hunk.oldLength, 1);
+  const context = (newer.hunks.find((hunk) => inHunk(hunk)) ?? older.hunks.find((hunk) => inHunk(hunk)))?.context ?? "";
+  const bases = rows.filter((row) => row.left !== null);
+  const kept = rows.filter((row) => row.effect !== "-" && row.right !== null && splitLine(row.display).kind !== "-");
+  const display = `@@ -${bases[0]?.left ?? 0},${bases.length} +${kept[0]?.right ?? 0},${kept.length} @@${context ? ` ${context}` : ""}`;
+  return { mark: " ", effect: " ", text: normalizeLine(display), display, left: null, right: null, newerIndex: null };
+}
+
+/**
+ * @param line A line of either version's code.
+ * @param mark Whether it is in the older version's code only, the newer one's only, or both.
+ * @param inOlder Whether the older version's code has it.
+ * @returns Its row, shown as the newer patch shows it where it can, else as the older patch does: a line the newer
+ * code lacks shows as the newer patch removing it, or as the older patch adding it.
+ */
+function codeRow(line: CodeLine, mark: Mark, inOlder: boolean): InterdiffLine {
+  const removedByNewer = line.newer !== undefined && "removed" in line.newer && line.newer.removed;
+  const kind = line.base === null ? "+" : (removedByNewer ? "-" : " ");
+  const display = `${kind}${line.code}`;
+  const right = mark === "-" ? (line.base === null ? line.olderRight : null) : line.newerRight;
+  return {
+    // Which patches show the line, for what is placed on it: both, the newer one's only, or the older one's only.
+    mark: line.older && line.newer ? " " : (line.newer ? "+" : "-"),
+    effect: mark,
+    text: clean(display),
+    display,
+    left: line.base,
+    right,
+    newerIndex: line.newer?.index ?? null,
+    origin: { left: line.base, right: inOlder ? line.olderRight : null },
+  };
+}
+
+/**
+ * @param line A base line both versions remove.
+ * @returns Its row: no difference between the versions, the pull request removing it in both.
+ */
+function removedRow(line: CodeLine): InterdiffLine {
+  const display = `-${line.code}`;
+  return {
+    mark: line.older && line.newer ? " " : (line.newer ? "+" : "-"),
+    effect: " ",
+    text: clean(display),
+    display,
+    left: line.base,
+    right: null,
+    newerIndex: line.newer?.index ?? null,
+    origin: { left: line.base, right: null },
+  };
 }
 
 /**

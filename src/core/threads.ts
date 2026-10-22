@@ -159,7 +159,9 @@ export interface NewCommentLines {
  */
 export function commentableLine(line: InterdiffLine, plain: boolean): { side: "LEFT" | "RIGHT"; line: number } | null {
   const { kind } = splitLine(line.display);
-  if (kind === "hunk" || kind === "\\" || (!plain && line.mark === "-")) return null;
+  // Only a row GitHub's diff of the head shows can take a comment.
+  const inHead = line.newerIndex === undefined ? plain || line.mark !== "-" : line.newerIndex !== null;
+  if (kind === "hunk" || kind === "\\" || !inHead) return null;
   const number = kind === "-" ? line.left : line.right;
   return number === null ? null : { side: kind === "-" ? "LEFT" : "RIGHT", line: number };
 }

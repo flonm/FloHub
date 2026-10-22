@@ -129,3 +129,16 @@ describe("commenting", () => {
     expect(postingMode(pending, "head")).toBe(mode);
   });
 });
+
+describe("comments on rebuilt rows", () => {
+  test("a row GitHub's diff of the head doesn't show takes no comment, one it shows does", () => {
+    const [compared] = interdiff(
+      [{ filename: "a.ts", status: "modified", sha: "o", patch: "@@ -1,7 +1,8 @@\n a\n b\n c\n+x\n d\n e\n f" }],
+      [{ filename: "a.ts", status: "modified", sha: "n", patch: "@@ -4,6 +4,7 @@\n d\n e\n f\n+y\n g\n h\n i" }],
+      { sameBase: true },
+    );
+    const row = (display: string) => compared!.lines.find((line) => line.display === display)!;
+    expect(commentableLine(row(" a"), false)).toBeNull();
+    expect(commentableLine(row("+y"), false)).toEqual({ side: "RIGHT", line: 7 });
+  });
+});

@@ -266,7 +266,7 @@ async function compute(ref: PullRef, key: string): Promise<Loaded | null> {
   if (!before.ok || !after.ok) return null;
   // Past GitHub's file limit, a file only one version lists may just be cut off from the other's list.
   const truncated = before.value.truncated || after.value.truncated;
-  const marks = markChanges(before.value.files, after.value.files).filter(
+  const marks = markChanges(before.value.files, after.value.files, { sameBase: before.value.mergeBase === after.value.mergeBase }).filter(
     (mark) => !truncated || (mark.change !== "added" && mark.change !== "dropped"),
   );
   const files = await Promise.all(marks.map(async (mark) => ({ anchor: await diffAnchor(mark.path), marks: mark })));
