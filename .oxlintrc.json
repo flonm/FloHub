@@ -19,7 +19,7 @@
     // Each linter reads only its own disable comments, so an unused one is reported by the linter it belongs to
     "respectEslintDisableDirectives": false
   },
-  "ignorePatterns": ["dist", "dist-firefox", "storybook-static", "web-ext-artifacts"],
+  "ignorePatterns": ["dist", "dist-firefox", "dist-safari", "safari", "storybook-static", "web-ext-artifacts"],
   "rules": {
     // Pure taste, or each other's opposite
     "capitalized-comments": "off",

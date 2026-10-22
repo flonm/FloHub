@@ -1377,6 +1377,14 @@ check(
 await inlineBar(cachedPage).getByText("Changes requested").first().waitFor({ timeout: 10_000 });
 check(true, "reviewers fill in once the fresh overview arrives");
 await cachedWorker?.evaluate(async (current) => {
+  // The fresh overview is stored after it reaches the page; a write still on its way would undo the edit below.
+  for (let tries = 0; tries < 50; tries++) {
+    const written = (await chrome.storage.local.get("overviewIndex")) as { overviewIndex?: Record<string, { savedAt: number }> };
+    if (Date.now() - (written.overviewIndex?.[`github/gh-stack#${current}`]?.savedAt ?? 0) < 5000) break;
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100);
+    });
+  }
   const { overviewIndex: index } = (await chrome.storage.local.get("overviewIndex")) as {
     overviewIndex: Record<string, { savedAt: number }>;
   };

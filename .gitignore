@@ -6,3 +6,6 @@ dist-firefox/
 web-ext-artifacts/
 .DS_Store
 storybook-static/
+dist-safari/
+safari/build/
+safari/FloHub/build/
