@@ -119,11 +119,11 @@ const PATCHES: Record<string, VersionPatch> = {
         status: "modified",
         sha: "ddd",
         patch: [
-          "@@ -1,5 +1,8 @@",
+          "@@ -1,4 +1,7 @@",
           ' import { el } from "./dom";',
           " ",
-          " const RETRIES = 3;",
-          "-const BACKOFF_MS = 500;",
+          "-const RETRIES = 1;",
+          "+const RETRIES = 3;",
           "+/** Waits between attempts, doubling each time. */",
           "+const BACKOFF_MS = 250;",
           `+const label = (attempt: number): string => \`retry \${attempt + 1} of \${RETRIES}\`;`,
@@ -459,4 +459,13 @@ export const SplitView: Story = { render: () => view(3, PATCHES, { split: true }
 /** Side by side, a version against the base branch: GitHub's own split diff, the base on the left. */
 export const SplitCodeAtAVersion: Story = {
   render: () => view(3, PATCHES, { split: true }, true, { range: { from: BASE, to: V3.oid, toCurrent: true, at: NOW } }),
+};
+
+/**
+ * v2 was made on another base than v3, the branch having been rebased since: the versions' code can't be rebuilt
+ * from one base, so their patches are compared line by line, and a line above the diff says it won't match GitHub's
+ * diff of the two commits.
+ */
+export const Rebased: Story = {
+  render: () => view(3, { ...PATCHES, "2222222": { ...PATCHES["2222222"]!, mergeBase: "9999999" } }),
 };

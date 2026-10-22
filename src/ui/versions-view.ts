@@ -699,7 +699,8 @@ export class VersionsView {
           summary.textContent = "";
           legend.replaceChildren();
           files.replaceChildren();
-          const diff = before ? interdiff(before.files, after.files) : versionDiff(after.files);
+          // Both versions on the same base: their code can be rebuilt and diffed as GitHub's diff of the two would.
+          const diff = before ? interdiff(before.files, after.files, { sameBase: before.mergeBase === after.mergeBase }) : versionDiff(after.files);
           // New comments go on the head's lines as GitHub's diff has them, which only the pull request's own base gives.
           const commentable = Boolean(request.post) && newer.current && after.base === versions.baseRefOid;
           const review: ReviewHooks = {
@@ -1032,6 +1033,16 @@ function renderResult(
         older
           ? "GitHub lists at most 300 files per version, so files only one version lists are left out: they may just be past the cut."
           : "GitHub lists at most 300 files per version, so files past the cut are missing.",
+      ),
+    );
+  }
+  // On different bases the versions' code can't be rebuilt from one base: their patches are compared line by line.
+  if (older && context.before && context.before.mergeBase !== context.after.mergeBase) {
+    content.push(
+      el(
+        "p",
+        { class: "hint" },
+        `v${older.number} and v${newer.number} are on different bases (the branch was rebased), so their changes are compared patch by patch. What the base branch changed in between is left out, so this won't match GitHub's diff of the two commits.`,
       ),
     );
   }

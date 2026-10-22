@@ -960,6 +960,10 @@ const splitPage = await light.newPage();
 await splitPage.goto("https://github.com/flohub/split-diff/pull/1/changes?flohub-versions=");
 const docked = splitPage.locator("flohub-versions");
 await docked.locator("details.file").first().waitFor();
+check(
+  (await docked.locator(".hint", { hasText: "are on different bases" }).count()) === 1,
+  "versions on different bases say they're compared patch by patch, and won't match GitHub's diff of the two commits",
+);
 const dockedLayout = await splitPage.evaluate(() => {
   const host = document.querySelector<HTMLElement>("flohub-versions");
   const box = host?.getBoundingClientRect();

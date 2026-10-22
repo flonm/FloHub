@@ -1,4 +1,4 @@
-import { compareFile, type FileChange, lineNumbers, pairFiles, patchBody, patchHeader, type VersionFile } from "./interdiff";
+import { compareFile, type FileChange, type InterdiffOptions, lineNumbers, pairFiles, patchBody, patchHeader, type VersionFile } from "./interdiff";
 
 /** A line of GitHub's diff, the way its line anchors name it: `L` for the base side, `R` for the head side. */
 export interface LineRef {
@@ -26,11 +26,12 @@ export interface FileMarks {
  * version, and where lines of the older version's patch went missing.
  * @param before The older version's files.
  * @param after The current version's files; its patches must be the ones GitHub shows.
+ * @param options Whether both versions' patches are against the same base.
  * @returns The marks per file, for every file either version touches.
  */
-export function markChanges(before: VersionFile[], after: VersionFile[]): FileMarks[] {
+export function markChanges(before: VersionFile[], after: VersionFile[], options: InterdiffOptions = {}): FileMarks[] {
   return pairFiles(before, after).map(([old, current]) => {
-    const { path, change, lines } = compareFile(old, current);
+    const { path, change, lines } = compareFile(old, current, options);
     const marks: FileMarks = { path, change, changed: [], removed: [] };
     if (current?.patch === undefined || change === "unchanged" || change === "opaque") return marks;
 
@@ -40,23 +41,23 @@ export function markChanges(before: VersionFile[], after: VersionFile[]): FileMa
       return marks;
     }
 
-    // The versions view's rows: every row of the current patch, in order, and the older patch's rows it lacks.
-    // A row is a change when it changes the code between the versions, so lines only one patch shows as context
-    // around its changes are none.
-    let index = patchHeader(current).length;
+    // The versions view's rows, each with its row of the current patch, when GitHub's diff shows it. A row is a change
+    // when it changes the code between the versions, so lines only one patch shows as context are none; a line only
+    // the older code has, which GitHub's diff doesn't show, is listed after the line it followed.
+    const header = patchHeader(current).length;
     let previous: LineRef | null = null;
     let removed: RemovedLines | null = null;
     for (const line of lines) {
-      if (line.mark === "-") {
-        if (line.effect === " ") continue;
+      const position = line.newerIndex === null || line.newerIndex === undefined ? null : (positions[header + line.newerIndex] ?? null);
+      if (!position) {
+        if (line.effect !== "-") continue;
         if (!removed) marks.removed.push((removed = { after: previous, lines: [] }));
         removed.lines.push(line.text);
         continue;
       }
       removed = null;
-      const position = positions[index++] ?? null;
-      if (line.effect !== " " && position) marks.changed.push(position);
-      if (position) previous = position;
+      if (line.effect !== " ") marks.changed.push(position);
+      previous = position;
     }
     return marks;
   });

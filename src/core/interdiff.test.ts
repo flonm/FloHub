@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  compareFile,
   diffLines,
   diffstat,
   fileVerdict,
@@ -429,5 +430,56 @@ describe("a real pull request whose later version changed further down", () => {
   test("reads like GitHub's diff of one version against the other: +1 −6", async () => {
     const [compared] = interdiff(await realVersion("older"), await realVersion("newer"));
     expect([compared?.added, compared?.removed]).toEqual([1, 6]);
+  });
+});
+
+/** @returns A file's two versions on the same base, compared. */
+function sameBase(before: string, after: string): ReturnType<typeof compareFile> {
+  return compareFile(file("a.ts", before), file("a.ts", after), { sameBase: true });
+}
+
+/** @returns The rows that change the code between the versions, with their effect. */
+function changes(compared: ReturnType<typeof compareFile>): string[] {
+  return compared.lines.filter((line) => line.effect !== " ").map((line) => `${line.effect}${line.display}`);
+}
+
+describe("both versions on the same base: their code rebuilt and diffed", () => {
+
+  test("a missing newline at the end of the file is no base line", () => {
+    const patch = "@@ -1,2 +1,2 @@\n a\n-b\n\\ No newline at end of file\n+b";
+    expect(changes(sameBase(patch, patch))).toEqual([]);
+  });
+
+  test("a file new in both versions compares their lines", () => {
+    const compared = sameBase("@@ -0,0 +1,2 @@\n+a\n+b", "@@ -0,0 +1,3 @@\n+a\n+c\n+b");
+    expect(changes(compared)).toEqual(["++c"]);
+  });
+
+  test("a file the newer version deletes and the older one changed loses the older version's lines", () => {
+    const compared = sameBase("@@ -1,3 +1,3 @@\n a\n-b\n+B\n c", "@@ -1,3 +0,0 @@\n-a\n-b\n-c");
+    expect([compared.added, compared.removed]).toEqual([0, 3]);
+  });
+
+  test("a line added at the end of the file", () => {
+    const compared = sameBase("@@ -1,3 +1,4 @@\n a\n b\n c\n+x", "@@ -1,3 +1,5 @@\n a\n b\n c\n+x\n+y");
+    expect(changes(compared)).toEqual(["++y"]);
+  });
+
+  test("a line only the older patch shows isn't in GitHub's diff of the head, so it takes no comment", () => {
+    // The older patch shows lines 1 to 7 around its change; the newer one only shows lines 5 to 9 around its own.
+    const older = "@@ -1,7 +1,8 @@\n a\n b\n c\n+x\n d\n e\n f";
+    const newer = "@@ -4,6 +4,7 @@\n d\n e\n f\n+y\n g\n h\n i";
+    const compared = sameBase(older, newer);
+    const onlyOlder = compared.lines.find((line) => line.display === " a");
+    expect(onlyOlder?.newerIndex).toBeNull();
+    expect(compared.lines.find((line) => line.display === " g")?.newerIndex).toBe(5);
+  });
+
+  test("is chosen only when the versions share a base", () => {
+    const older = "@@ -1,3 +1,4 @@\n a\n+x\n b\n c";
+    const newer = "@@ -1,3 +1,4 @@\n a\n+x\n b\n c";
+    // A rebuilt stretch gets its own header; the line-by-line comparison keeps the newer patch's.
+    expect(sameBase(older, newer).lines[0]?.newerIndex).toBeNull();
+    expect(compareFile(file("a.ts", older), file("a.ts", newer)).lines[0]?.newerIndex).toBe(0);
   });
 });
