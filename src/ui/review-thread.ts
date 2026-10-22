@@ -3,7 +3,11 @@ import { renderRichText } from "../core/rich-text";
 import type { PostingMode, ReviewThread, ThreadComment } from "../core/threads";
 import { el, icon } from "./dom";
 
-/** The thread's styles, for the shadow root it's drawn in. They read the versions view's `--vd-` tokens. */
+/**
+ * The thread's styles, for the shadow root it's drawn in. They read the versions view's `--vd-` tokens. They share that
+ * root with the view's own styles, so the thread's class names are its own: a comment's body once took the view's `.body`
+ * layout and laid its paragraphs out side by side.
+ */
 export const THREAD_STYLES = `
 .thread-row, .composer-row {
   position: sticky;
@@ -50,12 +54,12 @@ export const THREAD_STYLES = `
 .comment-head .age { color: var(--vd-muted); font-size: 12px; }
 .comment-head .view { margin-left: 4px; color: var(--vd-muted); font-size: 12px; text-decoration: none; }
 .comment-head .view:hover { color: var(--vd-accent); }
-.comment .body { margin-top: 8px; overflow-wrap: anywhere; }
-.comment .body > :first-child { margin-top: 0; }
-.comment .body > :last-child { margin-bottom: 0; }
-.comment .body pre { padding: 8px; border-radius: 6px; background: var(--vd-bg-muted); overflow: auto; }
-.comment .body code { font: 12px var(--vd-mono); }
-.comment .body img { max-width: 100%; }
+.comment-body { margin-top: 8px; overflow-wrap: anywhere; }
+.comment-body > :first-child { margin-top: 0; }
+.comment-body > :last-child { margin-bottom: 0; }
+.comment-body pre { padding: 8px; border-radius: 6px; background: var(--vd-bg-muted); overflow: auto; }
+.comment-body code { font: 12px var(--vd-mono); }
+.comment-body img { max-width: 100%; }
 .reply-row { padding: 8px 12px; border-top: 1px solid var(--vd-border); background: var(--vd-bg-muted); }
 .reply-row .box { padding: 0; border-top: 0; }
 .write-reply {
@@ -195,7 +199,7 @@ function renderComment(comment: ThreadComment, now: number, pullAuthor: string |
   if (comment.pending) labels.append(el("span", { class: "label" }, "Pending"));
   head.append(labels);
   if (comment.url) head.append(el("a", { class: "view", href: comment.url, target: "_blank", rel: "noopener", title: "View on GitHub" }, "View"));
-  const body = el("div", { class: "body" });
+  const body = el("div", { class: "comment-body" });
   body.append(renderRichText(comment.html) ?? el("p", {}, "This comment can't be shown here."));
   item.append(head, body);
   return item;
