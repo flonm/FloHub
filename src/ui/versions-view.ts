@@ -1068,9 +1068,11 @@ function renderResult(
         section.querySelector(":scope > summary")?.after(list);
       }
       const treeRow = treeRows.get(section);
-      if (!treeRow || placed.length === 0) continue;
-      const badge = el("span", { class: "comment-count", title: `${placed.length} ${placed.length === 1 ? "thread" : "threads"} here` });
-      badge.append(icon("comment"), String(placed.length));
+      const total = placed.length + elsewhere.length;
+      if (!treeRow || total === 0) continue;
+      const resolved = [...placed.map(({ thread }) => thread), ...elsewhere].filter((thread) => thread.resolved).length;
+      const badge = el("span", { class: "comment-count", title: `${resolved} of ${total} ${total === 1 ? "conversation" : "conversations"} resolved` });
+      badge.append(icon("comment"), `${resolved}/${total}`);
       const lineCounts = treeRow.querySelector(".counts");
       if (lineCounts) lineCounts.before(badge);
       else treeRow.append(badge);

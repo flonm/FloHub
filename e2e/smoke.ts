@@ -986,8 +986,8 @@ const placedThreads = await threadRows.evaluateAll((blocks) =>
 );
 check(
   JSON.stringify(placedThreads.toSorted((a, b) => a.localeCompare(b))) === JSON.stringify(["Diverged stacks → v1 thread", "log(branch) → v3 thread"]) &&
-    (await docked.locator("nav.files button.file", { hasText: "README.md" }).locator(".comment-count").innerText()) === "1",
-  `review threads sit under their lines, by the numbers of the version each was written on, and the file tree counts them: ${JSON.stringify(placedThreads)}`,
+    (await docked.locator("nav.files button.file", { hasText: "README.md" }).locator(".comment-count").innerText()) === "0/1",
+  `review threads sit under their lines, by the numbers of the version each was written on, and the file tree counts the resolved ones of them: ${JSON.stringify(placedThreads)}`,
 );
 const otherRow = docked.locator("details.file", { hasText: "cmd/rebase.go" }).locator(".other-threads button", { hasText: "Was logging here before?" });
 check(
