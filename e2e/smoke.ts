@@ -1030,6 +1030,18 @@ check(
     (await docked.locator(".thread-row").count()) === 2,
   "side by side, a line that changed between the versions sits beside its replacement, and the threads stay at their lines",
 );
+const threadColumns = await docked.locator(".thread-row").evaluateAll((blocks) =>
+  blocks.map((block) => {
+    const older = block.classList.contains("column-older");
+    const code = block.previousElementSibling?.querySelector(older ? ".cell.left .code" : ".cell.right .code");
+    const offset = Math.abs((block.querySelector(".thread")?.getBoundingClientRect().left ?? 0) - (code?.getBoundingClientRect().left ?? -99));
+    return `${block.textContent.includes("Is this still true") ? "v1" : "v3"} ${older ? "left" : "right"}${offset <= 2 ? "" : ` off by ${Math.round(offset)}px`}`;
+  }),
+);
+check(
+  JSON.stringify(threadColumns.toSorted((a, b) => a.localeCompare(b))) === JSON.stringify(["v1 left", "v3 right"]),
+  `side by side, a thread sits in its version's column, lined up with its code: ${JSON.stringify(threadColumns)}`,
+);
 check(
   await (light.serviceWorkers()[0] ?? (await light.waitForEvent("serviceworker"))).evaluate(async () => {
     const layout = await chrome.storage.local.get("versionsSplitView");

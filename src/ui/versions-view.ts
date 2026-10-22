@@ -382,6 +382,10 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 .cell .num { width: 50px; }
 .cell .code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .diff[data-split] .add-comment { left: 2px; }
+/* Side by side, a thread or comment box sits in its version's column, lined up with that column's code. */
+.diff[data-split] :is(.thread-row, .composer-row) { position: static; width: 50%; padding: 8px 12px 8px 72px; }
+.diff[data-split][data-plain] :is(.thread-row, .composer-row), .diff[data-split][data-uniform] :is(.thread-row, .composer-row) { padding-left: 50px; }
+.diff[data-split] .column-newer { margin-left: 50%; }
 .tok-keyword { color: var(--vd-syntax-keyword); }
 .tok-string { color: var(--vd-syntax-string); }
 .tok-comment { color: var(--vd-syntax-comment); }
@@ -1080,15 +1084,22 @@ function renderResult(
       const { placed, elsewhere } = placeThreads(file, threads, compared);
       const at = rowAt.get(file);
       const here = at ? placed : [];
-      for (const { thread, first, last } of here) {
+      for (const { thread, first, last, column } of here) {
         seen.add(thread.id);
         const block = blocks.get(thread.id);
         if (block?.isConnected && holdsText(block)) continue;
-        const drawn = renderThread(thread, { now, actions: review.threadActions(thread), pullAuthor: review.pullAuthor() });
+        const started = context.history.versions.find((version) => version.oid === thread.comments[0]?.originalCommit);
+        const drawn = renderThread(thread, {
+          now,
+          actions: review.threadActions(thread),
+          pullAuthor: review.pullAuthor(),
+          version: started ? `v${started.number}` : null,
+        });
         const open = block?.querySelector("details")?.open;
         if (open !== undefined) drawn.open = open;
         if (block?.isConnected) {
           block.replaceChildren(drawn);
+          block.className = `thread-row column-${column}`;
           continue;
         }
         // Unfolding the first line before the last keeps the commented lines together.
@@ -1096,7 +1107,7 @@ function renderResult(
         let anchor: Element | null | undefined = at?.(last);
         if (!anchor) continue;
         while (anchor.nextElementSibling?.matches(".thread-row, .composer-row")) anchor = anchor.nextElementSibling;
-        const added = el("div", { class: "thread-row", "data-thread": thread.id });
+        const added = el("div", { class: `thread-row column-${column}`, "data-thread": thread.id });
         added.append(drawn);
         anchor.after(added);
         blocks.set(thread.id, added);
@@ -1174,7 +1185,8 @@ function renderResult(
       },
       cancel: closeDraft,
     });
-    const block = el("div", { class: "composer-row" });
+    // A new comment is on the head's lines, the right column, except a base-side line of a version against the base.
+    const block = el("div", { class: `composer-row column-${!context.older && lines.side === "LEFT" ? "older" : "newer"}` });
     block.append(composer);
     let anchor: Element | null = at(last);
     if (!anchor) return;

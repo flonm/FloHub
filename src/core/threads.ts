@@ -50,6 +50,11 @@ export interface Placement {
   thread: ReviewThread;
   first: number;
   last: number;
+  /**
+   * The version whose lines the thread is on, which a side-by-side diff shows as its left (older) or right (newer)
+   * column. In a version against the base branch that is GitHub's own side: L the base, R the head.
+   */
+  column: "older" | "newer";
 }
 
 /** Which version's numbers a row carries for a side, or null when the row isn't in that version. */
@@ -102,15 +107,30 @@ function placeThread(file: FileInterdiff, thread: ReviewThread, compared: Compar
   const plain = compared.older === null;
   const started = thread.comments[0]?.originalCommit ?? null;
   const named = (path: string) => thread.path === path;
-  const rules: { applies: boolean; numbering: Numbering; line: number | null; startLine: number | null }[] = [
-    { applies: started === compared.newer && named(file.path), numbering: newerRows(plain), line: thread.originalLine, startLine: thread.originalStartLine },
+  // In a plain diff both sides are the version's: the base's lines on the left, its own on the right.
+  const newer = plain && thread.side === "LEFT" ? "older" : "newer";
+  const rules: { applies: boolean; numbering: Numbering; line: number | null; startLine: number | null; column: Placement["column"] }[] = [
+    {
+      applies: started === compared.newer && named(file.path),
+      numbering: newerRows(plain),
+      line: thread.originalLine,
+      startLine: thread.originalStartLine,
+      column: newer,
+    },
     {
       applies: !plain && started === compared.older && named(file.oldPath ?? file.path),
       numbering: olderRows,
       line: thread.originalLine,
       startLine: thread.originalStartLine,
+      column: "older",
     },
-    { applies: compared.newerIsHead && !thread.outdated && named(file.path), numbering: newerRows(plain), line: thread.line, startLine: thread.startLine },
+    {
+      applies: compared.newerIsHead && !thread.outdated && named(file.path),
+      numbering: newerRows(plain),
+      line: thread.line,
+      startLine: thread.startLine,
+      column: newer,
+    },
   ];
   for (const rule of rules) {
     if (!rule.applies || rule.line === null) continue;
@@ -118,7 +138,7 @@ function placeThread(file: FileInterdiff, thread: ReviewThread, compared: Compar
     const last = at(rule.line);
     if (last < 0) continue;
     const first = rule.startLine === null ? last : at(rule.startLine);
-    return { thread, first: first < 0 || first > last ? last : first, last };
+    return { thread, first: first < 0 || first > last ? last : first, last, column: rule.column };
   }
   return null;
 }

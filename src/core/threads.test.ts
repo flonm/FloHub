@@ -70,6 +70,27 @@ describe("placeThreads", () => {
   });
 });
 
+/** @returns The column each of the threads sits in, between v1 and v2. */
+function columns(threads: ReviewThread[]): string[] {
+  return placeThreads(FILE!, threads, SINCE).placed.map(({ column }) => column);
+}
+
+describe("the column a thread sits in, side by side", () => {
+  test("a thread on the older version sits on the left, one on the newer version or at its current lines on the right", () => {
+    expect(columns([thread({ originalLine: 11, outdated: true })])).toEqual(["older"]);
+    expect(columns([thread({ on: "v2", originalLine: 20 })])).toEqual(["newer"]);
+    expect(columns([thread({ on: "v0", line: 22, originalLine: 5 })])).toEqual(["newer"]);
+  });
+
+  test("in a version against the base branch, GitHub's own side decides: L on the left, R on the right", () => {
+    const [plain] = versionDiff([V1]);
+    const compared = { older: null, newer: "v1", newerIsHead: false };
+    const column = (side: "LEFT" | "RIGHT", line: number) => placeThreads(plain!, [thread({ originalLine: line, side })], compared).placed[0]?.column;
+    expect(column("LEFT", 11)).toBe("older");
+    expect(column("RIGHT", 11)).toBe("newer");
+  });
+});
+
 describe("commenting", () => {
   const plain = versionDiff([V1])[0]!;
   const at = (lines: typeof plain.lines, display: string) => lines.findIndex((line) => line.display === display);

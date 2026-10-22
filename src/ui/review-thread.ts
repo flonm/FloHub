@@ -157,18 +157,19 @@ export function threadPlace(thread: ReviewThread): string {
  * A review thread as the versions view shows it under its line, laid out like GitHub's own: open while it's
  * unresolved, folded to its header once resolved, with the comments' authors, ages and bodies as GitHub renders them.
  * @param thread The thread.
- * @param options The current time, what the viewer can do to the thread (read-only without), and the pull request's
- * author, whose comments are labelled Author.
+ * @param options The current time, what the viewer can do to the thread (read-only without), the pull request's
+ * author, whose comments are labelled Author, and the version the thread was written on, which its line names.
  * @returns The thread.
  */
 export function renderThread(
   thread: ReviewThread,
-  options: { now: number; actions?: ThreadActions | undefined; pullAuthor?: string | null },
+  options: { now: number; actions?: ThreadActions | undefined; pullAuthor?: string | null; version?: string | null },
 ): HTMLDetailsElement {
   const details = el("details", { class: "thread", "data-thread": thread.id });
   details.open = !thread.resolved;
   const summary = el("summary");
-  summary.append(icon("chevron", "twist"), el("span", {}, threadPlace(thread)));
+  // R43 is a side of that version's diff, not a column of the view: naming the version keeps the two apart.
+  summary.append(icon("chevron", "twist"), el("span", {}, `${threadPlace(thread)}${options.version ? ` on ${options.version}` : ""}`));
   const labels = el("span", { class: "labels" });
   if (thread.outdated) labels.append(el("span", { class: "label", "data-tone": "attention" }, "Outdated"));
   if (thread.comments.some((comment) => comment.pending)) labels.append(el("span", { class: "label" }, "Pending"));
