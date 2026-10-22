@@ -417,3 +417,17 @@ describe("rows show what the newer version does to the code, as GitHub's diff of
     expect(compared?.change).toBe("unchanged");
   });
 });
+
+/** @returns One version's patch of a real pull request's file, from the fixtures. */
+async function realVersion(name: "older" | "newer"): Promise<VersionFile[]> {
+  return [file("a.json", await Bun.file(new URL(`fixtures/uneven-hunks.${name}.patch`, import.meta.url)).text())];
+}
+
+describe("a real pull request whose later version changed further down", () => {
+  // From a pull request's lint config: v4 also changed lines further down, so GitHub cut its hunks differently from
+  // v3's. Every line of code is replaced by a placeholder; markers, hunk headers and which lines are equal remain.
+  test("reads like GitHub's diff of one version against the other: +1 −6", async () => {
+    const [compared] = interdiff(await realVersion("older"), await realVersion("newer"));
+    expect([compared?.added, compared?.removed]).toEqual([1, 6]);
+  });
+});
