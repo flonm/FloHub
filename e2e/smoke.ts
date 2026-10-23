@@ -328,7 +328,7 @@ function createFixture(
         ? (request.postDataJSON() as { query: string; variables: { path?: string; ids?: string[] } })
         : null;
       const reviewMutation = graphql?.query.match(
-        /\b(resolveReviewThread|unresolveReviewThread|addPullRequestReviewThreadReply|addPullRequestReviewThread|addPullRequestReview)\(/u,
+        /\b(resolveReviewThread|unresolveReviewThread|addPullRequestReviewThreadReply|addPullRequestReviewThread|addPullRequestReview|dismissPullRequestReview)\(/u,
       )?.[1];
       if (graphql && reviewMutation) {
         created.reviewActions.push(`${reviewMutation} ${JSON.stringify(graphql.variables)}`);
@@ -505,12 +505,13 @@ function createFixture(
                   viewerCanUpdate: true,
                   forcePushes: { totalCount: 2, nodes: [{ createdAt: ago(3) }] },
                   reviewRequests: { nodes: requested.map((requestedReviewer) => ({ requestedReviewer })) },
+                  dismissals: { nodes: [{ previousReviewState: "APPROVED", review: { url: `${PULL_URL}#pullrequestreview-pjhyett` } }] },
                   reviews: {
                     nodes: [
-                      review("defunkt", "CHANGES_REQUESTED"),
+                      { ...review("defunkt", "CHANGES_REQUESTED"), id: "PRR_defunkt" },
                       review("mojombo", "CHANGES_REQUESTED"),
                       review("coderabbitai", "COMMENTED", "Bot"),
-                      review("pjhyett", "DISMISSED"),
+                      { ...review("pjhyett", "DISMISSED"), url: `${PULL_URL}#pullrequestreview-pjhyett` },
                       { ...review("octocat", "APPROVED"), commit: { oid: "aaaaaaa1" } },
                       review("wycats", "COMMENTED"),
                     ].map((node) => (options.discussion ? withDiscussionText(node) : node)),
@@ -707,7 +708,7 @@ check(
       "defunkt Changes requested",
       "mojombo Re-requested · had requested changes",
       "github/backend Review pending",
-      "pjhyett Dismissed",
+      "pjhyett Dismissed approval",
       "wycats Commented",
       "octocat Approved",
     ]),
@@ -728,6 +729,31 @@ check(await floatingBar(page).isHidden(), "floating pill is hidden while the inl
 check(
   (await inlineBar(page).getByRole("button", { name: /Re-request review from/u }).count()) === 3,
   "re-request is offered for defunkt, pjhyett and wycats only",
+);
+const pjhyettStatus = inlineBar(page).locator(".chip", { hasText: "pjhyett" }).locator(".status");
+check(
+  (await pjhyettStatus.getAttribute("data-tone")) === "muted" &&
+    (await pjhyettStatus.locator("svg").getAttribute("data-tone")) === "success" &&
+    (await pjhyettStatus.getAttribute("title")) === "Dismissed approval",
+  "a dismissed approval's slash keeps the approval's green, its word stays grey, and its tooltip says what it was",
+);
+const dismissButtons = await inlineBar(page).getByRole("button", { name: /^Dismiss /u }).evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label")));
+check(
+  JSON.stringify(dismissButtons) === JSON.stringify(["Dismiss defunkt's change request"]),
+  `only a standing verdict with a known review id can be dismissed, never the viewer's own: ${JSON.stringify(dismissButtons)}`,
+);
+const dismissDialog = page.locator("flohub-dialog dialog");
+await inlineBar(page).getByRole("button", { name: "Dismiss defunkt's change request" }).click();
+await page.getByRole("dialog", { name: "Dismiss defunkt's change request" }).waitFor();
+check(await dismissDialog.getByRole("button", { name: "Dismiss review" }).isDisabled(), "a dismissal waits for the reason GitHub requires");
+const dismissalsBefore = fixture.reviewActions.length;
+await dismissDialog.getByRole("textbox").fill("Addressed in the latest push.");
+await dismissDialog.getByRole("button", { name: "Dismiss review" }).click();
+await dismissDialog.waitFor({ state: "hidden" });
+check(
+  fixture.reviewActions.slice(dismissalsBefore).join(" | ") ===
+    'dismissPullRequestReview {"id":"PRR_defunkt","message":"Addressed in the latest push."}',
+  `the X dismisses the review with its reason: ${fixture.reviewActions.slice(dismissalsBefore).join(" | ")}`,
 );
 const rows = await inlineBar(page).locator(".stack-list > li").allInnerTexts();
 check(

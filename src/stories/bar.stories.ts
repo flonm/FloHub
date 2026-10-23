@@ -12,6 +12,7 @@ const NOOP: BarActions = {
   refresh: () => undefined,
   rerequest: () => undefined,
   poke: () => undefined,
+  dismiss: () => undefined,
   openOptions: () => undefined,
   toggleStack: () => undefined,
   toggleMerged: () => undefined,
@@ -29,6 +30,8 @@ function reviewer(overrides: Partial<Reviewer> & Pick<Reviewer, "key" | "name" |
     avatarUrl: null,
     url: `https://github.com/${overrides.name}`,
     previous: null,
+    dismissedFrom: null,
+    dismissId: null,
     canRerequest: false,
     canPoke: false,
     ...overrides,
@@ -39,9 +42,20 @@ const REVIEWERS: Reviewer[] = [
   reviewer({ key: "user:mona", name: "mona", status: "changes_requested" }),
   reviewer({ key: "user:grace", name: "grace", status: "rerequested", previous: "approved" }),
   reviewer({ key: "team:octo-org/reviewers", name: "octo-org/reviewers", kind: "team", status: "pending", canPoke: true }),
-  reviewer({ key: "user:linus", name: "linus", status: "dismissed" }),
+  reviewer({ key: "user:ada", name: "ada", status: "rerequested", previous: "dismissed", dismissedFrom: "changes_requested" }),
+  reviewer({ key: "user:linus", name: "linus", status: "dismissed", dismissedFrom: "approved" }),
+  reviewer({ key: "user:margaret", name: "margaret", status: "dismissed" }),
   reviewer({ key: "user:dependabot", name: "dependabot", kind: "bot", status: "commented" }),
   reviewer({ key: "user:tizian", name: "tizian", status: "approved", canRerequest: true }),
+];
+
+/** A maintainer's view: every standing approval and change request can be dismissed. */
+const DISMISSABLE: Reviewer[] = [
+  reviewer({ key: "user:mona", name: "mona", status: "changes_requested", dismissId: "PRR_mona" }),
+  reviewer({ key: "user:coderabbitai", name: "coderabbitai", kind: "bot", status: "changes_requested", dismissId: "PRR_bot" }),
+  reviewer({ key: "user:grace", name: "grace", status: "rerequested", previous: "approved", canPoke: true, dismissId: "PRR_grace" }),
+  reviewer({ key: "user:linus", name: "linus", status: "dismissed", dismissedFrom: "approved", canRerequest: true }),
+  reviewer({ key: "user:ada", name: "ada", status: "approved", canRerequest: true, dismissId: "PRR_ada" }),
 ];
 
 const CURRENT = pull(344, "feat(stack): keep stacked layers in sync", { reviewDecision: "APPROVED" }, [2, 4], 3);
@@ -228,6 +242,28 @@ export const InlineBusy: Story = {
       }),
     ),
 };
+
+/**
+ * Dismissed reviews keep the colour of what they had been: linus's approval and ada's change request, and the one
+ * before margaret's re-request; margaret's own dismissal is one the timeline no longer knows.
+ */
+export const InlineDismissed: Story = {
+  render: () =>
+    inline(
+      ready({
+        reviewers: [
+          reviewer({ key: "user:linus", name: "linus", status: "dismissed", dismissedFrom: "approved" }),
+          reviewer({ key: "user:ada", name: "ada", status: "dismissed", dismissedFrom: "changes_requested" }),
+          reviewer({ key: "user:grace", name: "grace", status: "rerequested", previous: "dismissed", dismissedFrom: "approved" }),
+          reviewer({ key: "user:margaret", name: "margaret", status: "dismissed" }),
+          reviewer({ key: "user:tizian", name: "tizian", status: "approved" }),
+        ],
+      }),
+    ),
+};
+
+/** The viewer can update the pull request, so each standing approval and change request has an X to dismiss it. */
+export const InlineDismissable: Story = { render: () => inline(ready({ reviewers: DISMISSABLE })) };
 
 /** Force-pushes and highlighted changes since the viewer's review. */
 export const InlineVersions: Story = {

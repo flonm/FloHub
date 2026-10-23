@@ -44,6 +44,14 @@ const ITEMS: DiscussionItem[] = [
     at: new Date(NOW - 40 * 60_000).toISOString(),
   }),
   item({
+    key: "4",
+    author: "linus",
+    verdict: "dismissed",
+    dismissedFrom: "approved",
+    text: "Looks good to me.",
+    at: new Date(NOW - 35 * 60_000).toISOString(),
+  }),
+  item({
     key: "5",
     author: "coderabbitai[bot]",
     bot: true,

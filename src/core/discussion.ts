@@ -1,4 +1,4 @@
-import type { RawActor, RawReviewState } from "./reviewers";
+import { type DismissedVerdict, dismissedVerdicts, type RawActor, type RawDismissals, type RawReviewState } from "./reviewers";
 
 export type DiscussionVerdict = "approved" | "changes_requested" | "dismissed" | "commented";
 
@@ -12,6 +12,8 @@ export interface DiscussionItem {
   bot: boolean;
   /** The review's verdict, or null for a general comment. */
   verdict: DiscussionVerdict | null;
+  /** What a dismissed review had been, when the timeline still says. */
+  dismissedFrom?: DismissedVerdict | null;
   text: string;
   /** GitHub's rendering of the text, or null in an overview cached before it was fetched. */
   html: string | null;
@@ -41,6 +43,8 @@ export interface RawDiscussionSource {
   };
   /** Missing in an overview cached before comments were fetched. */
   comments?: { nodes: RawDiscussionComment[] };
+  /** Missing in an overview cached before dismissals were fetched. */
+  dismissals?: RawDismissals;
 }
 
 const VERDICTS: Partial<Record<RawReviewState, DiscussionVerdict>> = {
@@ -68,11 +72,13 @@ const INVISIBLE = /[\s\u{200B}-\u{200D}\u{2060}\u{FEFF}]/gu;
  */
 export function deriveDiscussion(pull: RawDiscussionSource): DiscussionItem[] {
   const items: DiscussionItem[] = [];
+  const dismissed = dismissedVerdicts(pull.dismissals);
   for (const review of pull.reviews.nodes) {
     const verdict = VERDICTS[review.state];
     const text = review.bodyText?.trim() ?? "";
     if (!verdict || !review.submittedAt || !review.url || !hasText(text)) continue;
-    items.push(toItem(review.url, review.author, verdict, text, review.bodyHTML ?? null, review.submittedAt));
+    const item = toItem(review.url, review.author, verdict, text, review.bodyHTML ?? null, review.submittedAt);
+    items.push(verdict === "dismissed" ? { ...item, dismissedFrom: dismissed.get(review.url) ?? null } : item);
   }
   const comments = pull.comments?.nodes ?? [];
   for (const comment of comments) {

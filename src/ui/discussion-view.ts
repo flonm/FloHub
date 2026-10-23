@@ -1,5 +1,6 @@
 import { formatAge } from "../core/age";
 import { type DiscussionItem, type DiscussionVerdict, isUnread } from "../core/discussion";
+import type { DismissedVerdict } from "../core/reviewers";
 import { el, icon } from "./dom";
 import { renderRichText } from "../core/rich-text";
 
@@ -20,6 +21,11 @@ const VERDICT_LABEL: Record<DiscussionVerdict, { label: string; tone: string }> 
   changes_requested: { label: "Requested changes", tone: "attention" },
   dismissed: { label: "Dismissed review", tone: "muted" },
   commented: { label: "Reviewed", tone: "muted" },
+};
+
+const DISMISSED_LABEL: Record<DismissedVerdict, { label: string; tone: string }> = {
+  approved: { label: "Dismissed approval", tone: "success" },
+  changes_requested: { label: "Dismissed change request", tone: "attention" },
 };
 
 /** Collapsed, the section shows the new items, up to this many, or else the newest one. */
@@ -88,7 +94,7 @@ function renderItem(item: DiscussionItem, unread: boolean, now: number): HTMLEle
       : el("span", { class: "name" }, item.author),
   );
   if (item.verdict) {
-    const verdict = VERDICT_LABEL[item.verdict];
+    const verdict = item.dismissedFrom ? DISMISSED_LABEL[item.dismissedFrom] : VERDICT_LABEL[item.verdict];
     meta.append(el("span", { class: "discussion-verdict", "data-tone": verdict.tone }, verdict.label));
   }
   if (unread) meta.append(el("span", { class: "discussion-unread" }, "New"));

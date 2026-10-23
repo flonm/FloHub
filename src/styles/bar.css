@@ -92,6 +92,9 @@
   gap: 3px;
 }
 .previous {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   color: var(--flo-muted);
 }
 

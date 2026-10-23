@@ -26,6 +26,8 @@ export interface RawPullRequest {
   reviewRequests: { nodes: { requestedReviewer: RawActor | RawTeam | null }[] };
   reviews: {
     nodes: {
+      /** Missing from overviews cached before review ids were fetched. */
+      id?: string;
       state: RawReviewState;
       submittedAt: string | null;
       /** Missing from overviews cached before review texts were fetched. */
@@ -36,7 +38,17 @@ export interface RawPullRequest {
       commit?: { oid: string } | null;
     }[];
   };
+  /** Missing from overviews cached before dismissals were fetched. */
+  dismissals?: RawDismissals;
 }
+
+/** The timeline's dismissals, the only place that keeps what a dismissed review had said. */
+export interface RawDismissals {
+  nodes: ({ previousReviewState?: RawReviewState; review?: { url: string } | null } | null)[];
+}
+
+/** The verdict a review gave before it was dismissed. */
+export type DismissedVerdict = "approved" | "changes_requested";
 
 export type Verdict = "approved" | "changes_requested" | "dismissed" | "commented";
 
@@ -51,6 +63,10 @@ export interface Reviewer {
   status: ReviewerStatus;
   /** The verdict a re-requested reviewer gave before the new request. */
   previous: Verdict | null;
+  /** What the reviewer's dismissed review had been, when their verdict is a dismissal and the timeline still says. */
+  dismissedFrom: DismissedVerdict | null;
+  /** The node id of the reviewer's standing approval or change request, when the viewer may dismiss it. */
+  dismissId: string | null;
   canRerequest: boolean;
   /** Whether the viewer can remind a currently requested reviewer who hasn't approved yet by removing and re-adding the request. */
   canPoke: boolean;
@@ -80,6 +96,9 @@ interface Candidate {
   url: string;
   requested: boolean;
   opinionated: Verdict | null;
+  dismissedFrom: DismissedVerdict | null;
+  /** The node id of the review behind the verdict. */
+  reviewId: string | null;
   commented: boolean;
 }
 
@@ -88,13 +107,15 @@ interface Candidate {
  *
  * A reviewer's verdict is their latest approval, change request or dismissed review; a later
  * plain comment never overrides it. A requested reviewer who already reviewed is re-requested.
- * The pull request's author, unsubmitted reviews and bots that only commented are left out.
+ * The pull request's author, unsubmitted reviews and bots that only commented are left out. A viewer who can
+ * update the pull request may dismiss anyone else's standing approval or change request, a bot's included.
  * @param pullRequest The pull request as returned by the reviewer query.
  * @param viewerLogin The login of the token's owner, who is never offered a re-request of themselves.
  * @returns The reviewers, most actionable status first.
  */
 export function deriveReviewers(pullRequest: RawPullRequest, viewerLogin: string): Reviewer[] {
   const authorLogin = pullRequest.author?.login;
+  const dismissed = dismissedVerdicts(pullRequest.dismissals);
   const candidates = new Map<string, Candidate>();
 
   for (const { requestedReviewer } of pullRequest.reviewRequests.nodes) {
@@ -111,7 +132,11 @@ export function deriveReviewers(pullRequest: RawPullRequest, viewerLogin: string
     const candidate = candidates.get(key) ?? toCandidate(review.author);
     candidates.set(key, candidate);
     if (verdict === "commented") candidate.commented = true;
-    else candidate.opinionated = verdict;
+    else {
+      candidate.opinionated = verdict;
+      candidate.dismissedFrom = verdict === "dismissed" && review.url ? (dismissed.get(review.url) ?? null) : null;
+      candidate.reviewId = review.id ?? null;
+    }
   }
 
   return [...candidates.values()]
@@ -130,6 +155,13 @@ export function deriveReviewers(pullRequest: RawPullRequest, viewerLogin: string
         url: candidate.url,
         status,
         previous: status === "rerequested" ? verdict : null,
+        dismissedFrom: candidate.dismissedFrom,
+        dismissId:
+          pullRequest.viewerCanUpdate &&
+          (candidate.opinionated === "approved" || candidate.opinionated === "changes_requested") &&
+          candidate.name !== viewerLogin
+            ? candidate.reviewId
+            : null,
         canRerequest:
           pullRequest.viewerCanUpdate &&
           candidate.kind === "user" &&
@@ -149,8 +181,24 @@ export function deriveReviewers(pullRequest: RawPullRequest, viewerLogin: string
     });
 }
 
+/**
+ * GitHub turns a dismissed review's state into DISMISSED and keeps what it had been only on the dismissal event.
+ * @param dismissals The pull request's dismissal events, if fetched.
+ * @returns The original verdict of each dismissed approval or change request, by review URL.
+ */
+export function dismissedVerdicts(dismissals?: RawDismissals): Map<string, DismissedVerdict> {
+  const verdicts = new Map<string, DismissedVerdict>();
+  const events = dismissals?.nodes ?? [];
+  for (const event of events) {
+    const url = event?.review?.url;
+    const state = event?.previousReviewState;
+    if (url && (state === "APPROVED" || state === "CHANGES_REQUESTED")) verdicts.set(url, state === "APPROVED" ? "approved" : "changes_requested");
+  }
+  return verdicts;
+}
+
 function toCandidate(reviewer: RawActor | RawTeam): Candidate {
-  const base = { requested: false, opinionated: null, commented: false };
+  const base = { requested: false, opinionated: null, dismissedFrom: null, reviewId: null, commented: false };
   if (reviewer.__typename === "Team") {
     return {
       ...base,

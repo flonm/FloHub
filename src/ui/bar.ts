@@ -2,7 +2,7 @@ import { formatAge } from "../core/age";
 import { BAR_STYLES } from "./bar-styles";
 import type { HighlightStatus } from "./diff-highlights";
 import { button, el, icon, iconButton, type IconName } from "./dom";
-import type { Reviewer, ReviewerStatus, Verdict } from "../core/reviewers";
+import type { DismissedVerdict, Reviewer, ReviewerStatus, Verdict } from "../core/reviewers";
 import type { StackView } from "../core/stack";
 import { describePosition, renderStackSection, renderStrip } from "./stack-view";
 import type { DiscussionItem } from "../core/discussion";
@@ -44,6 +44,8 @@ export interface BarActions {
   refresh: () => void;
   rerequest: (reviewer: Reviewer) => void;
   poke: (reviewer: Reviewer) => void;
+  /** Asks for the reason and dismisses the reviewer's standing approval or change request. */
+  dismiss: (reviewer: Reviewer, verdict: DismissedVerdict) => void;
   openOptions: () => void;
   toggleStack: () => void;
   toggleMerged: () => void;
@@ -71,6 +73,23 @@ const PREVIOUS: Record<Verdict, string> = {
   dismissed: "was dismissed",
   commented: "had commented",
 };
+
+/**
+ * A dismissed review's slash keeps the colour of what it had been, green for an approval and yellow for a change
+ * request, while its word stays grey, so it reads apart from a verdict that still stands.
+ */
+const DISMISSED_FROM: Record<DismissedVerdict, { tone: Tone; name: string }> = {
+  approved: { tone: "success", name: "approval" },
+  changes_requested: { tone: "attention", name: "change request" },
+};
+
+export interface Look {
+  text: string;
+  tone: Tone;
+  icon: IconName;
+  /** What the review was, said to screen readers and in the tooltip, for a dismissal the timeline still knows. */
+  detail: string | null;
+}
 
 const MAX_FACES = 6;
 const POKE_COOLDOWN_MS = 3_600_000;
@@ -259,7 +278,6 @@ export class ReviewBar {
   }
 
   private renderChip(reviewer: Reviewer, busy: boolean, pokedAt: number | undefined, now: number): HTMLElement {
-    const status = STATUS[reviewer.status];
     const chip = el("li", { class: "chip" });
     chip.append(
       avatar(reviewer),
@@ -269,10 +287,22 @@ export class ReviewBar {
         reviewer.name,
       ),
     );
-    const label = el("span", { class: "status", "data-tone": status.tone });
-    label.append(icon(status.icon), status.label);
+    const status = statusLook(reviewer);
+    const label = el("span", { class: "status", "data-tone": status.detail ? "muted" : status.tone });
+    label.append(tinted(status), status.text);
+    if (status.detail) {
+      label.title = `${status.text} ${status.detail}`;
+      label.append(el("span", { class: "visually-hidden" }, ` ${status.detail}`));
+    }
     chip.append(label);
-    if (reviewer.previous) chip.append(el("span", { class: "previous" }, `· ${PREVIOUS[reviewer.previous]}`));
+    const previous = previousLook(reviewer);
+    if (previous?.detail) {
+      const span = el("span", { class: "previous", title: `${capitalize(previous.detail)} ${previous.text}` }, "·");
+      span.append(tinted(previous), el("span", { class: "visually-hidden" }, `${previous.detail} `), previous.text);
+      chip.append(span);
+    } else if (previous) {
+      chip.append(el("span", { class: "previous" }, `· ${previous.text}`));
+    }
     if (reviewer.canRerequest) {
       const rerequest = iconButton(
         "sync",
@@ -302,6 +332,17 @@ export class ReviewBar {
         poke.setAttribute("aria-busy", "true");
       }
       chip.append(poke);
+    }
+    const standing = standingVerdict(reviewer);
+    if (standing) {
+      const dismiss = iconButton(
+        "cross",
+        `Dismiss ${reviewer.name}'s ${DISMISSED_FROM[standing].name}`,
+        () => this.actions.dismiss(reviewer, standing),
+        `dismiss:${reviewer.key}`,
+      );
+      dismiss.classList.add("dismiss");
+      chip.append(dismiss);
     }
     return chip;
   }
@@ -348,7 +389,7 @@ export class ReviewBar {
 
     const faces = el("span", { class: "faces", "aria-hidden": "true" });
     for (const reviewer of state.reviewers.slice(0, MAX_FACES)) {
-      const status = STATUS[reviewer.status];
+      const status = statusLook(reviewer);
       const face = el("span", { class: "face" });
       const badge = el("span", { class: "badge", "data-tone": status.tone });
       badge.append(icon(status.icon));
@@ -359,7 +400,7 @@ export class ReviewBar {
     if (hidden > 0) faces.append(el("span", { class: "more" }, `+${hidden}`));
 
     const description = state.reviewers
-      .map((reviewer) => `${reviewer.name}: ${STATUS[reviewer.status].label.toLowerCase()}`)
+      .map((reviewer) => `${reviewer.name}: ${spokenStatus(reviewer)}`)
       .join(", ");
     return [
       ...stack,
@@ -368,6 +409,60 @@ export class ReviewBar {
       el("span", { class: "visually-hidden" }, `. ${description}`),
     ];
   }
+}
+
+/**
+ * A dismissed review takes the slash and the tone of what it had been: green for an approval, yellow for a change
+ * request, grey when the timeline no longer says.
+ * @param reviewer The reviewer.
+ * @returns How the chip and the pill's badge show the reviewer's status.
+ */
+export function statusLook(reviewer: Reviewer): Look {
+  const status = STATUS[reviewer.status];
+  const from = reviewer.status === "dismissed" && reviewer.dismissedFrom ? DISMISSED_FROM[reviewer.dismissedFrom] : null;
+  return { text: status.label, tone: from?.tone ?? status.tone, icon: status.icon, detail: from?.name ?? null };
+}
+
+/**
+ * @param reviewer The reviewer.
+ * @returns The verdict a re-requested reviewer gave before, tinted like a dismissal when it was one, or null.
+ */
+export function previousLook(reviewer: Reviewer): Look | null {
+  if (!reviewer.previous) return null;
+  const from = reviewer.previous === "dismissed" && reviewer.dismissedFrom ? DISMISSED_FROM[reviewer.dismissedFrom] : null;
+  return { text: PREVIOUS[reviewer.previous], tone: from?.tone ?? "muted", icon: "slash", detail: from?.name ?? null };
+}
+
+/**
+ * @param reviewer The reviewer.
+ * @returns The status as the pill's summary says it to screen readers.
+ */
+export function spokenStatus(reviewer: Reviewer): string {
+  const status = statusLook(reviewer);
+  const previous = previousLook(reviewer);
+  const said = status.detail ? `${status.text} ${status.detail}` : status.text;
+  const before = previous?.detail ? `${previous.detail} ${previous.text}` : previous?.text;
+  return `${said.toLowerCase()}${before ? `, ${before}` : ""}`;
+}
+
+/**
+ * @param reviewer The reviewer.
+ * @returns The approval or change request the viewer may dismiss, or null.
+ */
+export function standingVerdict(reviewer: Reviewer): DismissedVerdict | null {
+  if (!reviewer.dismissId) return null;
+  const verdict = reviewer.status === "rerequested" ? reviewer.previous : reviewer.status;
+  return verdict === "approved" || verdict === "changes_requested" ? verdict : null;
+}
+
+function tinted(look: Look): SVGSVGElement {
+  const glyph = icon(look.icon);
+  if (look.detail) glyph.dataset.tone = look.tone;
+  return glyph;
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function renderPillStack(view: StackView): Node[] {

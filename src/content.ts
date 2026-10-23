@@ -7,7 +7,7 @@ import { type Reply, send } from "./api/messages";
 import { isWholeFilesTab, type PullRef, parsePullRef, pullKey, pullTab } from "./core/pull-ref";
 import { ReviewDialog } from "./ui/review-dialog";
 import { deriveDiscussion, lastReviewBy } from "./core/discussion";
-import { deriveReviewers, type Reviewer } from "./core/reviewers";
+import { deriveReviewers, type DismissedVerdict, type Reviewer } from "./core/reviewers";
 import { type CopyTarget, createShortcutMatcher, type ReviewEvent } from "./core/shortcuts";
 import type { Overview } from "./api/github";
 import { readCachedOverview } from "./api/overview-cache";
@@ -89,6 +89,7 @@ const actions = {
   refresh: () => void load(true),
   rerequest: (reviewer: Reviewer) => void rerequest(reviewer),
   poke: (reviewer: Reviewer) => void poke(reviewer),
+  dismiss: (reviewer: Reviewer, verdict: DismissedVerdict) => openDismissal(reviewer, verdict),
   openOptions: () => void send({ type: "open-options" }),
   toggleStack: () => {
     stackCollapsed = !stackCollapsed;
@@ -447,6 +448,25 @@ async function rerequest(reviewer: Reviewer): Promise<void> {
   }
   render();
   await load(true);
+}
+
+function openDismissal(reviewer: Reviewer, verdict: DismissedVerdict): void {
+  const ref = current;
+  const reviewId = reviewer.dismissId;
+  if (!ref || !reviewId) return;
+  const what = verdict === "approved" ? "approval" : "change request";
+  dialog.open({
+    event: "DISMISS",
+    reviewer: reviewer.name,
+    verdict,
+    submit: async (reason) => {
+      const reply = await send({ type: "dismiss-review", reviewId, message: reason });
+      if (!reply.ok) return `Could not dismiss the review: ${reply.message}`;
+      toast.show(`Dismissed ${reviewer.name}'s ${what}.`, "success");
+      if (current && pullKey(current) === pullKey(ref)) void load(true);
+      return null;
+    },
+  });
 }
 
 function onKeydown(event: KeyboardEvent): void {

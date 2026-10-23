@@ -10,6 +10,7 @@ import type { VersionHistory } from "../core/versions";
 export type Message =
   | { type: "overview"; ref: PullRef }
   | { type: "rerequest"; ref: PullRef; login: string }
+  | { type: "dismiss-review"; reviewId: string; message: string }
   | { type: "poke"; ref: PullRef; reviewer: { kind: "user" | "team"; name: string } }
   | { type: "viewed-files"; ref: PullRef }
   | { type: "set-viewed"; pullRequestId: string; path: string; viewed: boolean }
@@ -29,6 +30,7 @@ export type Reply<T> = { ok: true; value: T } | { ok: false; code: FailureCode; 
 export interface ReplyByType {
   overview: Overview;
   rerequest: null;
+  "dismiss-review": null;
   poke: null;
   "viewed-files": ViewedFiles;
   "set-viewed": null;
