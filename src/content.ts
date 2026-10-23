@@ -1,4 +1,4 @@
-import { type BarState, ReviewBar } from "./ui/bar";
+import { type BarState, type DiffMode, ReviewBar } from "./ui/bar";
 import { findInlineAnchor } from "./ui/anchor";
 import { DiffHighlights, type HighlightStatus } from "./ui/diff-highlights";
 import { Favicon, faviconUrl } from "./ui/favicon";
@@ -105,7 +105,7 @@ const actions = {
     void chrome.storage.local.set({ floatingMinimized });
     floating.setMinimized(floatingMinimized);
   },
-  compareVersions: () => compareVersions(),
+  chooseDiff: (mode: DiffMode) => chooseDiff(mode),
   toggleDiscussion: () => {
     discussionExpanded = !discussionExpanded;
     update({ discussionExpanded });
@@ -113,10 +113,6 @@ const actions = {
   toggleDiscussionBots: () => {
     showBots = !showBots;
     update({ showBots });
-  },
-  toggleHighlight: () => {
-    if (highlight) highlights.setHidden(!highlight.hidden);
-    schedule();
   },
 };
 const inline = new ReviewBar("inline", actions);
@@ -223,7 +219,10 @@ function syncVersions(ref: PullRef): void {
     versionsParam = param;
   }
   if (versionsWanted !== key || !isWholeFilesTab(location.pathname)) {
-    versionsView.close();
+    if (versionsView.isOpen) {
+      versionsView.close();
+      render();
+    }
     return;
   }
   if (param === null) writeVersionsParam(versionsParam);
@@ -273,8 +272,9 @@ function isInlineInView(): boolean {
 }
 
 function render(): void {
-  inline.render(state);
-  floating.render(state);
+  const shown = state.kind === "ready" ? { ...state, versionsOpen: versionsView.isOpen } : state;
+  inline.render(shown);
+  floating.render(shown);
   const tone = state.kind === "ready" ? (state.stack.entries.find((entry) => entry.current)?.tone ?? null) : null;
   favicon.set(faviconUrl(tone));
 }
@@ -360,6 +360,7 @@ function readyState(overview: Overview, ref: PullRef, exact: boolean): Extract<B
     discussionExpanded,
     showBots,
     viewer: overview.viewer.login,
+    versionsOpen: versionsView.isOpen,
   };
 }
 
@@ -583,6 +584,22 @@ async function submitReview(ref: PullRef, event: ReviewEvent, body: string): Pro
   return null;
 }
 
+/**
+ * Switches what Files changed shows. The highlights belong to GitHub's diff, so choosing them, or GitHub's diff
+ * without them, closes the versions view.
+ * @param mode What to show.
+ */
+function chooseDiff(mode: DiffMode): void {
+  if (mode === "versions") {
+    if (!versionsView.isOpen) compareVersions();
+    return;
+  }
+  if (versionsView.isOpen) closeVersions();
+  if (highlight) highlights.setHidden(mode === "github");
+  schedule();
+  render();
+}
+
 /** Opens the versions view on the Files changed tab, or closes it when it's open. */
 function compareVersions(): void {
   const ref = current;
@@ -766,6 +783,7 @@ function closeVersions(): void {
   versionsWanted = null;
   versionsView.close();
   writeVersionsParam(null);
+  render();
 }
 
 function openVersions(ref: PullRef): void {
@@ -815,6 +833,7 @@ function openVersions(ref: PullRef): void {
     },
     saveSplitView: (split) => void chrome.storage.local.set({ [SPLIT_KEY]: split }).catch(() => undefined),
   });
+  render();
 }
 
 async function readSavedRanges(): Promise<Record<string, SavedRange>> {

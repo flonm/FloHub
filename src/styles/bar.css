@@ -42,26 +42,6 @@
   width: 12px;
   height: 12px;
 }
-.chips {
-  display: contents;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 2px 4px 2px 3px;
-  border: 1px solid var(--flo-border);
-  border-radius: var(--flo-radius-pill);
-  background: var(--flo-bg);
-}
-.chip:not(:has(.icon-button)) {
-  padding-right: 10px;
-}
 .avatar {
   width: 20px;
   height: 20px;
@@ -85,17 +65,6 @@
 .name:hover {
   color: var(--flo-accent);
   text-decoration: underline;
-}
-.status {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-.previous {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  color: var(--flo-muted);
 }
 
 [data-tone="success"] {
@@ -155,21 +124,8 @@
 .message {
   color: var(--flo-muted);
 }
-.dropped summary {
-  color: var(--flo-muted);
-  cursor: pointer;
-}
-.dropped[open] {
-  flex-basis: 100%;
-}
-.dropped ul {
-  margin: 4px 0 0;
-  padding-left: 20px;
-  color: var(--flo-fg);
-  font: 12px/1.6 var(--flo-font-mono);
-}
 .notice {
-  flex-basis: 100%;
+  margin: 0;
   color: var(--flo-danger);
 }
 .notice:empty {
@@ -252,8 +208,24 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
+  border: 1px solid var(--flo-border);
   background: var(--flo-bg);
-  box-shadow: 0 0 0 1px var(--flo-border);
+}
+.badge[data-ring="success"] {
+  border-color: var(--flo-success);
+}
+.badge[data-ring="attention"] {
+  border-color: var(--flo-attention);
+}
+.badge[data-waiting] {
+  border-style: dashed;
+  border-color: var(--flo-muted);
+}
+.badge[data-waiting][data-ring="success"] {
+  border-color: var(--flo-success);
+}
+.badge[data-waiting][data-ring="attention"] {
+  border-color: var(--flo-attention);
 }
 .badge svg {
   width: 10px;
@@ -281,7 +253,7 @@
   position: absolute;
   left: 0;
   bottom: calc(100% + 8px);
-  width: min(760px, calc(100vw - 32px));
+  width: min(1040px, calc(100vw - 32px));
   max-height: calc(100vh - 96px);
   overflow: auto;
   padding: 12px;
@@ -300,10 +272,350 @@
   }
 }
 
+/*
+ * The overview: the stack on the left with the toolbar and the discussion under it, and the reviewers beside them. A narrow bar, the floating panel on a small window for one, stacks them in one column.
+ */
 .overview {
+  container-type: inline-size;
+}
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 248px);
+  grid-template-rows: auto auto 1fr;
+  grid-template-areas:
+    "stack reviewers"
+    "tools reviewers"
+    "discussion reviewers";
+  gap: 8px 28px;
+  align-items: start;
+}
+.layout > :only-child {
+  grid-column: 1 / -1;
+}
+.area-stack {
+  grid-area: stack;
+}
+.area-reviewers {
+  grid-area: reviewers;
+}
+.area-tools {
+  grid-area: tools;
+}
+.area-discussion {
+  grid-area: discussion;
+}
+@container (max-width: 680px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-template-areas: "stack" "reviewers" "tools" "discussion";
+  }
+  .reviewer-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
+}
+
+/* Reviewers: one row each, ringed in what counts now and dashed while they're asked to review. */
+.reviewers {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
+  min-width: 0;
+}
+.reviewers-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+.reviewers-header .message {
+  margin-left: auto;
+}
+.reviewer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.reviewer {
+  --ring: var(--flo-border);
+  --wash: transparent;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 2px 6px 2px 3px;
+  border: 1px solid var(--ring);
+  border-radius: var(--flo-radius-pill);
+  background: linear-gradient(var(--wash), var(--wash)), var(--row-bg);
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.reviewer[data-ring="success"] {
+  --ring: var(--flo-success-border);
+  --wash: color-mix(in srgb, var(--flo-success-bg) 55%, transparent);
+}
+.reviewer[data-ring="attention"] {
+  --ring: var(--flo-attention-border);
+  --wash: color-mix(in srgb, var(--flo-attention-bg) 55%, transparent);
+}
+.reviewer[data-ring="success"]:not([data-waiting]) {
+  --ring: color-mix(in srgb, var(--flo-success) 55%, transparent);
+}
+.reviewer[data-ring="attention"]:not([data-waiting]) {
+  --ring: color-mix(in srgb, var(--flo-attention) 55%, transparent);
+}
+.reviewer[data-waiting] {
+  border-style: dashed;
+}
+.reviewer[data-waiting][data-ring="muted"] {
+  --ring: var(--flo-muted);
+}
+.reviewer .name {
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reviewer .kind {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--flo-muted);
+}
+.reviewer-state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+.reviewer-state .glyph {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.75;
+}
+.reviewer-state .poked {
+  width: 12px;
+  height: 12px;
+  color: var(--flo-muted);
+}
+/*
+ * The row's buttons lie over the end of the name, left of the glyph, until the row is hovered or focused. They stay
+ * in the tab order and the accessibility tree, so focusing one reveals them all.
+ */
+.reviewer .actions {
+  position: absolute;
+  top: 1px;
+  right: 26px;
+  bottom: 1px;
+  display: inline-flex;
+  align-items: center;
+  padding-left: 14px;
+  background:
+    linear-gradient(to right, transparent, var(--wash) 14px),
+    linear-gradient(to right, transparent, var(--row-bg) 14px);
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+.reviewer {
+  --row-bg: var(--flo-bg);
+}
+.reviewer:hover {
+  --row-bg: var(--flo-bg-muted);
+}
+.reviewer:hover .actions,
+.reviewer:focus-within .actions,
+.reviewer.busy .actions {
+  opacity: 1;
+}
+@media (hover: none) {
+  .reviewer .actions {
+    position: static;
+    padding: 0;
+    background: none;
+    opacity: 1;
+  }
+}
+.reviewer .icon-button {
+  width: 22px;
+  height: 22px;
+}
+.reviewer .icon-button svg {
+  width: 13px;
+  height: 13px;
+}
+.reviewer .dismiss:hover:not(:disabled) {
+  background: var(--flo-danger-bg);
+  color: var(--flo-danger);
+}
+.reviewers > .faces {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0 0 0 2px;
+  list-style: none;
+}
+.reviewers > .faces .face {
+  margin: 0;
+}
+
+/* The toolbar: what Files changed shows, the force-pushes, and the discussion's switches. */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.tool-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tool-group.end {
+  margin-left: auto;
+}
+.tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--flo-border);
+  border-radius: var(--flo-radius-sm);
+  background: var(--flo-bg);
+  color: var(--flo-fg);
+  font: inherit;
+  white-space: nowrap;
+}
+button.tool,
+summary.tool {
+  cursor: pointer;
+}
+button.tool:hover,
+summary.tool:hover {
+  background: var(--flo-bg-muted);
+}
+.tool.static {
+  border-color: transparent;
+  background: transparent;
+  color: var(--flo-muted);
+  padding: 0 4px;
+}
+.tool.warning {
+  color: var(--flo-attention);
+}
+.tool[aria-pressed="true"] {
+  border-color: var(--flo-accent-border);
+  background: var(--flo-accent-bg);
+  color: var(--flo-accent);
+}
+.tool svg {
+  flex: none;
+}
+.tool .chevron {
+  transform: rotate(90deg);
+}
+.tool[aria-expanded="true"] .chevron {
+  transform: rotate(180deg);
+}
+.tool-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--flo-border);
+  border-radius: var(--flo-radius-md);
+  background: var(--flo-bg-muted);
+}
+.segment-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--flo-radius-sm);
+  background: transparent;
+  color: var(--flo-muted);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.segment-option:hover {
+  color: var(--flo-fg);
+}
+.segment-option[aria-pressed="true"] {
+  border-color: var(--flo-border);
+  background: var(--flo-bg);
+  color: var(--flo-fg);
+  font-weight: 600;
+  box-shadow: 0 1px 0 rgba(31, 35, 40, 0.04);
+  cursor: default;
+}
+.segment-option[aria-pressed="true"] svg {
+  color: var(--flo-accent);
+}
+.segment-option .tool-count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: var(--flo-radius-pill);
+  background: var(--flo-neutral-bg);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+.dropped {
+  position: relative;
+}
+.dropped > summary {
+  list-style: none;
+  color: var(--flo-muted);
+}
+.dropped > summary::-webkit-details-marker {
+  display: none;
+}
+.dropped ul {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 260px;
+  margin: 0;
+  padding: 6px 10px 6px 24px;
+  border: 1px solid var(--flo-border);
+  border-radius: var(--flo-radius-md);
+  background: var(--flo-bg);
+  box-shadow: var(--flo-shadow);
+  color: var(--flo-fg);
+  font: 12px/1.6 var(--flo-font-mono);
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 100;
+  top: 0;
+  left: 0;
+  max-width: 280px;
+  padding: 4px 8px;
+  border-radius: var(--flo-radius-sm);
+  background: var(--tooltip-bgColor, #25292e);
+  color: var(--tooltip-fgColor, #ffffff);
+  font: 12px/1.4 var(--flo-font);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 80ms ease;
+}
+.tooltip.shown {
+  opacity: 1;
+  visibility: visible;
 }
 .stack-header {
   display: flex;
@@ -339,7 +651,6 @@
   display: grid;
   grid-template-columns: 16px max-content minmax(0, 1fr) max-content max-content;
   column-gap: 10px;
-  max-width: 880px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -497,20 +808,19 @@
   background: var(--flo-border);
 }
 
-.discussion {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
 .discussion-new {
-  color: var(--flo-accent);
+  padding: 0 6px;
+  border-radius: var(--flo-radius-pill);
+  background: var(--flo-accent);
+  color: var(--fgColor-onEmphasis, #ffffff);
+  font-size: 11px;
   font-weight: 600;
+  line-height: 16px;
 }
 .discussion-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-width: 880px;
   margin: 0;
   padding: 0;
   list-style: none;

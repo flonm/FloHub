@@ -1,12 +1,14 @@
 import { formatAge } from "../core/age";
 import { BAR_STYLES } from "./bar-styles";
 import type { HighlightStatus } from "./diff-highlights";
-import { button, el, icon, iconButton, type IconName } from "./dom";
-import type { DismissedVerdict, Reviewer, ReviewerStatus, Verdict } from "../core/reviewers";
+import { button, el, icon, iconButton } from "./dom";
+import type { DismissedVerdict, Reviewer, ReviewerStatus } from "../core/reviewers";
 import type { StackView } from "../core/stack";
 import { describePosition, renderStackSection, renderStrip } from "./stack-view";
 import type { DiscussionItem } from "../core/discussion";
-import { renderDiscussionSection } from "./discussion-view";
+import { renderDiscussionControls, renderDiscussionList } from "./discussion-view";
+import { dismissedName, POKE_COOLDOWN_MS, reviewerLook, standingVerdict } from "./reviewer-look";
+import { Tooltip } from "./tooltip";
 
 export type BarState =
   | { kind: "loading" }
@@ -38,7 +40,12 @@ export type BarState =
       discussionExpanded: boolean;
       showBots: boolean;
       viewer: string;
+      /** Whether the versions view stands in for GitHub's diff in Files changed. */
+      versionsOpen: boolean;
     };
+
+/** What Files changed shows: GitHub's diff, the same with what changed since the viewer's review highlighted, or the versions view. */
+export type DiffMode = "github" | "since" | "versions";
 
 export interface BarActions {
   refresh: () => void;
@@ -50,49 +57,13 @@ export interface BarActions {
   toggleStack: () => void;
   toggleMerged: () => void;
   toggleMinimized: () => void;
-  compareVersions: () => void;
-  toggleHighlight: () => void;
+  /** Switches what Files changed shows, opening it for the versions view. */
+  chooseDiff: (mode: DiffMode) => void;
   toggleDiscussion: () => void;
   toggleDiscussionBots: () => void;
 }
 
-type Tone = "success" | "danger" | "attention" | "muted";
-
-const STATUS: Record<ReviewerStatus, { label: string; tone: Tone; icon: IconName }> = {
-  approved: { label: "Approved", tone: "success", icon: "check" },
-  changes_requested: { label: "Changes requested", tone: "attention", icon: "cross" },
-  dismissed: { label: "Dismissed", tone: "muted", icon: "slash" },
-  commented: { label: "Commented", tone: "muted", icon: "comment" },
-  pending: { label: "Review pending", tone: "attention", icon: "dot" },
-  rerequested: { label: "Re-requested", tone: "attention", icon: "sync" },
-};
-
-const PREVIOUS: Record<Verdict, string> = {
-  approved: "was approved",
-  changes_requested: "had requested changes",
-  dismissed: "was dismissed",
-  commented: "had commented",
-};
-
-/**
- * A dismissed review's slash keeps the colour of what it had been, green for an approval and yellow for a change
- * request, while its word stays grey, so it reads apart from a verdict that still stands.
- */
-const DISMISSED_FROM: Record<DismissedVerdict, { tone: Tone; name: string }> = {
-  approved: { tone: "success", name: "approval" },
-  changes_requested: { tone: "attention", name: "change request" },
-};
-
-export interface Look {
-  text: string;
-  tone: Tone;
-  icon: IconName;
-  /** What the review was, said to screen readers and in the tooltip, for a dismissal the timeline still knows. */
-  detail: string | null;
-}
-
 const MAX_FACES = 6;
-const POKE_COOLDOWN_MS = 3_600_000;
 
 /** A reviewer summary rendered into its own shadow root, either inline in the header or floating. */
 export class ReviewBar {
@@ -105,6 +76,7 @@ export class ReviewBar {
   private droppedOpen = false;
   private entering = false;
   private minimized = false;
+  private readonly tooltip = new Tooltip();
 
   constructor(
     private readonly mode: "inline" | "floating",
@@ -118,7 +90,8 @@ export class ReviewBar {
     this.root = document.createElement("div");
     this.root.setAttribute("role", "region");
     this.root.setAttribute("aria-label", "Reviewers");
-    this.shadow.append(style, this.root);
+    this.shadow.append(style, this.root, this.tooltip.element);
+    this.tooltip.watch(this.shadow);
     if (mode !== "floating") return;
     this.shadow.addEventListener("keydown", (event) => {
       if ((event as KeyboardEvent).key === "Escape" && this.expanded) this.toggle(false);
@@ -132,6 +105,7 @@ export class ReviewBar {
   render(state: BarState): void {
     this.state = state;
     const focusKey = (this.shadow.activeElement as HTMLElement | null)?.dataset.focusKey;
+    this.tooltip.hide();
     this.root.replaceChildren(this.mode === "inline" ? this.renderFull() : this.renderFloating());
     this.entering = false;
     if (focusKey) this.shadow.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus();
@@ -165,79 +139,126 @@ export class ReviewBar {
 
   private renderFull(): HTMLElement {
     const overview = el("div", { class: "overview" });
+    const layout = el("div", { class: "layout" });
+    overview.append(layout);
     const { state } = this;
+    const collapsed = state.kind === "ready" && this.mode === "inline" && state.stackCollapsed;
     if (state.kind === "ready") {
-      overview.append(
-        renderStackSection(state.stack, {
-          collapsed: this.mode === "inline" && state.stackCollapsed,
-          showMerged: state.showMerged,
-          now: state.now,
-          toggleCollapsed: () => this.actions.toggleStack(),
-          toggleMerged: () => this.actions.toggleMerged(),
-        }),
-      );
-    }
-    overview.append(this.renderReviewers());
-    if (state.kind === "ready" && (state.forcePushes.count > 0 || state.highlight)) overview.append(this.renderVersions(state));
-    if (state.kind === "ready" && state.discussion) {
-      const discussion = renderDiscussionSection({
-        items: state.discussion,
-        seenAt: state.discussionSeenAt,
-        viewer: state.viewer,
-        expanded: state.discussionExpanded,
-        showBots: state.showBots,
+      const stack = renderStackSection(state.stack, {
+        collapsed,
+        showMerged: state.showMerged,
         now: state.now,
-        toggleExpanded: () => this.actions.toggleDiscussion(),
-        toggleBots: () => this.actions.toggleDiscussionBots(),
+        toggleCollapsed: () => this.actions.toggleStack(),
+        toggleMerged: () => this.actions.toggleMerged(),
       });
-      if (discussion) overview.append(discussion);
+      stack.classList.add("area-stack");
+      layout.append(stack);
+    }
+    layout.append(this.renderReviewers(collapsed));
+    if (state.kind !== "ready") return overview;
+
+    const discussion = state.discussion
+      ? {
+          items: state.discussion,
+          seenAt: state.discussionSeenAt,
+          viewer: state.viewer,
+          expanded: state.discussionExpanded,
+          showBots: state.showBots,
+          now: state.now,
+          toggleExpanded: () => this.actions.toggleDiscussion(),
+          toggleBots: () => this.actions.toggleDiscussionBots(),
+        }
+      : null;
+    const toolbar = el("div", { class: "toolbar area-tools", role: "toolbar", "aria-label": "Pull request" });
+    if (state.forcePushes.count > 0 || state.highlight) toolbar.append(...this.renderDiff(state));
+    const talk = discussion ? renderDiscussionControls(discussion) : [];
+    if (talk.length > 0) {
+      const group = el("div", { class: "tool-group end" });
+      group.append(...talk);
+      toolbar.append(group);
+    }
+    if (toolbar.childElementCount > 0) layout.append(toolbar);
+    const list = discussion ? renderDiscussionList(discussion) : null;
+    if (list) {
+      list.classList.add("area-discussion");
+      layout.append(list);
     }
     return overview;
   }
 
-  private renderVersions(state: Extract<BarState, { kind: "ready" }>): HTMLElement {
-    const { count, lastAt } = state.forcePushes;
-    const times = count === 1 ? "once" : `${count} times`;
-    const last = lastAt && count > 1 ? `, last ${formatAge(lastAt, state.now).spoken}` : (lastAt ? ` ${formatAge(lastAt, state.now).spoken}` : "");
-    const bar = el("div", { class: "bar" });
-    bar.append(el("span", { class: "label" }, "Versions"));
-    if (count > 0) bar.append(el("span", { class: "message" }, `Force-pushed ${times}${last}`));
-    bar.append(button("text-button", "Compare versions", () => this.actions.compareVersions(), "compare-versions"));
+  /**
+   * The switch for what Files changed shows, the force-pushes, and the files the highlighting leaves out.
+   * @param state The bar's state.
+   * @returns The toolbar's diff controls.
+   */
+  private renderDiff(state: Extract<BarState, { kind: "ready" }>): HTMLElement[] {
     const { highlight } = state;
+    const mode = diffMode(state);
+    const group = el("div", { class: "segmented", role: "group", "aria-label": "What Files changed shows" });
+    const segment = (value: DiffMode, label: string, tip: string, glyph: Parameters<typeof icon>[0], count?: string) => {
+      const option = el("button", {
+        type: "button",
+        class: "segment-option",
+        "aria-pressed": String(mode === value),
+        "data-tip": tip,
+        "data-focus-key": `diff:${value}`,
+      });
+      option.append(icon(glyph), el("span", {}, label));
+      if (count !== undefined) option.append(el("span", { class: "tool-count" }, count));
+      option.addEventListener("click", () => {
+        if (mode !== value) this.actions.chooseDiff(value);
+      });
+      group.append(option);
+    };
+    segment("github", "GitHub's diff", "GitHub's own diff of the pull request, without FloHub's highlights", "file");
     if (highlight) {
+      const since = `v${highlight.since.number}`;
       const files = highlight.changedFiles === 1 ? "1 file" : `${highlight.changedFiles} files`;
-      const text = highlight.hidden
-        ? `Highlights of what changed since your review (v${highlight.since.number}) are hidden`
-        : (highlight.changedFiles === 0 && highlight.droppedFiles.length === 0
-          ? `Nothing changed since your review (v${highlight.since.number})`
-          : `${files} changed since your review (v${highlight.since.number}), highlighted in Files changed`);
-      bar.append(el("span", { class: "message" }, `· ${text}`));
-      if (highlight.truncated && !highlight.hidden) {
-        bar.append(el("span", { class: "message" }, "· GitHub lists at most 300 files, so files past that weren't compared"));
-      }
-      bar.append(
-        button("text-button", highlight.hidden ? "Show" : "Hide", () => this.actions.toggleHighlight(), "toggle-highlight"),
-      );
-      if (highlight.droppedFiles.length > 0 && !highlight.hidden) {
-        const dropped = highlight.droppedFiles.length;
-        const details = el("details", { class: "dropped" });
-        details.open = this.droppedOpen;
-        details.addEventListener("toggle", () => (this.droppedOpen = details.open));
-        const list = el("ul");
-        for (const path of highlight.droppedFiles) list.append(el("li", {}, path));
-        details.append(
-          el("summary", { "data-focus-key": "dropped-files" }, `${dropped} ${dropped === 1 ? "file is" : "files are"} no longer changed`),
-          list,
-        );
-        bar.append(details);
-      }
+      const tip =
+        highlight.changedFiles === 0 && highlight.droppedFiles.length === 0
+          ? `Nothing changed since your review (${since})`
+          : `${files} changed since your review (${since}), highlighted in GitHub's diff`;
+      segment("since", `Since ${since}`, tip, "highlight", String(highlight.changedFiles));
     }
-    return bar;
+    segment("versions", "Versions", "Compare any two versions of the pull request, in place of GitHub's diff", "compare");
+    const controls: HTMLElement[] = [group];
+
+    const { count, lastAt } = state.forcePushes;
+    if (count > 0) {
+      const times = count === 1 ? "once" : `${count} times`;
+      const when = lastAt ? formatAge(lastAt, state.now) : null;
+      const tip = `Force-pushed ${times}${when ? `${count > 1 ? ", last" : ""} ${when.spoken}` : ""}`;
+      const pushes = el("span", { class: "tool static", "data-tip": tip, "aria-label": tip, role: "img" });
+      pushes.append(icon("push"), el("span", { "aria-hidden": "true" }, `Force-pushed ${count === 1 ? "once" : `${count}×`}`));
+      controls.push(pushes);
+    }
+    if (highlight && !highlight.hidden && highlight.truncated) {
+      const tip = "GitHub lists at most 300 files, so files past that weren't compared";
+      const warning = el("span", { class: "tool static warning", "data-tip": tip, "aria-label": tip, role: "img" });
+      warning.append(icon("warning"), el("span", { "aria-hidden": "true" }, "300+ files"));
+      controls.push(warning);
+    }
+    if (highlight && !highlight.hidden && highlight.droppedFiles.length > 0) {
+      const dropped = highlight.droppedFiles.length;
+      const details = el("details", { class: "dropped" });
+      details.open = this.droppedOpen;
+      details.addEventListener("toggle", () => (this.droppedOpen = details.open));
+      const list = el("ul");
+      for (const path of highlight.droppedFiles) list.append(el("li", {}, path));
+      const summary = el("summary", { class: "tool", "data-focus-key": "dropped-files" });
+      summary.append(icon("file"), `${dropped} no longer changed`);
+      summary.setAttribute("aria-label", `${dropped} ${dropped === 1 ? "file is" : "files are"} no longer changed`);
+      details.append(summary, list);
+      controls.push(details);
+    }
+    return controls;
   }
 
-  private renderReviewers(): HTMLElement {
-    const bar = el("div", { class: "bar" });
-    bar.append(el("span", { class: "label" }, "Reviewers"));
+  private renderReviewers(compact: boolean): HTMLElement {
+    const section = el("section", { class: "reviewers area-reviewers", "aria-label": "Reviewers" });
+    const header = el("div", { class: "reviewers-header" });
+    header.append(el("span", { class: "label" }, "Reviewers"));
+    section.append(header);
     const { state } = this;
     if (state.kind === "ready") {
       const refresh = iconButton("refresh", "Refresh reviewers", () => this.actions.refresh(), "refresh");
@@ -246,105 +267,101 @@ export class ReviewBar {
         refresh.classList.add("spinning");
         refresh.setAttribute("aria-busy", "true");
       }
-      bar.append(refresh);
+      header.append(tipped(refresh));
     }
 
     if (state.kind === "loading" || (state.kind === "ready" && state.reviewers === null)) {
-      bar.append(el("span", { class: "message", role: "status" }, "Loading reviewers…"));
-      return bar;
+      section.append(el("p", { class: "message", role: "status" }, "Loading reviewers…"));
+      return section;
     }
     if (state.kind === "setup" || state.kind === "error") {
       const action =
         state.kind === "setup"
           ? button("text-button", "Set up token", () => this.actions.openOptions(), "setup")
           : button("text-button", "Retry", () => this.actions.refresh(), "retry");
-      bar.append(el("span", { class: "message", role: "status" }, state.message), action);
-      return bar;
+      const message = el("p", { class: "message", role: "status" }, state.message);
+      message.append(" ", action);
+      section.append(message);
+      return section;
     }
 
     const reviewers = state.reviewers ?? [];
     if (reviewers.length === 0) {
-      bar.append(el("span", { class: "message" }, "No reviews or review requests yet."));
-    } else {
-      const list = el("ul", { class: "chips" });
+      section.append(el("p", { class: "message" }, "No reviews or review requests yet."));
+    } else if (compact) {
+      const faces = el("ul", { class: "faces" });
       for (const reviewer of reviewers) {
-        list.append(this.renderChip(reviewer, state.busy.has(reviewer.key), state.pokedAt.get(reviewer.key), state.now));
+        const look = reviewerLook(reviewer, state.now, state.pokedAt.get(reviewer.key));
+        const item = el("li", { "data-tip": `${reviewer.name}: ${look.detail}` });
+        item.append(face(reviewer, look), el("span", { class: "visually-hidden" }, `${reviewer.name}: ${look.label}. ${look.detail}`));
+        faces.append(item);
       }
-      bar.append(list);
+      section.append(faces);
+    } else {
+      const list = el("ul", { class: "reviewer-list" });
+      for (const reviewer of reviewers) {
+        list.append(this.renderReviewer(reviewer, state.busy.has(reviewer.key), state.pokedAt.get(reviewer.key), state.now));
+      }
+      section.append(list);
     }
 
-    bar.append(el("p", { class: "notice", role: "alert" }, state.notice ?? ""));
-    return bar;
+    section.append(el("p", { class: "notice", role: "alert" }, state.notice ?? ""));
+    return section;
   }
 
-  private renderChip(reviewer: Reviewer, busy: boolean, pokedAt: number | undefined, now: number): HTMLElement {
-    const chip = el("li", { class: "chip" });
-    chip.append(
+  private renderReviewer(reviewer: Reviewer, busy: boolean, pokedAt: number | undefined, now: number): HTMLElement {
+    const look = reviewerLook(reviewer, now, pokedAt);
+    const row = el("li", {
+      class: busy ? "reviewer busy" : "reviewer",
+      "data-ring": look.ring,
+      "data-tip": `${reviewer.name}: ${look.detail}`,
+    });
+    if (look.waiting) row.dataset.waiting = "";
+    row.append(
       avatar(reviewer),
       el(
         "a",
         { class: "name", href: reviewer.url, target: "_top", "data-focus-key": `reviewer:${reviewer.key}` },
         reviewer.name,
       ),
+      el("span", { class: "visually-hidden" }, `: ${look.label}. ${look.detail}`),
     );
-    const status = statusLook(reviewer);
-    const label = el("span", { class: "status", "data-tone": status.detail ? "muted" : status.tone });
-    label.append(tinted(status), status.text);
-    if (status.detail) {
-      label.title = `${status.text} ${status.detail}`;
-      label.append(el("span", { class: "visually-hidden" }, ` ${status.detail}`));
-    }
-    chip.append(label);
-    const previous = previousLook(reviewer);
-    if (previous?.detail) {
-      const span = el("span", { class: "previous", title: `${capitalize(previous.detail)} ${previous.text}` }, "·");
-      span.append(tinted(previous), el("span", { class: "visually-hidden" }, `${previous.detail} `), previous.text);
-      chip.append(span);
-    } else if (previous) {
-      chip.append(el("span", { class: "previous" }, `· ${previous.text}`));
-    }
+    if (reviewer.kind === "bot") row.append(icon("bot", "kind"));
+
+    const actions = el("span", { class: "actions" });
     if (reviewer.canRerequest) {
-      const rerequest = iconButton(
-        "sync",
-        `Re-request review from ${reviewer.name}`,
-        () => this.actions.rerequest(reviewer),
-        `rerequest:${reviewer.key}`,
-      );
+      const rerequest = iconButton("sync", `Re-request review from ${reviewer.name}`, () => this.actions.rerequest(reviewer), `rerequest:${reviewer.key}`);
       if (busy) {
         rerequest.disabled = true;
         rerequest.classList.add("spinning");
         rerequest.setAttribute("aria-busy", "true");
       }
-      chip.append(rerequest);
+      actions.append(tipped(rerequest));
     }
-    if (reviewer.canPoke && pokedAt !== undefined && now - pokedAt < POKE_COOLDOWN_MS) {
-      const when = formatAge(new Date(pokedAt).toISOString(), now).spoken;
-      chip.append(el("span", { class: "previous" }, `· poked ${when}`));
-    } else if (reviewer.canPoke) {
-      const poke = iconButton(
-        "pointer",
-        `Poke ${reviewer.name}: send them a new review request notification`,
-        () => this.actions.poke(reviewer),
-        `poke:${reviewer.key}`,
-      );
+    const recentlyPoked = reviewer.canPoke && pokedAt !== undefined && now - pokedAt < POKE_COOLDOWN_MS;
+    if (reviewer.canPoke && !recentlyPoked) {
+      const poke = iconButton("pointer", `Poke ${reviewer.name}: send them a new review request notification`, () => this.actions.poke(reviewer), `poke:${reviewer.key}`);
       if (busy) {
         poke.disabled = true;
         poke.setAttribute("aria-busy", "true");
       }
-      chip.append(poke);
+      actions.append(tipped(poke));
     }
     const standing = standingVerdict(reviewer);
     if (standing) {
-      const dismiss = iconButton(
-        "cross",
-        `Dismiss ${reviewer.name}'s ${DISMISSED_FROM[standing].name}`,
-        () => this.actions.dismiss(reviewer, standing),
-        `dismiss:${reviewer.key}`,
-      );
+      const dismiss = iconButton("cross", `Dismiss ${reviewer.name}'s ${dismissedName(standing)}`, () => this.actions.dismiss(reviewer, standing), `dismiss:${reviewer.key}`);
       dismiss.classList.add("dismiss");
-      chip.append(dismiss);
+      actions.append(tipped(dismiss));
     }
-    return chip;
+    if (actions.childElementCount > 0) row.append(actions);
+
+    const state = el("span", { class: "reviewer-state", "aria-hidden": "true" });
+    if (recentlyPoked) state.append(icon("pointer", "poked"));
+    const glyph = icon(look.glyph, "glyph");
+    glyph.dataset.tone = look.tone;
+    state.append(glyph);
+    row.append(state);
+    return row;
   }
 
   private renderFloating(): HTMLElement {
@@ -388,20 +405,12 @@ export class ReviewBar {
     }
 
     const faces = el("span", { class: "faces", "aria-hidden": "true" });
-    for (const reviewer of state.reviewers.slice(0, MAX_FACES)) {
-      const status = statusLook(reviewer);
-      const face = el("span", { class: "face" });
-      const badge = el("span", { class: "badge", "data-tone": status.tone });
-      badge.append(icon(status.icon));
-      face.append(avatar(reviewer), badge);
-      faces.append(face);
-    }
+    const looked = state.reviewers.map((reviewer) => ({ reviewer, look: reviewerLook(reviewer, state.now, state.pokedAt.get(reviewer.key)) }));
+    for (const { reviewer, look } of looked.slice(0, MAX_FACES)) faces.append(face(reviewer, look));
     const hidden = state.reviewers.length - MAX_FACES;
     if (hidden > 0) faces.append(el("span", { class: "more" }, `+${hidden}`));
 
-    const description = state.reviewers
-      .map((reviewer) => `${reviewer.name}: ${spokenStatus(reviewer)}`)
-      .join(", ");
+    const description = looked.map(({ reviewer, look }) => `${reviewer.name}: ${look.label.toLowerCase()}`).join(", ");
     return [
       ...stack,
       faces,
@@ -412,58 +421,45 @@ export class ReviewBar {
 }
 
 /**
- * A dismissed review takes the slash and the tone of what it had been: green for an approval, yellow for a change
- * request, grey when the timeline no longer says.
- * @param reviewer The reviewer.
- * @returns How the chip and the pill's badge show the reviewer's status.
+ * @param state The bar's state.
+ * @returns What Files changed shows now.
  */
-export function statusLook(reviewer: Reviewer): Look {
-  const status = STATUS[reviewer.status];
-  const from = reviewer.status === "dismissed" && reviewer.dismissedFrom ? DISMISSED_FROM[reviewer.dismissedFrom] : null;
-  return { text: status.label, tone: from?.tone ?? status.tone, icon: status.icon, detail: from?.name ?? null };
+function diffMode(state: Pick<Extract<BarState, { kind: "ready" }>, "versionsOpen" | "highlight">): DiffMode {
+  if (state.versionsOpen) return "versions";
+  return state.highlight && !state.highlight.hidden ? "since" : "github";
 }
 
 /**
+ * A reviewer's avatar with their state as a small badge, ringed and dashed like their row.
  * @param reviewer The reviewer.
- * @returns The verdict a re-requested reviewer gave before, tinted like a dismissal when it was one, or null.
+ * @param look Their state.
+ * @returns The face.
  */
-export function previousLook(reviewer: Reviewer): Look | null {
-  if (!reviewer.previous) return null;
-  const from = reviewer.previous === "dismissed" && reviewer.dismissedFrom ? DISMISSED_FROM[reviewer.dismissedFrom] : null;
-  return { text: PREVIOUS[reviewer.previous], tone: from?.tone ?? "muted", icon: "slash", detail: from?.name ?? null };
+function face(reviewer: Reviewer, look: ReturnType<typeof reviewerLook>): HTMLElement {
+  const element = el("span", { class: "face" });
+  const badge = el("span", { class: "badge", "data-ring": look.ring });
+  if (look.waiting) badge.dataset.waiting = "";
+  const glyph = icon(look.glyph);
+  glyph.dataset.tone = look.tone;
+  badge.append(glyph);
+  element.append(avatar(reviewer), badge);
+  return element;
 }
 
 /**
- * @param reviewer The reviewer.
- * @returns The status as the pill's summary says it to screen readers.
+ * Moves a button's native tooltip to the bar's own, which shows at once and on keyboard focus.
+ * @param element The button, named by its aria-label.
+ * @returns The same button.
  */
-export function spokenStatus(reviewer: Reviewer): string {
-  const status = statusLook(reviewer);
-  const previous = previousLook(reviewer);
-  const said = status.detail ? `${status.text} ${status.detail}` : status.text;
-  const before = previous?.detail ? `${previous.detail} ${previous.text}` : previous?.text;
-  return `${said.toLowerCase()}${before ? `, ${before}` : ""}`;
+function tipped<T extends HTMLElement>(element: T): T {
+  const label = element.getAttribute("title");
+  if (label) {
+    element.dataset.tip = label;
+    element.removeAttribute("title");
+  }
+  return element;
 }
 
-/**
- * @param reviewer The reviewer.
- * @returns The approval or change request the viewer may dismiss, or null.
- */
-export function standingVerdict(reviewer: Reviewer): DismissedVerdict | null {
-  if (!reviewer.dismissId) return null;
-  const verdict = reviewer.status === "rerequested" ? reviewer.previous : reviewer.status;
-  return verdict === "approved" || verdict === "changes_requested" ? verdict : null;
-}
-
-function tinted(look: Look): SVGSVGElement {
-  const glyph = icon(look.icon);
-  if (look.detail) glyph.dataset.tone = look.tone;
-  return glyph;
-}
-
-function capitalize(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
 
 function renderPillStack(view: StackView): Node[] {
   const current = view.entries.find((entry) => entry.current);

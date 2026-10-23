@@ -17,8 +17,7 @@ const NOOP: BarActions = {
   toggleStack: () => undefined,
   toggleMerged: () => undefined,
   toggleMinimized: () => undefined,
-  compareVersions: () => undefined,
-  toggleHighlight: () => undefined,
+  chooseDiff: () => undefined,
   toggleDiscussion: () => undefined,
   toggleDiscussionBots: () => undefined,
 };
@@ -32,6 +31,7 @@ function reviewer(overrides: Partial<Reviewer> & Pick<Reviewer, "key" | "name" |
     previous: null,
     dismissedFrom: null,
     dismissId: null,
+    at: new Date(NOW - 5 * HOUR).toISOString(),
     canRerequest: false,
     canPoke: false,
     ...overrides,
@@ -140,6 +140,7 @@ function ready(overrides: Partial<Extract<BarState, { kind: "ready" }>> = {}): E
     discussionExpanded: false,
     showBots: false,
     viewer: "tizian",
+    versionsOpen: false,
     ...overrides,
   };
 }
@@ -170,6 +171,11 @@ function interactive(state: Extract<BarState, { kind: "ready" }>): HTMLElement {
     },
     toggleDiscussionBots: () => {
       current = { ...current, showBots: !current.showBots };
+      instance.render(current);
+    },
+    chooseDiff: (mode) => {
+      const highlight = current.highlight ? { ...current.highlight, hidden: mode === "github" } : null;
+      current = { ...current, versionsOpen: mode === "versions", highlight: mode === "versions" ? current.highlight : highlight };
       instance.render(current);
     },
   });
@@ -206,8 +212,18 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** The inline bar with a stack, every reviewer status and a hidden notice. */
-export const Inline: Story = { render: () => interactive(ready()) };
+/** The inline bar with a stack, every reviewer status, the toolbar and new comments: everything it can show at once. */
+export const Inline: Story = {
+  render: () =>
+    interactive(
+      ready({
+        forcePushes: { count: 2, lastAt: new Date(NOW - 3 * HOUR).toISOString() },
+        highlight: { since: SINCE, current: HEAD, changedFiles: 3, droppedFiles: ["src/ui/bar.ts"], truncated: false, hidden: false },
+        discussion: DISCUSSION,
+        discussionSeenAt: new Date(NOW - 3 * HOUR).toISOString(),
+      }),
+    ),
+};
 
 /** A pull request outside any stack shows a one-entry overview. */
 export const InlineNoStack: Story = { render: () => interactive(ready({ stack: ALONE })) };
@@ -265,10 +281,52 @@ export const InlineDismissed: Story = {
 /** The viewer can update the pull request, so each standing approval and change request has an X to dismiss it. */
 export const InlineDismissable: Story = { render: () => inline(ready({ reviewers: DISMISSABLE })) };
 
+/** The stack collapsed to its strip: the reviewers shrink to their faces, each with its state as a ringed badge. */
+export const InlineCollapsed: Story = {
+  render: () =>
+    interactive(
+      ready({
+        stackCollapsed: true,
+        forcePushes: { count: 2, lastAt: new Date(NOW - 3 * HOUR).toISOString() },
+        highlight: { since: SINCE, current: HEAD, changedFiles: 3, droppedFiles: [], truncated: false, hidden: false },
+        discussion: DISCUSSION,
+        discussionSeenAt: new Date(NOW - 3 * HOUR).toISOString(),
+      }),
+    ),
+};
+
+/** A pull request outside any stack with many reviewers, long names among them: the list sets the bar's height. */
+export const InlineManyReviewers: Story = {
+  render: () =>
+    interactive(
+      ready({
+        stack: ALONE,
+        reviewers: [
+          ...REVIEWERS,
+          reviewer({ key: "user:long", name: "a-reviewer-with-a-rather-long-login", status: "approved", canRerequest: true }),
+          reviewer({ key: "team:octo-org/platform-infrastructure", name: "octo-org/platform-infrastructure", kind: "team", status: "pending" }),
+        ],
+        pokedAt: new Map([["team:octo-org/reviewers", NOW - 20 * 60_000]]),
+      }),
+    ),
+};
+
+/** The versions view stands in for GitHub's diff, so the switch shows Versions. */
+export const InlineVersionsOpen: Story = {
+  render: () =>
+    interactive(
+      ready({
+        versionsOpen: true,
+        forcePushes: { count: 1, lastAt: new Date(NOW - 6 * HOUR).toISOString() },
+        highlight: { since: SINCE, current: HEAD, changedFiles: 0, droppedFiles: [], truncated: false, hidden: false },
+      }),
+    ),
+};
+
 /** Force-pushes and highlighted changes since the viewer's review. */
 export const InlineVersions: Story = {
   render: () =>
-    inline(
+    interactive(
       ready({
         forcePushes: { count: 3, lastAt: new Date(NOW - 6 * HOUR).toISOString() },
         highlight: { since: SINCE, current: HEAD, changedFiles: 4, droppedFiles: [], truncated: false, hidden: false },

@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
 import type { DiscussionItem } from "../core/discussion";
-import { renderDiscussionSection } from "../ui/discussion-view";
+import { renderDiscussionControls, renderDiscussionList } from "../ui/discussion-view";
+import { el } from "../ui/dom";
 import { inShadow, NOW } from "./shadow";
 
 const HOUR = 3_600_000;
@@ -98,7 +99,7 @@ function render(args: Args): HTMLElement {
   const host = inShadow(document.createElement("div"));
   const mount = host.shadowRoot!.querySelector(".overview")!;
   const draw = () => {
-    const section = renderDiscussionSection({
+    const options = {
       items: ITEMS,
       seenAt: args.seenAt,
       viewer: "tizian",
@@ -112,8 +113,13 @@ function render(args: Args): HTMLElement {
         state.showBots = !state.showBots;
         draw();
       },
-    });
-    mount.replaceChildren(...(section ? [section] : []));
+    };
+    const toolbar = el("div", { class: "toolbar" });
+    const group = el("div", { class: "tool-group end" });
+    group.append(...renderDiscussionControls(options));
+    toolbar.append(group);
+    const list = renderDiscussionList(options);
+    mount.replaceChildren(toolbar, ...(list ? [list] : []));
   };
   draw();
   return host;
@@ -131,7 +137,7 @@ const meta = {
     docs: {
       description: {
         component:
-          "Review texts and general comments inside the bar. Collapsed it shows the new ones, or the newest; *Show all* opens the rest, and bots and stack tools stay behind *Show bots*.",
+          "Review texts and general comments inside the bar. The toolbar's comment button counts them and the new ones; collapsed, the list shows the new ones, or the newest, and the button opens the rest. Bots and stack tools stay behind the bot button.",
       },
     },
   },
