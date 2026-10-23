@@ -312,6 +312,8 @@ function createFixture(
     overviewDelay: 0,
     /** How long the review threads take to answer, so they can arrive after the diff. */
     threadsDelay: 0,
+    /** How long a review comment takes to answer, to see what the jump menu offers before it arrives. */
+    commentDelay: 0,
     /** An HTTP status to fail the overview query with, or 0 to answer it. */
     overviewFailure: 0,
     /** The viewer's pending review, and the commit it was started on, or null. */
@@ -571,6 +573,11 @@ function createFixture(
       }
       const comment = /\/pulls\/comments\/(\d+)$/u.exec(request.url());
       if (comment) {
+        if (created.commentDelay > 0) {
+          await new Promise((resolve) => {
+            setTimeout(resolve, created.commentDelay);
+          });
+        }
         // 999 was written on the reviewed v1, on a README.md line the head renumbers, and is outdated there; 777 on the
         // head, on the same line as the head numbers it.
         const outdated = comment[1] === "999";
@@ -647,6 +654,23 @@ function visibleText(text: string): string {
 async function diffAnchorOf(path: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(path));
   return `diff-${Buffer.from(digest).toString("hex")}`;
+}
+
+/**
+ * @param on The page.
+ * @param selector What should come into view.
+ * @returns Whether it is inside the window within a few seconds.
+ */
+async function scrolledTo(on: Page, selector: string): Promise<boolean> {
+  try {
+    await on.waitForFunction((wanted) => {
+      const box = document.querySelector(wanted)?.getBoundingClientRect();
+      return box !== undefined && box.top >= 0 && box.bottom <= innerHeight;
+    }, selector, { timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function check(condition: boolean, message: string): void {
@@ -1194,6 +1218,40 @@ check(
   (await splitPage.evaluate(() => getComputedStyle(document.getElementById("github-diff")!).display)) !== "none" &&
     !splitPage.url().includes("flohub-versions"),
   "closing the docked view shows GitHub's diff again and takes the range off the URL",
+);
+fixture.commentDelay = 5000;
+await splitPage.evaluate(() => {
+  const thread = Object.assign(document.createElement("div"), { id: "r777", textContent: "GitHub's thread" });
+  thread.style.marginTop = "2500px";
+  document.getElementById("github-diff")!.append(thread);
+});
+await splitPage.locator("#current-link").click();
+await jumpMenu.getByRole("status").waitFor();
+check(
+  (await jumpMenu.getByRole("menuitem").count()) === 1 && (await jumpMenu.getByRole("menuitem", { name: /^In the current diff/u }).isEnabled()),
+  "while the comment loads, a current comment's menu already offers In the current diff, and only that",
+);
+await jumpMenu.getByRole("menuitem", { name: /^In the current diff/u }).click();
+check(
+  await scrolledTo(splitPage, "#r777"),
+  "In the current diff scrolls to GitHub's expanded thread before the comment arrives",
+);
+fixture.commentDelay = 0;
+// A collapsed thread, a resolved one for instance, is only avatars on its line: GitHub draws no #r<comment id> for it.
+await splitPage.evaluate(() => {
+  document.getElementById("r777")!.remove();
+  scrollTo(0, 0);
+  const table = document.createElement("table");
+  table.setAttribute("aria-label", "Diff for: README.md");
+  table.style.marginTop = "2500px";
+  table.innerHTML = '<tr><td class="diff-text-cell" data-diff-side="right" data-line-number="326">Diverged stacks</td></tr>';
+  document.getElementById("github-diff")!.append(table);
+});
+await splitPage.locator("#current-link").click();
+await jumpMenu.getByRole("menuitem", { name: /^In the current diff/u }).click();
+check(
+  await scrolledTo(splitPage, 'td[data-line-number="326"]'),
+  "In the current diff finds a collapsed thread by its line in GitHub's diff, where GitHub draws no thread to scroll to",
 );
 await splitPage.locator("#text-link").click();
 check(

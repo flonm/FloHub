@@ -21,9 +21,16 @@ that GitHub has fixed it, so the workaround can go.
 
 - **Changes since vX:** the versions view, from the comment's version to the head.
 - **Code at vX:** the comment's version against the base branch.
-- **In the current diff:** the versions view's, or GitHub's own thread when the view is closed (`div#r<comment id>`).
+- **In the current diff:** the versions view's, or GitHub's own diff when the view is closed. GitHub draws a thread
+  as `div#r<first comment id>` only while it is expanded; a collapsed one, a resolved one for instance, is only an
+  avatar on its line, with no id to find, and a reply's number is never a thread's. So FloHub scrolls to the expanded
+  thread when it finds one, and else to the commented line, `table[aria-label="Diff for: <path>"]
+  td.diff-text-cell[data-diff-side][data-line-number]`, or failing that to the file, `#diff-<SHA-256 of the path>`.
 
-FloHub reads the comment's id from the card, never from the link.
+FloHub reads the comment's id from the link. The link's shape alone also tells whether the comment is outdated, so "In
+the current diff" is offered, and with the view closed works, before the comment is fetched (`commentIsCurrent` in
+`src/core/comment-jump.ts`). If GitHub ever links outdated comments like current ones, that check has to wait for the
+fetched comment instead.
 
 **How to tell it's fixed.** Disable FloHub, open a pull request's Files changed tab with the comments panel open, and
 click a current comment's file link. If the page scrolls to the thread, GitHub fixed the first half. "In the current
