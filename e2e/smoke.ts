@@ -1927,6 +1927,12 @@ for (const scheme of ["light", "dark"] as const) {
       (await snoozedToggle.count()) === 1 && (await popup.getByRole("button", { name: /^Your turn/u }).textContent()) === "Your turn5",
       "a snoozed pull request leaves its section, which counts it out and offers to show it",
     );
+    let snoozedBadge = "";
+    for (let tries = 0; tries < 50 && snoozedBadge !== "5"; tries++) {
+      await popup.waitForTimeout(100);
+      snoozedBadge = (await badgeText(inboxContext)) ?? "";
+    }
+    check(snoozedBadge === "5", `the badge leaves a snoozed pull request out: "${snoozedBadge}"`);
     await snoozedToggle.click();
     await rowOf(121).getByText("Snoozed", { exact: true }).waitFor();
     await rowOf(121).hover();

@@ -2,7 +2,7 @@ import { fetchInbox, GitHubError, readToken } from "./github";
 import { buildInbox, type Inbox, type RawInbox } from "../core/inbox";
 import { readDirectRepos } from "../core/review-scope";
 import { type InboxAlert, inboxAlerts } from "../core/inbox-alerts";
-import { MARKS_KEY, pruneMarks, readMarks } from "../core/inbox-marks";
+import { badgeCount, MARKS_KEY, pruneMarks, readMarks } from "../core/inbox-marks";
 
 /** Whether the viewer wants desktop notifications, in storage.local; on unless turned off. */
 export const NOTIFY_KEY = "inboxNotify";
@@ -97,7 +97,7 @@ async function fetchAndStore(notify: boolean): Promise<Inbox> {
   const kept = pruneMarks(marks, inbox, now);
   await chrome.storage.local.set({ [STORAGE_KEY]: inbox, ...(kept !== marks && { [MARKS_KEY]: kept }) });
   if (notify && stored[NOTIFY_KEY] !== false && previous?.viewer === inbox.viewer) await showAlerts(inboxAlerts(previous, inbox, kept, now));
-  await showBadge(inbox.turnCount ?? inbox.reviewCount);
+  await showBadge(badgeCount(inbox, kept, now));
   return inbox;
 }
 
@@ -124,6 +124,13 @@ async function showAlerts(alerts: InboxAlert[]): Promise<void> {
 export function alertUrl(id: string): string {
   const url = id.split("#", 1)[0] ?? "";
   return url.startsWith("https://github.com/") ? url : MORE_URL;
+}
+
+/** Counts the stored inbox on the badge again, for when the viewer pinned or snoozed something in the popup. */
+export async function refreshBadge(): Promise<void> {
+  const stored = await chrome.storage.local.get([STORAGE_KEY, MARKS_KEY]);
+  const inbox = stored[STORAGE_KEY] as Inbox | undefined;
+  if (inbox) await showBadge(badgeCount(inbox, readMarks(stored[MARKS_KEY]), Date.now()));
 }
 
 /** Drops the stored inbox and the badge, for when the token changes. */

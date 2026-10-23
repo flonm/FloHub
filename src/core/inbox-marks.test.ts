@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Inbox, InboxGroup, InboxPull } from "./inbox";
 import {
   applyMarks,
+  badgeCount,
   type InboxMarks,
   isPinned,
   isSnoozed,
@@ -203,5 +204,22 @@ describe("applyMarks", () => {
   test("a pinned pull request that is snoozed stays hidden", () => {
     const marks = marksWith({ snoozed: { [URL_1]: { until: NOW + 1 } }, pinned: [URL_1] });
     expect(keys(applyMarks(groups, marks, NOW))).toEqual(["stack", "b", "c"]);
+  });
+});
+
+describe("badgeCount", () => {
+  test("counts the pull requests waiting for the viewer's move, without the snoozed ones", () => {
+    const yours = { turn: { whose: "you" as const, reasons: [{ code: "requested" as const }] } };
+    const inbox = {
+      ...buildInbox([buildGroup("a", [buildPull(1, yours), buildPull(2, yours), buildPull(3, { turn: { whose: "them", reasons: [] } })])]),
+      turnCount: 2,
+    };
+    expect(badgeCount(inbox, NO_MARKS, NOW)).toBe(2);
+    expect(badgeCount(inbox, marksWith({ snoozed: { [URL_1]: { until: NOW + 1000 } } }), NOW)).toBe(1);
+    expect(badgeCount(inbox, marksWith({ snoozed: { [URL_1]: { until: NOW - 1000 } } }), NOW)).toBe(2);
+  });
+
+  test("counts the review requests of an inbox stored before turns", () => {
+    expect(badgeCount({ ...buildInbox([]), reviewCount: 3 }, NO_MARKS, NOW)).toBe(3);
   });
 });

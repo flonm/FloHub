@@ -187,3 +187,16 @@ export function applyMarks<G extends InboxGroup>(groups: G[], marks: InboxMarks,
   const pinned = (group: InboxGroup) => group.pulls.some((pull) => isPinned(marks, pull.url));
   return { groups: [...shown.filter((group) => pinned(group)), ...shown.filter((group) => !pinned(group))], snoozed };
 }
+
+/**
+ * @param inbox The inbox.
+ * @param marks The viewer's marks.
+ * @param now The current time.
+ * @returns How many pull requests wait for the viewer's move and aren't snoozed, for the toolbar badge; an inbox
+ *   stored before turns counts its review requests.
+ */
+export function badgeCount(inbox: Inbox, marks: InboxMarks, now: number): number {
+  if (inbox.turnCount === undefined) return inbox.reviewCount;
+  const pulls = [...inbox.review, ...inbox.mine, ...(inbox.waiting ?? [])].flatMap((entry) => entry.pulls);
+  return pulls.filter((pull) => pull.turn?.whose === "you" && !isSnoozed(marks, pull, now)).length;
+}

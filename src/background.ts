@@ -17,7 +17,8 @@ import {
   submitReview,
   type VersionPatch,
 } from "./api/github";
-import { alertUrl, clearInbox, ensureInboxAlarm, INBOX_ALARM, refreshInbox, refreshInboxAgain } from "./api/inbox-sync";
+import { alertUrl, clearInbox, ensureInboxAlarm, INBOX_ALARM, refreshBadge, refreshInbox, refreshInboxAgain } from "./api/inbox-sync";
+import { MARKS_KEY } from "./core/inbox-marks";
 import type { Message, Reply, ReplyByType } from "./api/messages";
 import { clearOverviewCache, queueCacheWrite, writeCachedOverview } from "./api/overview-cache";
 import {
@@ -48,6 +49,7 @@ chrome.runtime.onStartup.addListener(() => void refreshInbox().catch(() => undef
 chrome.runtime.onInstalled.addListener(() => void refreshInbox().catch(() => undefined));
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "sync" && Object.hasOwn(changes, REVIEW_SCOPES_KEY)) void refreshInboxAgain().catch(() => undefined);
+  if (area === "local" && Object.hasOwn(changes, MARKS_KEY)) void refreshBadge().catch(() => undefined);
   if (area !== "local" || !("token" in changes)) return;
   void queueCacheWrite(clearOverviewCache);
   void queueVersionCache(clearVersionCache);
