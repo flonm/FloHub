@@ -6,16 +6,16 @@ const noop = () => undefined;
 
 /** The three choices, as the menu offers them for a comment written on v1 of a pull request now at v3. */
 const OUTDATED: JumpChoice[] = [
-  { label: "Changes since v1", detail: "How the code changed from v1, where the comment was written, to the current version", run: noop },
-  { label: "Code at v1", detail: "The pull request's changes as v1 made them, as the comment saw them", run: noop },
-  { label: "In the current diff", detail: "The comment is outdated: its lines are gone from the current diff", disabled: true, run: noop },
+  { label: "Changes since v1", detail: "How the code changed from v1, where the comment was written, to the current version", icon: "compare", run: noop },
+  { label: "Code at v1", detail: "The pull request's changes as v1 made them, as the comment saw them", icon: "file", run: noop },
+  { label: "In the current diff", detail: "The comment is outdated: its lines are gone from the current diff", disabled: true, icon: "target", run: noop },
 ];
 
 /** A comment on the current version: nothing changed since, and its lines sit in the current diff. */
 const CURRENT: JumpChoice[] = [
-  { label: "Changes since v3", detail: "v3, where the comment was written, is the current version", disabled: true, run: noop },
-  { label: "Code at v3", detail: "The pull request's changes as v3 made them, as the comment saw them", run: noop },
-  { label: "In the current diff", detail: "Where the comment sits in the pull request's current changes", run: noop },
+  { label: "Changes since v3", detail: "v3, where the comment was written, is the current version", disabled: true, icon: "compare", run: noop },
+  { label: "Code at v3", detail: "The pull request's changes as v3 made them, as the comment saw them", icon: "file", run: noop },
+  { label: "In the current diff", detail: "Where the comment sits in the pull request's current changes", icon: "target", run: noop },
 ];
 
 /**
@@ -89,8 +89,8 @@ export const NearestVersion: Story = {
     menu({
       kind: "ready",
       choices: [
-        { label: "Changes since v2", detail: "How the code changed from v2, where the comment was written, to the current version", run: noop },
-        { label: "Code at v2", detail: "The pull request's changes as v2 made them, as the comment saw them", run: noop },
+        { label: "Changes since v2", detail: "How the code changed from v2, where the comment was written, to the current version", icon: "compare", run: noop },
+        { label: "Code at v2", detail: "The pull request's changes as v2 made them, as the comment saw them", icon: "file", run: noop },
         OUTDATED[2]!,
       ],
       note: "The comment was written on 9f8e7d6, which isn't a known version, so these show v2, the version current then.",
