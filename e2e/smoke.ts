@@ -86,6 +86,9 @@ function inboxPull(number: number, title: string, overrides: Record<string, unkn
   };
 }
 
+/** The viewer's own pull requests, which the search for author:@me finds. */
+const OWN = { author: { login: "octocat", avatarUrl: "https://avatars.githubusercontent.com/octocat?v=4" }, reviewRequests: { nodes: [] } };
+
 const INBOX_STACK = {
   number: 900,
   size: 3,
@@ -108,8 +111,9 @@ const INBOX = {
   },
   mine: {
     nodes: [
-      inboxPull(120, "docs: explain the stack badge", { reviewDecision: "APPROVED" }),
-      inboxPull(121, "feat(stack): show failing checks", { statusCheckRollup: { state: "FAILURE" } }, "octo-org/api"),
+      inboxPull(120, "docs: explain the stack badge", { ...OWN, reviewDecision: "APPROVED" }),
+      inboxPull(121, "feat(stack): show failing checks", { ...OWN, statusCheckRollup: { state: "FAILURE" } }, "octo-org/api"),
+      inboxPull(122, "feat(stack): page through long stacks", { ...OWN, reviewRequests: { nodes: [{ requestedReviewer: { login: "defunkt" } }] } }, "octo-org/api"),
       {},
     ],
   },
@@ -242,6 +246,11 @@ const REVIEW_TEXTS: Record<string, { bodyText: string; bodyHTML?: string; hoursA
   coderabbitai: { bodyText: "Actionable comments posted: 2", hoursAgo: 3 },
   octocat: { bodyText: "LGTM once the planner is split.", hoursAgo: 0.5 },
 };
+
+/** A review thread as the turn reads it: who started it, and who spoke last. */
+function turnThread(starter: string, last: string) {
+  return { isResolved: false, first: { nodes: [{ author: { __typename: "User", login: starter } }] }, recent: { nodes: [{ author: { __typename: "User", login: last } }] } };
+}
 
 function withDiscussionText<T extends { author: { login: string } }>(node: T) {
   const text = REVIEW_TEXTS[node.author.login];
@@ -528,6 +537,7 @@ function createFixture(
                     ].map((node) => (options.discussion ? withDiscussionText(node) : node)),
                   },
                   ...(options.discussion && { comments: { nodes: DISCUSSION_COMMENTS } }),
+                  turnThreads: { nodes: [turnThread("octocat", "hubot"), turnThread("defunkt", "hubot"), turnThread("mojombo", "mojombo")] },
                 },
               },
             },
@@ -732,6 +742,14 @@ const page = await light.newPage();
 
 await page.goto(`${PULL_URL}/files`);
 await inlineBar(page).locator(".reviewer").first().waitFor();
+const turnText = await inlineBar(page).locator(".turn").textContent();
+const defunktRow = inlineBar(page).locator(".reviewer", { hasText: "defunkt" });
+check(
+  turnText?.startsWith("Your turn1 reply") === true &&
+    (await defunktRow.getAttribute("data-waiting")) === "" &&
+    (await defunktRow.locator(".turn-mark").textContent()) === "1",
+  `the toolbar says it is the viewer's turn, and a reviewer the author answered last waits with a mark: ${turnText}`,
+);
 const reviewers = await reviewerRows(page);
 check(
   JSON.stringify(reviewers) ===
@@ -752,8 +770,8 @@ const rings = await inlineBar(page)
   );
 check(
   JSON.stringify(rings) ===
-    JSON.stringify(["attention attention", "attention dashed attention", "muted dashed attention", "muted success", "muted muted", "success success"]),
-  `the ring says what counts now and dashes who is asked to review, while the glyph keeps what they said: ${JSON.stringify(rings)}`,
+    JSON.stringify(["attention dashed attention", "attention dashed attention", "muted dashed attention", "muted success", "muted muted", "success dashed success"]),
+  `the ring says what counts now and dashes whose turn it is, while the glyph keeps what they said: ${JSON.stringify(rings)}`,
 );
 check(
   ((await inlineBar(page).locator(".reviewer", { hasText: "mojombo" }).getAttribute("data-tip")) ?? "").startsWith(
@@ -1445,6 +1463,8 @@ await viewedToggle("cmd/rebase_test.go").click();
 await tree.locator('flohub-viewed[data-path="cmd/rebase_test.go"][aria-checked="true"]').waitFor();
 await viewedToggle("README.md").click();
 await tree.locator('flohub-viewed[data-path="README.md"][aria-checked="false"]').waitFor();
+// The checkbox flips before the API call goes out, so give the call a moment to arrive.
+for (let tries = 0; tries < 50 && fixture.viewedMarks.length < 2; tries++) await page.waitForTimeout(100);
 check(
   fixture.viewedMarks.join(",") === "mark:cmd/rebase_test.go,unmark:README.md",
   `tree checkboxes mark and unmark files through the API: ${fixture.viewedMarks.join(",")}`,
@@ -1698,17 +1718,24 @@ for (const scheme of ["light", "dark"] as const) {
       JSON.stringify(sections) ===
         JSON.stringify([
           {
-            heading: "Waiting for your review3",
+            heading: "Your turn6",
             rows: [
               "#903 feat(ui): render the stack",
               "#901 feat(api): add the stack endpoint",
+              "#130 fix(sync): keep local commits on rebase",
+              "#121 feat(stack): show failing checks",
+              "#120 docs: explain the stack badge",
               "#77 fix(auth): refresh tokens before they expire and retry the failed request once",
             ],
           },
-          { heading: "Waiting for author1", rows: ["#130 fix(sync): keep local commits on rebase"] },
-          { heading: "Your pull requests2", rows: ["#121 feat(stack): show failing checks", "#120 docs: explain the stack badge"] },
+          { heading: "Their turn1", rows: ["#122 feat(stack): page through long stacks"] },
         ]),
-      `popup groups review requests by stack, top layer first, and puts failing own PRs first: ${JSON.stringify(sections)}`,
+      `popup sorts pull requests by whose turn it is, newest first, a stack's layers together top first: ${JSON.stringify(sections)}`,
+    );
+    const chips = async (number: number) => (await popup.locator(".pull", { hasText: `#${number} ` }).locator(".status").allTextContents()).join(",");
+    check(
+      (await chips(121)) === "Checks failed" && (await chips(120)) === "Ready to merge" && (await chips(122)) === "Needs review,Waiting for defunkt",
+      `own pull requests say why they wait, and for whom: ${await chips(121)} | ${await chips(120)} | ${await chips(122)}`,
     );
     check(
       (await popup.locator(".pull", { hasText: "#77" }).getByText("Re-requested").count()) === 1,
@@ -1732,7 +1759,7 @@ for (const scheme of ["light", "dark"] as const) {
       pulls.map((row) => row.querySelector(":scope .position [aria-hidden]")?.textContent ?? null),
     );
     check(
-      JSON.stringify(positions) === JSON.stringify(["3/3", "1/3", null, null, null, null]) &&
+      JSON.stringify(positions) === JSON.stringify(["3/3", "1/3", null, null, null, null, null]) &&
         (await popup.locator(".group-label").count()) === 0,
       `stacked rows show their layer inline, with no group heading: ${JSON.stringify(positions)}`,
     );
@@ -1748,7 +1775,7 @@ for (const scheme of ["light", "dark"] as const) {
       `rows show the pull request's added and deleted lines, and none without lines: ${JSON.stringify(diffStats)}`,
     );
     const badge = await inboxContext.serviceWorkers()[0]?.evaluate(async () => chrome.action.getBadgeText({}));
-    check(badge === "3", `the toolbar badge counts the review requests: "${badge}"`);
+    check(badge === "6", `the toolbar badge counts the pull requests waiting for the viewer's move: "${badge}"`);
     const longTitle = await popup.locator(".pull", { hasText: "#77" }).locator(".title").evaluate((title) => ({
       truncated: title.scrollWidth > title.clientWidth,
       tooltip: title.getAttribute("title"),
@@ -1766,7 +1793,7 @@ for (const scheme of ["light", "dark"] as const) {
       visited.push(await focusedRow());
     }
     check(
-      visited.join(",") === "#901,#77,#130,#77,#120,#121,#903,#903",
+      visited.join(",") === "#901,#130,#121,#130,#122,#77,#903,#903",
       `arrow keys and j/k move through all sections, Home and End jump to the ends: ${visited.join(",")}`,
     );
     const tabStops = await popup.locator('.pull[tabindex="0"]').count();
@@ -1785,7 +1812,7 @@ for (const scheme of ["light", "dark"] as const) {
     await popup.keyboard.press("k");
     const [background] = await Promise.all([inboxContext.waitForEvent("page"), popup.keyboard.press("ControlOrMeta+Enter")]);
     check(
-      background.url() === "https://github.com/octo-org/api/pull/121" && !popup.isClosed(),
+      background.url() === "https://github.com/octo-org/api/pull/77" && !popup.isClosed(),
       `Cmd/Ctrl+Enter opens the focused row in a background tab and keeps the popup open: ${background.url()}`,
     );
     await background.close();
@@ -1811,16 +1838,16 @@ for (const scheme of ["light", "dark"] as const) {
     );
     await existing.close();
 
-    const reviewToggle = popup.getByRole("button", { name: /^Waiting for your review/u });
+    const reviewToggle = popup.getByRole("button", { name: /^Your turn/u });
     await reviewToggle.click();
     check(
       (await reviewToggle.getAttribute("aria-expanded")) === "false" &&
-        (await popup.locator(".pull").count()) === 3 &&
-        (await popup.evaluate(() => document.activeElement?.id)) === "section-review",
+        (await popup.locator(".pull").count()) === 1 &&
+        (await popup.evaluate(() => document.activeElement?.id)) === "section-you",
       "a section heading collapses its rows and keeps focus",
     );
     await popup.reload();
-    await popup.getByText("feat(stack): show failing checks").waitFor();
+    await popup.getByText("feat(stack): page through long stacks").waitFor();
     check(
       (await reviewToggle.getAttribute("aria-expanded")) === "false" && (await popup.locator(".pull", { hasText: "#903" }).count()) === 0,
       "a collapsed section stays collapsed the next time the popup opens",

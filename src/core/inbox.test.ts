@@ -10,6 +10,7 @@ import {
   type RawInboxIds,
   type RawInboxPull,
   STALE_AFTER_MS,
+  turnSections,
 } from "./inbox";
 
 function buildPull(number: number, overrides: Partial<RawInboxPull> = {}): RawInboxPull {
@@ -337,5 +338,71 @@ describe("othersReviews", () => {
       { login: "mona", avatarUrl: "https://avatars/mona", verdict: "approved" },
       { login: "octocat", avatarUrl: null, verdict: "commented" },
     ]);
+  });
+});
+
+describe("buildInbox turns", () => {
+  test("gives each pull request whose move it waits for, and counts the viewer's for the badge", () => {
+    const own = { author: { login: "octocat", avatarUrl: "" }, reviewRequests: { nodes: [{ requestedReviewer: { login: "alice" } }] } };
+    const inbox = buildInbox(
+      buildRaw(
+        [buildPull(1)],
+        [buildPull(2, own), buildPull(3, { ...own, statusCheckRollup: { state: "FAILURE" } }), buildPull(4, { ...own, isDraft: true })],
+        [buildPull(5, reviewedBy("octocat", "CHANGES_REQUESTED", "CHANGES_REQUESTED"))],
+      ),
+      0,
+    );
+    const turns = [...inbox.review, ...inbox.mine, ...inbox.waiting!].flatMap((entry) => entry.pulls.map((pull) => [pull.number, pull.turn]));
+    expect(Object.fromEntries(turns)).toEqual({
+      1: { whose: "you", reasons: [{ code: "requested" }] },
+      2: { whose: "them", reasons: [{ code: "waiting-on-reviewers", who: ["alice"] }] },
+      3: { whose: "you", reasons: [{ code: "checks-failed" }] },
+      4: { whose: "none", reasons: [{ code: "draft" }] },
+      5: { whose: "them", reasons: [{ code: "waiting-on-author" }] },
+    });
+    expect(inbox.turnCount).toBe(2);
+  });
+
+  test("counts replies in the viewer's threads and a push after their change request", () => {
+    const pushed = { timelineItems: { nodes: [{ __typename: "HeadRefForcePushedEvent", createdAt: "2026-10-12T09:00:00Z" }] } };
+    const turnThreads = {
+      nodes: [{ isResolved: false, first: { nodes: [{ author: { login: "octocat" } }] }, recent: { nodes: [{ author: { login: "hubot" } }] } }],
+    };
+    const inbox = buildInbox(buildRaw([], [], [buildPull(5, { ...reviewedBy("octocat", "CHANGES_REQUESTED", "CHANGES_REQUESTED"), ...pushed, turnThreads })]), 0);
+    expect(inbox.waiting?.[0]?.pulls[0]?.turn).toEqual({ whose: "you", reasons: [{ code: "replies", count: 1 }, { code: "pushed-since-review" }] });
+  });
+
+  test("says a review request was asked again", () => {
+    const inbox = buildInbox(buildRaw([buildPull(1, { latestReviews: { nodes: [{ state: "COMMENTED", author: { login: "octocat" }, submittedAt: "2026-10-11T09:00:00Z" }] } })]), 0);
+    expect(inbox.review[0]?.pulls[0]?.turn?.reasons).toEqual([{ code: "rerequested" }]);
+  });
+});
+
+describe("turnSections", () => {
+  test("splits the searches by whose move each pull request waits for, newest first", () => {
+    const own = { author: { login: "octocat", avatarUrl: "" }, reviewRequests: { nodes: [{ requestedReviewer: { login: "alice" } }] } };
+    const stack = stackOf(7, [2, 3]);
+    const inbox = buildInbox(
+      buildRaw(
+        [buildPull(1, { createdAt: "2026-10-12T09:00:00Z" })],
+        [buildPull(2, { ...own, stack }), buildPull(3, { ...own, stack, statusCheckRollup: { state: "ERROR" } }), buildPull(4, { ...own, isDraft: true })],
+      ),
+      0,
+    );
+    const sections = turnSections(inbox);
+    const shape = (whose: "you" | "them" | "none") => sections[whose].map((entry) => [entry.role, entry.pulls.map((pull) => pull.number)]);
+    expect(shape("you")).toEqual([
+      ["review", [1]],
+      ["mine", [3]],
+    ]);
+    expect(shape("them")).toEqual([["mine", [2]]]);
+    expect(shape("none")).toEqual([["mine", [4]]]);
+  });
+
+  test("falls back to the searches for an inbox stored before turns", () => {
+    const inbox = buildInbox(buildRaw([buildPull(1)], [buildPull(2, { isDraft: true })], [buildPull(3, reviewedBy("octocat", "COMMENTED", null))]), 0);
+    for (const entry of [...inbox.review, ...inbox.mine, ...inbox.waiting!]) for (const pull of entry.pulls) delete pull.turn;
+    const sections = turnSections(inbox);
+    expect([sections.you, sections.them, sections.none].map((groups) => groups.map((entry) => entry.pulls[0]?.number))).toEqual([[1], [3], [2]]);
   });
 });

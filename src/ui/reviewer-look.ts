@@ -30,12 +30,17 @@ const DISMISSED_NAME: Record<DismissedVerdict, string> = { approved: "approval",
  * @param reviewer The reviewer.
  * @param now The current time, for the ages.
  * @param pokedAt When the viewer last poked them, if they did.
+ * @param replies How many unresolved threads they started the author answered last, which makes it their turn.
  * @returns How the reviewer's row and their face in the floating pill show their state.
  */
-export function reviewerLook(reviewer: Reviewer, now: number, pokedAt?: number): ReviewerLook {
+export function reviewerLook(reviewer: Reviewer, now: number, pokedAt?: number, replies = 0): ReviewerLook {
   const age = reviewer.at ? ` ${formatAge(reviewer.at, now).spoken}` : "";
-  const look = baseLook(reviewer, age);
+  let look = baseLook(reviewer, age);
   const extras: string[] = [];
+  if (replies > 0) {
+    look = { ...look, waiting: true };
+    extras.push(`Their turn: the author answered last in ${replies === 1 ? "a thread" : `${replies} threads`} they started.`);
+  }
   if (reviewer.kind === "bot") extras.push("A bot.");
   else if (reviewer.kind === "team") extras.push("A team.");
   if (pokedAt !== undefined && now - pokedAt < POKE_COOLDOWN_MS) {

@@ -81,7 +81,7 @@ async function fetchAndStore(): Promise<Inbox> {
   const inbox = buildInbox(raw, Date.now(), await readDirectRepos());
   if ((await readToken()) !== token) throw new GitHubError("failed", "The token changed. Try again.");
   await chrome.storage.local.set({ [STORAGE_KEY]: inbox });
-  await showBadge(inbox.reviewCount);
+  await showBadge(inbox.turnCount ?? inbox.reviewCount);
   return inbox;
 }
 

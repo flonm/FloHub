@@ -11,6 +11,7 @@ import { deriveReviewers, type DismissedVerdict, type Reviewer } from "./core/re
 import { type CopyTarget, createShortcutMatcher, type ReviewEvent } from "./core/shortcuts";
 import type { Overview } from "./api/github";
 import { readCachedOverview } from "./api/overview-cache";
+import { overviewTurnInput, repliesAwaiting, type Turn, whoseTurn } from "./core/turn";
 import { deriveStack } from "./core/stack";
 import { Toast } from "./ui/toast";
 import {
@@ -361,7 +362,24 @@ function readyState(overview: Overview, ref: PullRef, exact: boolean): Extract<B
     showBots,
     viewer: overview.viewer.login,
     versionsOpen: versionsView.isOpen,
+    ...turnOf(pullRequest, overview.viewer.login, exact),
   };
+}
+
+/**
+ * @param pullRequest The overview's pull request.
+ * @param viewer The viewer's login.
+ * @param exact Whether the overview is the pull request's own.
+ * @returns Whose move it waits for, and which reviewers have answers to read; nothing from another layer's overview.
+ */
+function turnOf(
+  pullRequest: NonNullable<NonNullable<Overview["repository"]>["pullRequest"]>,
+  viewer: string,
+  exact: boolean,
+): { turn: Turn | null; repliesFor: ReadonlyMap<string, number> } {
+  if (!exact) return { turn: null, repliesFor: new Map() };
+  const input = overviewTurnInput(pullRequest, viewer);
+  return { turn: whoseTurn(input), repliesFor: repliesAwaiting(input.threads, input.author) };
 }
 
 /** The visit's previous look, or the viewer's last review on a first visit; null until storage has answered. */

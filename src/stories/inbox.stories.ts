@@ -46,6 +46,7 @@ const REVIEW: InboxGroup = group("octo-org/api", 12, [
     resolvedThreads: 3,
     additions: 48,
     deletions: 7,
+    turn: { whose: "you", reasons: [{ code: "requested" }] },
     reviews: [
       { login: "octocat", avatarUrl: AVATAR, verdict: "approved" },
       { login: "ada", avatarUrl: null, verdict: "approved" },
@@ -59,6 +60,7 @@ const REVIEW: InboxGroup = group("octo-org/api", 12, [
     position: 2,
     totalThreads: 1,
     lastActivity: new Date(NOW - 26 * HOUR).toISOString(),
+    turn: { whose: "you", reasons: [{ code: "requested" }] },
     reviews: [{ login: "octocat", avatarUrl: AVATAR, verdict: "changes_requested" }],
   }),
   pull({
@@ -68,6 +70,7 @@ const REVIEW: InboxGroup = group("octo-org/api", 12, [
     position: 1,
     rerequested: true,
     viaTeam: true,
+    turn: { whose: "you", reasons: [{ code: "rerequested" }] },
   }),
 ]);
 
@@ -80,11 +83,21 @@ const WAITING: InboxGroup[] = [
       label: "Checks failed",
       yourVerdict: "changes_requested",
       pushedSinceReview: true,
+      turn: { whose: "you", reasons: [{ code: "replies", count: 2 }, { code: "pushed-since-review" }] },
       reviews: [{ login: "linus", avatarUrl: null, verdict: "commented" }],
     }),
   ]),
   group("octo-org/docs", null, [
-    pull({ number: 128, title: "docs: explain the stack badge", tone: "neutral", label: "Draft", yourVerdict: "commented" }),
+    pull({ number: 128, title: "docs: explain the stack badge", tone: "neutral", label: "Draft", yourVerdict: "commented", turn: { whose: "none", reasons: [{ code: "draft" }] } }),
+  ]),
+  group("octo-org/web", null, [
+    pull({
+      number: 77,
+      title: "fix(web): debounce the search box",
+      label: "Needs review",
+      yourVerdict: "changes_requested",
+      turn: { whose: "them", reasons: [{ code: "waiting-on-author" }] },
+    }),
   ]),
 ];
 
@@ -100,6 +113,7 @@ const MINE: InboxGroup[] = [
       additions: 10,
       deletions: 2,
       lastActivity: new Date(NOW - 40 * MINUTE).toISOString(),
+      turn: { whose: "you", reasons: [{ code: "checks-failed" }, { code: "changes-requested", who: ["mona"] }, { code: "replies", count: 1 }] },
       reviews: [
         { login: "mona", avatarUrl: null, verdict: "changes_requested" },
         { login: "octocat", avatarUrl: AVATAR, verdict: "approved" },
@@ -117,7 +131,17 @@ const MINE: InboxGroup[] = [
       position: 1,
       totalThreads: 2,
       resolvedThreads: 1,
+      turn: { whose: "you", reasons: [{ code: "ready-to-merge" }] },
       reviews: [{ login: "octocat", avatarUrl: AVATAR, verdict: "approved" }],
+    }),
+  ]),
+  group("octo-org/web", null, [
+    pull({
+      number: 64,
+      title: "feat(web): keyboard shortcuts for the inbox",
+      label: "Needs review",
+      author: "tizian",
+      turn: { whose: "them", reasons: [{ code: "waiting-on-reviewers", who: ["ada", "grace"] }] },
     }),
   ]),
 ];
@@ -238,9 +262,9 @@ export const EveryStatus: Story = {
     }),
 };
 
-/** All three sections folded to their headings, as the popup remembers them. */
+/** Every section folded to their headings, as the popup remembers them. */
 export const Collapsed: Story = {
-  render: () => mount({ inbox: ready(), problem: null }, ["review", "waiting", "mine"]),
+  render: () => mount({ inbox: ready(), problem: null }, ["you", "them", "none"]),
 };
 
 /** A section with nothing in it still keeps its line. */

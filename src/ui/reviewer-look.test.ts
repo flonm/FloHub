@@ -75,6 +75,16 @@ describe("reviewerLook", () => {
   });
 });
 
+describe("reviewerLook with replies", () => {
+  test("makes a reviewer the author answered last waiting, and says how often", () => {
+    const look = reviewerLook(reviewer({ status: "changes_requested" }), NOW, undefined, 2);
+    expect(look).toMatchObject({ waiting: true, ring: "attention", glyph: "changes" });
+    expect(look.detail).toBe("Requested changes 3 hours ago. Their turn: the author answered last in 2 threads they started.");
+    expect(reviewerLook(reviewer({ status: "commented" }), NOW, undefined, 1).detail).toEndWith("in a thread they started.");
+    expect(reviewerLook(reviewer({ status: "approved" }), NOW, undefined, 0).waiting).toBe(false);
+  });
+});
+
 describe("standingVerdict", () => {
   test.each([
     [{ status: "approved", dismissId: "R" }, "approved"],

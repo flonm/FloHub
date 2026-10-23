@@ -4,6 +4,7 @@ import type { PullRef } from "../core/pull-ref";
 import type { ReviewEvent } from "../core/shortcuts";
 import type { RawPullRequest } from "../core/reviewers";
 import type { RawStack, RawStackPull } from "../core/stack";
+import type { RawTurnThread } from "../core/turn";
 import type { ViewedFile, ViewedFiles } from "../core/viewed";
 import { type CommentLink, type CommentPlace, threadNumber } from "../core/comment-jump";
 import type { ReviewAction, ReviewDiscussion } from "../core/threads";
@@ -40,13 +41,27 @@ fragment StackPull on PullRequest {
   }
 }`;
 
+/** Who started each review thread and who spoke in it last, for whose turn it is. */
+const TURN_THREADS_FRAGMENT = `
+fragment TurnThreads on PullRequest {
+  turnThreads: reviewThreads(last: 50) {
+    nodes {
+      isResolved
+      first: comments(first: 1) { nodes { author { __typename login } } }
+      recent: comments(last: 3) { nodes { author { __typename login } } }
+    }
+  }
+}`;
+
 const OVERVIEW_QUERY = `
 ${STACK_PULL_FRAGMENT}
+${TURN_THREADS_FRAGMENT}
 query ($owner: String!, $name: String!, $number: Int!) {
   viewer { login }
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       ...StackPull
+      ...TurnThreads
       baseRefName
       baseRefOid
       headRefOid
@@ -103,6 +118,7 @@ query ($owner: String!, $name: String!, $number: Int!) {
 
 const INBOX_DETAILS_QUERY = `
 ${STACK_PULL_FRAGMENT}
+${TURN_THREADS_FRAGMENT}
 fragment InboxPull on PullRequest {
   id
   ...StackPull
@@ -117,6 +133,7 @@ fragment InboxPull on PullRequest {
   reviewRequestedEvents: timelineItems(last: 50, itemTypes: [REVIEW_REQUESTED_EVENT]) {
     nodes { ... on ReviewRequestedEvent { createdAt requestedReviewer { ... on Team { combinedSlug } } } }
   }
+  ...TurnThreads
   stack {
     number
     size
@@ -231,6 +248,8 @@ interface RawOverview {
             /** Missing from overviews cached before general comments were fetched. */
             comments?: { nodes: RawDiscussionComment[] };
             forcePushes: { totalCount: number; nodes: ({ createdAt?: string } | null)[] } | null;
+            /** Missing from overviews cached before turns. */
+            turnThreads?: { nodes: RawTurnThread[] };
           })
       | null;
   } | null;
