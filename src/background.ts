@@ -1,4 +1,5 @@
 import {
+  dismissReview,
   fetchOverview,
   fetchPendingComments,
   fetchReviewComment,
@@ -64,6 +65,10 @@ async function handle(message: Message): Promise<Reply<ReplyByType[Message["type
       }
       case "poke": {
         await pokeReviewer(message.ref, message.reviewer);
+        return { ok: true, value: null };
+      }
+      case "dismiss-review": {
+        await dismissReview(message.reviewId, message.message);
         return { ok: true, value: null };
       }
       case "rerequest": {

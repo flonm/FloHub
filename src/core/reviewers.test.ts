@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   deriveReviewers,
+  dismissedVerdicts,
   type RawActor,
   type RawPullRequest,
   type RawReviewState,
@@ -24,6 +25,8 @@ function buildPullRequest(options: {
   viewerCanUpdate?: boolean;
   requested?: (RawActor | RawTeam | null)[];
   reviews?: [RawActor, RawReviewState][];
+  /** What each dismissed review had been, by its index in reviews. */
+  dismissed?: [number, RawReviewState][];
 }): RawPullRequest {
   return {
     author: { login: options.author ?? "hubot" },
@@ -36,16 +39,138 @@ function buildPullRequest(options: {
         author,
         state,
         submittedAt: `2026-10-0${index + 1}T00:00:00Z`,
+        url: reviewUrl(index),
+        id: `PRR_${index}`,
       })),
     },
+    ...(options.dismissed && {
+      dismissals: {
+        nodes: options.dismissed.map(([index, previousReviewState]) => ({ previousReviewState, review: { url: reviewUrl(index) } })),
+      },
+    }),
   };
+}
+
+function reviewUrl(index: number): string {
+  return `https://github.com/octo-org/api/pull/1#pullrequestreview-${index}`;
 }
 
 function statuses(pullRequest: RawPullRequest, viewer = "octocat") {
   return deriveReviewers(pullRequest, viewer).map(({ name, status, previous }) => ({ name, status, previous }));
 }
 
+function dismissals(pullRequest: RawPullRequest) {
+  return deriveReviewers(pullRequest, "octocat").map(({ name, status, previous, dismissedFrom }) => ({ name, status, previous, dismissedFrom }));
+}
+
+describe("dismissedVerdicts", () => {
+  test("keeps what a dismissed approval or change request had been, by review URL", () => {
+    const verdicts = dismissedVerdicts({
+      nodes: [
+        { previousReviewState: "APPROVED", review: { url: "a" } },
+        { previousReviewState: "CHANGES_REQUESTED", review: { url: "b" } },
+        { previousReviewState: "COMMENTED", review: { url: "c" } },
+        { previousReviewState: "APPROVED", review: null },
+        null,
+        {},
+      ],
+    });
+
+    expect([...verdicts]).toEqual([
+      ["a", "approved"],
+      ["b", "changes_requested"],
+    ]);
+  });
+
+  test("knows nothing in an overview cached before dismissals were fetched", () => {
+    expect(dismissedVerdicts().size).toBe(0);
+  });
+});
+
 describe("deriveReviewers", () => {
+  test("says what a dismissed review had been", () => {
+    const pullRequest = buildPullRequest({
+      reviews: [
+        [user("defunkt"), "DISMISSED"],
+        [user("mojombo"), "DISMISSED"],
+        [user("wycats"), "DISMISSED"],
+      ],
+      dismissed: [
+        [0, "APPROVED"],
+        [1, "CHANGES_REQUESTED"],
+      ],
+    });
+
+    expect(dismissals(pullRequest)).toEqual([
+      { name: "defunkt", status: "dismissed", previous: null, dismissedFrom: "approved" },
+      { name: "mojombo", status: "dismissed", previous: null, dismissedFrom: "changes_requested" },
+      { name: "wycats", status: "dismissed", previous: null, dismissedFrom: null },
+    ]);
+  });
+
+  test("keeps what a dismissed review had been when its reviewer is requested again", () => {
+    const pullRequest = buildPullRequest({
+      requested: [user("mojombo")],
+      reviews: [[user("mojombo"), "DISMISSED"]],
+      dismissed: [[0, "APPROVED"]],
+    });
+
+    expect(dismissals(pullRequest)).toEqual([
+      { name: "mojombo", status: "rerequested", previous: "dismissed", dismissedFrom: "approved" },
+    ]);
+  });
+
+  test("lets a viewer who can update the pull request dismiss anyone else's standing verdict, a bot's included", () => {
+    const pullRequest = buildPullRequest({
+      requested: [user("wycats")],
+      reviews: [
+        [user("defunkt"), "APPROVED"],
+        [bot("coderabbitai"), "CHANGES_REQUESTED"],
+        [user("wycats"), "APPROVED"],
+        [user("mojombo"), "APPROVED"],
+        [user("mojombo"), "COMMENTED"],
+        [user("pjhyett"), "COMMENTED"],
+        [user("octocat"), "APPROVED"],
+        [user("hubot"), "APPROVED"],
+      ],
+    });
+
+    expect(Object.fromEntries(deriveReviewers(pullRequest, "octocat").map(({ name, dismissId }) => [name, dismissId]))).toEqual({
+      coderabbitai: "PRR_1",
+      wycats: "PRR_2",
+      pjhyett: null,
+      mojombo: "PRR_3",
+      octocat: null,
+      defunkt: "PRR_0",
+    });
+  });
+
+  test("offers no dismissal without write access, for a dismissed review, or without the review's id", () => {
+    const readOnly = buildPullRequest({ viewerCanUpdate: false, reviews: [[user("defunkt"), "APPROVED"]] });
+    const dismissed = buildPullRequest({ reviews: [[user("defunkt"), "DISMISSED"]] });
+    const cached = buildPullRequest({ reviews: [[user("defunkt"), "APPROVED"]] });
+    delete cached.reviews.nodes[0]?.id;
+
+    for (const pullRequest of [readOnly, dismissed, cached]) {
+      expect(deriveReviewers(pullRequest, "octocat").map(({ dismissId }) => dismissId)).toEqual([null]);
+    }
+  });
+
+  test("forgets a dismissal once the reviewer gives a new verdict", () => {
+    const pullRequest = buildPullRequest({
+      reviews: [
+        [user("mojombo"), "DISMISSED"],
+        [user("mojombo"), "COMMENTED"],
+        [user("mojombo"), "CHANGES_REQUESTED"],
+      ],
+      dismissed: [[0, "APPROVED"]],
+    });
+
+    expect(dismissals(pullRequest)).toEqual([
+      { name: "mojombo", status: "changes_requested", previous: null, dismissedFrom: null },
+    ]);
+  });
+
   test("keeps a dismissed review and the latest verdict after change requests", () => {
     const pullRequest = buildPullRequest({
       reviews: [

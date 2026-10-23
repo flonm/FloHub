@@ -56,6 +56,9 @@ query ($owner: String!, $name: String!, $number: Int!) {
         totalCount
         nodes { ... on HeadRefForcePushedEvent { createdAt } }
       }
+      dismissals: timelineItems(last: 100, itemTypes: [REVIEW_DISMISSED_EVENT]) {
+        nodes { ... on ReviewDismissedEvent { previousReviewState review { url } } }
+      }
       reviewRequests(first: 50) {
         nodes {
           requestedReviewer {
@@ -69,6 +72,7 @@ query ($owner: String!, $name: String!, $number: Int!) {
       }
       reviews(last: 100) {
         nodes {
+          id
           state
           submittedAt
           bodyText
@@ -414,6 +418,18 @@ export async function rerequestReview(ref: PullRef, login: string): Promise<void
     method: "POST",
     body: JSON.stringify({ reviewers: [login] }),
   });
+}
+
+/**
+ * Dismisses an approval or change request. GitHub posts the reason on the pull request and notifies the reviewer.
+ * @param reviewId The review's node id.
+ * @param message Why it no longer applies; GitHub refuses an empty one.
+ */
+export async function dismissReview(reviewId: string, message: string): Promise<void> {
+  await mutate(
+    "mutation ($id: ID!, $message: String!) { dismissPullRequestReview(input: { pullRequestReviewId: $id, message: $message }) { clientMutationId } }",
+    { id: reviewId, message },
+  );
 }
 
 /**

@@ -33,6 +33,20 @@ describe("deriveDiscussion", () => {
     ]);
   });
 
+  test("says what a dismissed review had been when the timeline still knows", () => {
+    const approval = review(user("mojombo"), "DISMISSED", "Ship it.", "2026-10-10T10:00:00Z");
+    const unknown = review(user("defunkt"), "DISMISSED", "Needs a test.", "2026-10-11T10:00:00Z");
+    const source: RawDiscussionSource = {
+      reviews: { nodes: [approval, unknown] },
+      dismissals: { nodes: [{ previousReviewState: "APPROVED", review: { url: approval.url } }] },
+    };
+
+    expect(deriveDiscussion(source).map(({ author, verdict, dismissedFrom }) => ({ author, verdict, dismissedFrom }))).toEqual([
+      { author: "defunkt", verdict: "dismissed", dismissedFrom: null },
+      { author: "mojombo", verdict: "dismissed", dismissedFrom: "approved" },
+    ]);
+  });
+
   test("leaves out drafts and reviews without text, including an empty change request's zero-width space", () => {
     const source: RawDiscussionSource = {
       reviews: {

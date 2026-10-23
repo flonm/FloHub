@@ -1,7 +1,10 @@
 import { el } from "./dom";
+import type { DismissedVerdict } from "../core/reviewers";
 import type { ReviewEvent } from "../core/shortcuts";
 
-export interface ReviewDialogRequest {
+export type ReviewDialogRequest = SubmitRequest | DismissRequest;
+
+interface SubmitRequest {
   event: ReviewEvent;
   number: number;
   /** Resolves to the draft comments a pending review holds, or null when there is none. */
@@ -13,10 +16,24 @@ export interface ReviewDialogRequest {
   submit: (body: string) => Promise<string | null>;
 }
 
-const COPY: Record<ReviewEvent, { title: string; action: string; busy: string }> = {
+interface DismissRequest {
+  event: "DISMISS";
+  reviewer: string;
+  verdict: DismissedVerdict;
+  /**
+   * Dismisses the review.
+   * @returns An error message to show, or null on success.
+   */
+  submit: (reason: string) => Promise<string | null>;
+}
+
+const COPY: Record<ReviewEvent | "DISMISS", { title: string; action: string; busy: string }> = {
   APPROVE: { title: "Approve", action: "Approve", busy: "Approving…" },
   REQUEST_CHANGES: { title: "Request changes on", action: "Request changes", busy: "Requesting changes…" },
+  DISMISS: { title: "Dismiss", action: "Dismiss review", busy: "Dismissing…" },
 };
+
+const DISMISSED_NAME: Record<DismissedVerdict, string> = { approved: "approval", changes_requested: "change request" };
 
 const DIALOG_STYLES = `
 :host {
@@ -79,13 +96,16 @@ button {
   cursor: pointer;
 }
 button.submit[data-event="APPROVE"] { border-color: transparent; background: var(--rd-approve-bg); color: var(--rd-approve-fg); }
-button.submit[data-event="REQUEST_CHANGES"] { border-color: transparent; background: var(--rd-changes-bg); color: var(--rd-changes-fg); }
+button.submit:is([data-event="REQUEST_CHANGES"], [data-event="DISMISS"]) { border-color: transparent; background: var(--rd-changes-bg); color: var(--rd-changes-fg); }
 button:disabled { cursor: not-allowed; opacity: 0.6; }
 :focus-visible { outline: 2px solid var(--rd-focus); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { dialog[open] { animation: none; } }
 `;
 
-/** A modal for approving or requesting changes with a comment, submitting any pending review. */
+/**
+ * A modal for approving or requesting changes with a comment, submitting any pending review, or for dismissing
+ * someone's review with the reason GitHub requires.
+ */
 export class ReviewDialog {
   private readonly host: HTMLElement;
   private readonly dialog: HTMLDialogElement;
@@ -115,20 +135,37 @@ export class ReviewDialog {
     const run = ++this.generation;
     const copy = COPY[request.event];
     const form = el("form", { method: "dialog" });
-    const label = el("label", { for: "review-body" }, "Comment ");
-    label.append(el("span", { class: "optional" }, "(optional)"));
-    const body = el("textarea", { id: "review-body", rows: "6", placeholder: "Leave a comment" });
-    const hint = el("p", { class: "hint", "aria-live": "polite" }, "Checking for pending comments…");
+    const dismissing = request.event === "DISMISS";
+    const label = el("label", { for: "review-body" }, dismissing ? "Reason" : "Comment ");
+    if (!dismissing) label.append(el("span", { class: "optional" }, "(optional)"));
+    const body = el("textarea", {
+      id: "review-body",
+      rows: "6",
+      placeholder: dismissing ? "Why the review no longer applies" : "Leave a comment",
+      ...(dismissing && { required: "" }),
+    });
+    const hint = el(
+      "p",
+      { class: "hint", "aria-live": "polite" },
+      dismissing
+        ? `GitHub posts the reason on the pull request and notifies ${request.reviewer}.`
+        : "Checking for pending comments…",
+    );
     const error = el("p", { class: "error", role: "alert" });
     const cancel = el("button", { type: "button" }, "Cancel");
     const submit = el("button", { type: "submit", class: "submit", "data-event": request.event }, copy.action);
+    const blank = () => dismissing && body.value.trim() === "";
+    submit.disabled = blank();
     const actions = el("div", { class: "actions" });
     actions.append(el("span", { class: "keys" }, "⌘↵ to submit · Esc to cancel"), cancel, submit);
-    form.append(el("h2", { id: "review-title" }, `${copy.title} #${request.number}`), label, body, hint, error, actions);
+    const title = dismissing
+      ? `${copy.title} ${request.reviewer}'s ${DISMISSED_NAME[request.verdict]}`
+      : `${copy.title} #${request.number}`;
+    form.append(el("h2", { id: "review-title" }, title), label, body, hint, error, actions);
     this.dialog.replaceChildren(form);
 
     const send = async () => {
-      if (submit.disabled) return;
+      if (submit.disabled || blank()) return;
       error.textContent = "";
       submit.disabled = true;
       cancel.disabled = true;
@@ -141,7 +178,7 @@ export class ReviewDialog {
         return;
       }
       error.textContent = failure;
-      submit.disabled = false;
+      submit.disabled = blank();
       cancel.disabled = false;
       submit.textContent = copy.action;
       form.removeAttribute("aria-busy");
@@ -157,23 +194,27 @@ export class ReviewDialog {
       void send();
     });
     cancel.addEventListener("click", () => this.dialog.close());
+    body.addEventListener("input", () => {
+      if (form.getAttribute("aria-busy") !== "true") submit.disabled = blank();
+    });
 
-    void (async () => {
-      let count: number | null;
-      try {
-        count = await request.pendingComments;
-      } catch {
-        if (run === this.generation) hint.textContent = "Could not check for pending comments.";
-        return;
-      }
-      if (run !== this.generation) return;
-      hint.textContent =
-        count === null
-          ? "No pending review comments."
-          : `Submits your pending review with its ${count} draft ${count === 1 ? "comment" : "comments"}.`;
-    })();
-
+    if (request.event !== "DISMISS") void this.showPending(request, hint, run);
     if (!this.dialog.open) this.dialog.showModal();
     body.focus();
+  }
+
+  private async showPending(request: SubmitRequest, hint: HTMLElement, run: number): Promise<void> {
+    let count: number | null;
+    try {
+      count = await request.pendingComments;
+    } catch {
+      if (run === this.generation) hint.textContent = "Could not check for pending comments.";
+      return;
+    }
+    if (run !== this.generation) return;
+    hint.textContent =
+      count === null
+        ? "No pending review comments."
+        : `Submits your pending review with its ${count} draft ${count === 1 ? "comment" : "comments"}.`;
   }
 }

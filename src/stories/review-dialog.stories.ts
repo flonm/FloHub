@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
+import type { DismissedVerdict } from "../core/reviewers";
 import type { ReviewEvent } from "../core/shortcuts";
 import { el } from "../ui/dom";
 import { ReviewDialog } from "../ui/review-dialog";
@@ -30,6 +31,26 @@ function dialog(event: ReviewEvent, options: { pending?: Promise<number | null>;
   return el("p", {}, "The dialog opens over the page; Esc closes it.");
 }
 
+/**
+ * Opens the dismissal the chip's X opens. The reason is required, so the button waits for one.
+ * @param verdict What the dismissed review is.
+ * @param failure The error a submit would answer with.
+ * @returns A line behind the backdrop.
+ */
+function dismissal(verdict: DismissedVerdict, failure?: string): HTMLElement {
+  for (const previous of document.querySelectorAll("flohub-dialog")) previous.remove();
+  new ReviewDialog().open({
+    event: "DISMISS",
+    reviewer: "mona",
+    verdict,
+    submit: async () => {
+      await settle();
+      return failure ?? null;
+    },
+  });
+  return el("p", {}, "The dialog opens over the page; Esc closes it.");
+}
+
 const meta = {
   title: "Stack/Review dialog",
   tags: ["autodocs"],
@@ -37,7 +58,7 @@ const meta = {
     docs: {
       description: {
         component:
-          "Approving or requesting changes from the bar. An empty change request is sent with a zero-width space, since GitHub refuses a bodyless one; a pending review with draft comments is submitted along with it.",
+          "Approving or requesting changes from the bar, or dismissing someone's review with the reason GitHub requires. An empty change request is sent with a zero-width space, since GitHub refuses a bodyless one; a pending review with draft comments is submitted along with it.",
       },
     },
   },
@@ -63,4 +84,15 @@ export const PendingCheckFails: Story = {
 /** Clicking Approve shows the error and re-enables the buttons. */
 export const SubmitFails: Story = {
   render: () => dialog("APPROVE", { failure: "GitHub rejected the review: Resource not accessible by personal access token" }),
+};
+
+/** Dismissing an approval: Dismiss review stays disabled until there is a reason. */
+export const DismissApproval: Story = { render: () => dismissal("approved") };
+
+/** Dismissing a change request. */
+export const DismissChangeRequest: Story = { render: () => dismissal("changes_requested") };
+
+/** Branch protection can keep the viewer from dismissing; type a reason and submit to see GitHub's refusal. */
+export const DismissFails: Story = {
+  render: () => dismissal("approved", "Could not dismiss the review: You do not have permission to dismiss this review."),
 };
