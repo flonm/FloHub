@@ -400,6 +400,11 @@ describe("buildInbox turns", () => {
   });
 });
 
+/** @returns A pull request the viewer requested changes on, before being asked again. */
+function before(submittedAt: string): Partial<RawInboxPull> {
+  return { latestReviews: { nodes: [{ state: "CHANGES_REQUESTED", author: { login: "octocat" }, submittedAt }] } };
+}
+
 describe("turnSections", () => {
   test("splits the searches by whose move each pull request waits for, newest first", () => {
     const own = { author: { login: "octocat", avatarUrl: "" }, reviewRequests: { nodes: [{ requestedReviewer: { login: "alice" } }] } };
@@ -421,9 +426,27 @@ describe("turnSections", () => {
     expect(shape("none")).toEqual([["mine", [4]]]);
   });
 
+  test("puts the review requests asked again first, the longest waiting first", () => {
+    const inbox = buildInbox(
+      buildRaw([
+        buildPull(1, { createdAt: "2026-10-12T09:00:00Z" }),
+        buildPull(2, { ...before("2026-10-10T09:00:00Z"), createdAt: "2026-10-13T09:00:00Z" }),
+        buildPull(3, { ...before("2026-10-10T09:00:00Z"), createdAt: "2026-10-11T09:00:00Z" }),
+      ]),
+      0,
+    );
+    const sections = turnSections(inbox);
+    expect(sections.again.map((entry) => entry.pulls[0]?.number)).toEqual([3, 2]);
+    expect(sections.you.map((entry) => entry.pulls[0]?.number)).toEqual([1]);
+    expect(inbox.turnCount).toBe(3);
+  });
+
   test("falls back to the searches for an inbox stored before turns", () => {
     const inbox = buildInbox(buildRaw([buildPull(1)], [buildPull(2, { isDraft: true })], [buildPull(3, reviewedBy("octocat", "COMMENTED", null))]), 0);
     for (const entry of [...inbox.review, ...inbox.mine, ...inbox.waiting!]) for (const pull of entry.pulls) delete pull.turn;
+    inbox.review[0]!.pulls[0]!.rerequested = true;
+    expect(turnSections(inbox).again.map((entry) => entry.pulls[0]?.number)).toEqual([1]);
+    inbox.review[0]!.pulls[0]!.rerequested = false;
     const sections = turnSections(inbox);
     expect([sections.you, sections.them, sections.none].map((groups) => groups.map((entry) => entry.pulls[0]?.number))).toEqual([[1], [3], [2]]);
   });

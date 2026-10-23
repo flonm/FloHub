@@ -264,7 +264,7 @@ export const EveryStatus: Story = {
 
 /** Every section folded to their headings, as the popup remembers them. */
 export const Collapsed: Story = {
-  render: () => mount({ inbox: ready(), problem: null }, ["you", "them", "none"]),
+  render: () => mount({ inbox: ready(), problem: null }, ["again", "you", "them", "none"]),
 };
 
 /** A section with nothing in it still keeps its line. */

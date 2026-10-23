@@ -1717,20 +1717,20 @@ for (const scheme of ["light", "dark"] as const) {
     check(
       JSON.stringify(sections) ===
         JSON.stringify([
+          { heading: "Re-requested1", rows: ["#77 fix(auth): refresh tokens before they expire and retry the failed request once"] },
           {
-            heading: "Your turn6",
+            heading: "Your turn5",
             rows: [
               "#903 feat(ui): render the stack",
               "#901 feat(api): add the stack endpoint",
               "#130 fix(sync): keep local commits on rebase",
               "#121 feat(stack): show failing checks",
               "#120 docs: explain the stack badge",
-              "#77 fix(auth): refresh tokens before they expire and retry the failed request once",
             ],
           },
           { heading: "Their turn1", rows: ["#122 feat(stack): page through long stacks"] },
         ]),
-      `popup sorts pull requests by whose turn it is, newest first, a stack's layers together top first: ${JSON.stringify(sections)}`,
+      `popup puts the reviews asked again first, then sorts pull requests by whose turn it is, newest first, a stack's layers together top first: ${JSON.stringify(sections)}`,
     );
     const chips = async (number: number) => (await popup.locator(".pull", { hasText: `#${number} ` }).locator(".status").allTextContents()).join(",");
     check(
@@ -1738,8 +1738,9 @@ for (const scheme of ["light", "dark"] as const) {
       `own pull requests say why they wait, and for whom: ${await chips(121)} | ${await chips(120)} | ${await chips(122)}`,
     );
     check(
-      (await popup.locator(".pull", { hasText: "#77" }).getByText("Re-requested").count()) === 1,
-      "a review request the viewer answered before is marked as re-requested",
+      (await popup.locator(".pull", { hasText: "#77" }).getByText("Re-requested").count()) === 0 &&
+        (await popup.locator("section", { has: popup.getByRole("button", { name: /^Re-requested/u }) }).locator(".pull", { hasText: "#77" }).count()) === 1,
+      "a review request the viewer answered before goes to Re-requested, which needs no chip to say so",
     );
     const waitingFlags = await popup.locator(".pull", { hasText: "#130" }).locator(".status").allTextContents();
     check(
@@ -1759,7 +1760,7 @@ for (const scheme of ["light", "dark"] as const) {
       pulls.map((row) => row.querySelector(":scope .position [aria-hidden]")?.textContent ?? null),
     );
     check(
-      JSON.stringify(positions) === JSON.stringify(["3/3", "1/3", null, null, null, null, null]) &&
+      JSON.stringify(positions) === JSON.stringify([null, "3/3", "1/3", null, null, null, null]) &&
         (await popup.locator(".group-label").count()) === 0,
       `stacked rows show their layer inline, with no group heading: ${JSON.stringify(positions)}`,
     );
@@ -1770,8 +1771,8 @@ for (const scheme of ["light", "dark"] as const) {
       }),
     );
     check(
-      JSON.stringify(diffStats[0]) === JSON.stringify({ shown: "+48\u{2212}7", spoken: "48 additions, 7 deletions" }) &&
-        diffStats.slice(1).every((stat) => stat === null),
+      JSON.stringify(diffStats[1]) === JSON.stringify({ shown: "+48\u{2212}7", spoken: "48 additions, 7 deletions" }) &&
+        diffStats.filter((stat) => stat !== null).length === 1,
       `rows show the pull request's added and deleted lines, and none without lines: ${JSON.stringify(diffStats)}`,
     );
     const badge = await inboxContext.serviceWorkers()[0]?.evaluate(async () => chrome.action.getBadgeText({}));
@@ -1786,21 +1787,21 @@ for (const scheme of ["light", "dark"] as const) {
     );
 
     const focusedRow = async () => popup.evaluate(() => document.activeElement?.querySelector(".number")?.textContent.trim() ?? null);
-    check((await focusedRow()) === "#903", `the popup opens with focus on the first row: ${await focusedRow()}`);
+    check((await focusedRow()) === "#77", `the popup opens with focus on the first row: ${await focusedRow()}`);
     const visited: (string | null)[] = [];
     for (const key of ["ArrowDown", "j", "j", "k", "End", "ArrowUp", "Home", "ArrowUp"]) {
       await popup.keyboard.press(key);
       visited.push(await focusedRow());
     }
     check(
-      visited.join(",") === "#901,#130,#121,#130,#122,#77,#903,#903",
+      visited.join(",") === "#903,#901,#130,#901,#122,#120,#77,#77",
       `arrow keys and j/k move through all sections, Home and End jump to the ends: ${visited.join(",")}`,
     );
     const tabStops = await popup.locator('.pull[tabindex="0"]').count();
     check(tabStops === 1, `the list holds a single tab stop: ${tabStops}`);
     await popup.keyboard.press("Shift+Tab");
     await popup.keyboard.press("ArrowDown");
-    check((await focusedRow()) === "#903", "the arrow down steps from the header back into the list");
+    check((await focusedRow()) === "#77", "the arrow down steps from the header back into the list");
 
     const [opened] = await Promise.all([
       inboxContext.waitForEvent("page"),
@@ -1812,7 +1813,7 @@ for (const scheme of ["light", "dark"] as const) {
     await popup.keyboard.press("k");
     const [background] = await Promise.all([inboxContext.waitForEvent("page"), popup.keyboard.press("ControlOrMeta+Enter")]);
     check(
-      background.url() === "https://github.com/octo-org/api/pull/77" && !popup.isClosed(),
+      background.url() === "https://github.com/github/gh-stack/pull/120" && !popup.isClosed(),
       `Cmd/Ctrl+Enter opens the focused row in a background tab and keeps the popup open: ${background.url()}`,
     );
     await background.close();
@@ -1842,7 +1843,7 @@ for (const scheme of ["light", "dark"] as const) {
     await reviewToggle.click();
     check(
       (await reviewToggle.getAttribute("aria-expanded")) === "false" &&
-        (await popup.locator(".pull").count()) === 1 &&
+        (await popup.locator(".pull").count()) === 2 &&
         (await popup.evaluate(() => document.activeElement?.id)) === "section-you",
       "a section heading collapses its rows and keeps focus",
     );

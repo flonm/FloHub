@@ -399,13 +399,20 @@ export type InboxRole = "review" | "waiting" | "mine";
 export type TurnGroup = InboxGroup & { role: InboxRole };
 
 /**
+ * The popup's sections: review requests the viewer is asked again on, apart from the rest of their turn, since an
+ * author who applied the viewer's review waits on a quick second look; then everything else by whose move it is.
+ */
+export type InboxSection = "again" | Whose;
+
+/**
  * Sorts the inbox by whose move each pull request waits for. A stack whose layers wait for different people is
  * split between the sections. An inbox stored before turns falls back to the search that found each pull request.
  * @param inbox The inbox.
- * @returns The groups waiting for the viewer, for someone else and for nobody, each newest first.
+ * @returns The groups the viewer is asked to review again, longest waiting first; then those waiting for the viewer,
+ *   for someone else and for nobody, each newest first.
  */
-export function turnSections(inbox: Inbox): Record<Whose, TurnGroup[]> {
-  const sections: Record<Whose, TurnGroup[]> = { you: [], them: [], none: [] };
+export function turnSections(inbox: Inbox): Record<InboxSection, TurnGroup[]> {
+  const sections: Record<InboxSection, TurnGroup[]> = { again: [], you: [], them: [], none: [] };
   const roles: [InboxRole, InboxGroup[]][] = [
     ["review", inbox.review],
     ["mine", inbox.mine],
@@ -413,14 +420,21 @@ export function turnSections(inbox: Inbox): Record<Whose, TurnGroup[]> {
   ];
   for (const [role, groups] of roles) {
     for (const entry of groups) {
-      for (const whose of ["you", "them", "none"] as const) {
-        const pulls = entry.pulls.filter((pull) => whoseOf(pull, role) === whose);
-        if (pulls.length > 0) sections[whose].push({ ...entry, pulls, role });
+      for (const section of ["again", "you", "them", "none"] as const) {
+        const pulls = entry.pulls.filter((pull) => sectionOf(pull, role) === section);
+        if (pulls.length > 0) sections[section].push({ ...entry, pulls, role });
       }
     }
   }
-  for (const groups of Object.values(sections)) groups.sort((a, b) => newest(b) - newest(a));
+  for (const groups of [sections.you, sections.them, sections.none]) groups.sort((a, b) => newest(b) - newest(a));
+  // The longer someone has waited on a second look, the more it blocks them.
+  sections.again.sort((a, b) => newest(a) - newest(b));
   return sections;
+}
+
+function sectionOf(pull: InboxPull, role: InboxRole): InboxSection {
+  const again = pull.turn ? pull.turn.reasons.some((reason) => reason.code === "rerequested") : role === "review" && pull.rerequested;
+  return again ? "again" : whoseOf(pull, role);
 }
 
 function whoseOf(pull: InboxPull, role: InboxRole): Whose {

@@ -1,15 +1,14 @@
 import { formatAge } from "../core/age";
 import { INBOX_PERIOD_MINUTES } from "../api/inbox-sync";
 import type { FailureCode } from "../api/github";
-import { type Inbox, type InboxPull, type InboxRole, isStale, type TurnGroup, turnSections } from "../core/inbox";
-import type { Whose } from "../core/turn";
+import { type Inbox, type InboxPull, type InboxRole, type InboxSection, isStale, type TurnGroup, turnSections } from "../core/inbox";
 import { formatDiffStat } from "../core/viewed";
 import { el, icon } from "./dom";
 import { VERDICT_LOOK, verdictFace } from "./verdict-face";
 import { reasonWords, type ReasonTone } from "./turn-words";
 
-/** The sections the popup draws: whose move each pull request waits for. */
-export type SectionKind = Whose;
+/** The sections the popup draws: review requests asked again, then whose move each pull request waits for. */
+export type SectionKind = InboxSection;
 
 /** What the popup shows instead of the inbox, or over it. */
 export interface Problem {
@@ -140,6 +139,7 @@ export function renderInbox(state: InboxViewState, actions: InboxViewActions): H
   }
   const sections = turnSections(inbox);
   return [
+    ...(sections.again.length > 0 ? [renderSection("Re-requested", sections.again, "", "again", state, actions)] : []),
     renderSection("Your turn", sections.you, "Nothing waits for you.", "you", state, actions),
     renderSection("Their turn", sections.them, "Nobody else has a move to make.", "them", state, actions),
     ...(sections.none.length > 0 ? [renderSection("Drafts", sections.none, "", "none", state, actions)] : []),
@@ -287,7 +287,7 @@ function renderPull(pull: InboxPull, entry: TurnGroup, kind: SectionKind, action
   const spoken = el("span", { class: "visually-hidden spoken-age" });
 
   const meta = el("span", { class: "meta", id: ids.meta });
-  meta.append(...renderReasons(pull, role));
+  meta.append(...renderReasons(pull, role, kind));
   if (role !== "mine" && pull.author) meta.append(el("span", { class: "item author" }, pull.author));
   meta.append(el("span", { class: "item repo" }, entry.repo));
   if (entry.stackNumber !== null && pull.position !== null) {
@@ -321,9 +321,11 @@ function renderPull(pull: InboxPull, entry: TurnGroup, kind: SectionKind, action
  * @param role The search that found it.
  * @returns The chips that say why it waits for whom, with its status when no chip says it already.
  */
-function renderReasons(pull: InboxPull, role: InboxRole): HTMLElement[] {
-  // A review request is what the "Your turn" section means by default, and the viewer's verdict says more than "waiting for author".
-  const reasons = (pull.turn?.reasons ?? []).filter((reason) => reason.code !== "requested" && reason.code !== "waiting-on-author");
+function renderReasons(pull: InboxPull, role: InboxRole, kind: SectionKind): HTMLElement[] {
+  // A review request is what the "Your turn" section means by default, being asked again what "Re-requested" means,
+  // and the viewer's verdict says more than "waiting for author".
+  const said = new Set(["requested", "waiting-on-author", ...(kind === "again" ? ["rerequested"] : [])]);
+  const reasons = (pull.turn?.reasons ?? []).filter((reason) => !said.has(reason.code));
   const chips = reasons.map((reason) => {
     const words = reasonWords(reason);
     return flag(words.text, words.tone, words.detail);
@@ -333,10 +335,10 @@ function renderReasons(pull: InboxPull, role: InboxRole): HTMLElement[] {
     const pushed = pull.pushedSinceReview && reasons.every((reason) => reason.code !== "pushed-since-review") ? [flag("New commits", "accent")] : [];
     return [...(verdict ? [verdict] : []), ...chips, ...pushed];
   }
-  if (!pull.turn && role === "review" && pull.rerequested) chips.push(flag("Re-requested", "attention"));
-  const said = new Set(chips.map((chip) => chip.textContent));
+  if (!pull.turn && role === "review" && pull.rerequested && kind !== "again") chips.push(flag("Re-requested", "attention"));
+  const shown = new Set(chips.map((chip) => chip.textContent));
   const quiet = role === "review" && pull.tone === "accent";
-  return quiet || said.has(pull.label) || (pull.label === "Draft" && reasons.length > 0) ? chips : [renderStatus(pull), ...chips];
+  return quiet || shown.has(pull.label) || (pull.label === "Draft" && reasons.length > 0) ? chips : [renderStatus(pull), ...chips];
 }
 
 /** The viewer's verdict its author has to answer, as a waiting row says it. */
