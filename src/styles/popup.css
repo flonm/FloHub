@@ -325,26 +325,35 @@ ul {
   height: 12px;
 }
 
+/*
+ * A team request's way out: a small button at the end of the title line, left of the age, shown on hover or focus.
+ * It covers only the title's end, which fades out under it, so the faces and the age stay readable.
+ */
 .hide-teams {
   position: absolute;
-  right: 12px;
-  bottom: 4px;
-  padding: 0 2px;
-  border: 0;
-  background: none;
+  top: 7px;
+  right: 46px;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--flo-border);
+  border-radius: var(--flo-radius-pill);
+  background: var(--flo-bg-muted);
+  box-shadow: -24px 0 12px -4px var(--flo-bg-muted);
   color: var(--flo-muted);
   font-size: 11px;
   font-weight: 600;
+  line-height: 18px;
   cursor: pointer;
   opacity: 0;
+  transition: opacity 100ms ease;
 }
 .layer:hover .hide-teams,
-.hide-teams:focus {
+.layer:focus-within .hide-teams {
   opacity: 1;
 }
 .hide-teams:hover {
+  border-color: var(--flo-muted);
   color: var(--flo-fg);
-  text-decoration: underline;
 }
 .hide-teams:disabled {
   cursor: default;
