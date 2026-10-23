@@ -182,8 +182,11 @@ query ($owner: String!, $name: String!, $number: Int!) {
           ... on AutomaticBaseChangeSucceededEvent { oldBase }
         }
       }
+      dismissals: timelineItems(last: 100, itemTypes: [REVIEW_DISMISSED_EVENT]) {
+        nodes { ... on ReviewDismissedEvent { previousReviewState review { url } } }
+      }
       reviews(last: 100, states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]) {
-        nodes { state author { login avatarUrl } submittedAt commit { oid committedDate } }
+        nodes { state url author { login avatarUrl } submittedAt commit { oid committedDate } }
       }
     }
   }

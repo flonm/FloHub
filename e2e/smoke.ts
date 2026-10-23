@@ -1,7 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import nodePath from "node:path";
-import { type BrowserContext, chromium, type Page, type Route } from "playwright";
+import { type BrowserContext, chromium, type Locator, type Page, type Route } from "playwright";
 
 process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS = "1";
 
@@ -654,6 +654,17 @@ async function reviewerRows(page: Page): Promise<string[]> {
     );
 }
 
+/** @returns The value a versions-view picker shows as picked, such as "1" for v1 or "0" for the base branch. */
+async function pickerValue(scope: Locator, name: string): Promise<string> {
+  return (await scope.locator(`[data-picker="${name}"] > button`).getAttribute("data-value")) ?? "";
+}
+
+/** Opens a versions-view picker and picks the choice with that value, as a click would. */
+async function pickIn(scope: Locator, name: string, value: string): Promise<void> {
+  await scope.locator(`[data-picker="${name}"] > button`).click();
+  await scope.locator(`[data-picker="${name}"] [role="option"][data-value="${value}"]`).click();
+}
+
 function floatingBar(page: Page) {
   return page.locator('flohub-bar[data-mode="floating"]');
 }
@@ -820,7 +831,7 @@ check(
 const versions = page.locator("flohub-versions .surface");
 await versions.locator("details.file").first().waitFor();
 check(
-  (await versions.getByLabel("From").inputValue()) === "1" && (await versions.getByLabel("To").inputValue()) === "3",
+  (await pickerValue(versions, "From")) === "1" && (await pickerValue(versions, "To")) === "3",
   "versions default to the viewer's last reviewed version → current",
 );
 const fileRows = (await versions.locator("details.file > summary").allInnerTexts()).map((row) => visibleText(row));
@@ -888,11 +899,12 @@ check(
   (await readmeFile.locator(".line").count()) > readmeLines,
   "expanding a gap shows the unchanged lines around a change",
 );
-await versions.getByLabel("From").selectOption("3");
-await versions.getByText("No differences.").waitFor();
-check(true, "picking the same version on both sides shows no differences");
-await versions.getByLabel("From").selectOption("1");
-await versions.getByLabel("To").selectOption("2");
+check(
+  (await versions.locator('[data-picker="From"] [role="option"][data-value="3"]').getAttribute("aria-disabled")) === "true",
+  "From doesn't offer the version To shows, so the two sides can't be the same",
+);
+await pickIn(versions, "From", "1");
+await pickIn(versions, "To", "2");
 await versions.locator("details.file").first().waitFor();
 const versionsParam = async () => page.evaluate(() => new URL(location.href).searchParams.get("flohub-versions"));
 check((await versionsParam()) === "aaaaaaa..bbbbbbb", `the URL keeps the range on screen: ${await versionsParam()}`);
@@ -900,13 +912,13 @@ check(
   (await page.locator("flohub-versions").getAttribute("data-mode")) === "floating",
   "on GitHub's classic Files changed page the versions view floats over the diff",
 );
-await versions.getByLabel("To").focus();
+await versions.locator('[data-picker="To"] > button').focus();
 await page.keyboard.press("Escape");
 check(await versions.isHidden(), "Escape inside the versions view closes it");
 check((await versionsParam()) === null, "closing the versions view takes the range off the URL");
 await diffSwitch.getByRole("button", { name: "Versions", exact: true }).click();
 await versions.locator("details.file").first().waitFor();
-const pickedRange = async () => `${await versions.getByLabel("From").inputValue()}→${await versions.getByLabel("To").inputValue()}`;
+const pickedRange = async () => `${await pickerValue(versions, "From")}→${await pickerValue(versions, "To")}`;
 check((await pickedRange()) === "1→2", `reopening the versions view keeps the range picked: ${await pickedRange()}`);
 await versions.getByRole("button", { name: "Close" }).click();
 check(await versions.isHidden(), "Close closes the versions view");
@@ -1097,10 +1109,10 @@ await otherRow.click();
 // The fixture's v2 has the head's files, so the thread's file makes the same change in both: the view says so.
 await docked.locator(".notice", { hasText: "makes the same change in both versions" }).waitFor();
 check(
-  (await docked.getByLabel("From").inputValue()) === "2" && (await docked.getByLabel("To").inputValue()) === "3",
+  (await pickerValue(docked, "From")) === "2" && (await pickerValue(docked, "To")) === "3",
   "its row opens how the code changed since that version",
 );
-await docked.getByLabel("From").selectOption("1");
+await pickIn(docked, "From", "1");
 await docked.locator("details.unchanged").evaluate((details) => {
   (details as HTMLDetailsElement).open = true;
 });
@@ -1109,28 +1121,37 @@ check((await unchangedRow.innerText()).includes("Code at v1"), "a thread on a fi
 await unchangedRow.click();
 await docked.locator(".line.target").waitFor();
 check(
-  (await docked.getByLabel("From").inputValue()) === "0" &&
-    (await docked.getByLabel("To").inputValue()) === "1" &&
+  (await pickerValue(docked, "From")) === "0" &&
+    (await pickerValue(docked, "To")) === "1" &&
     (await docked.locator(".line.target").innerText()).includes("Adopts server rebases."),
   "its row opens the code as the thread saw it, at its line",
 );
-await docked.getByLabel("To").selectOption("3");
+await pickIn(docked, "To", "3");
 await docked.locator(".timeline li").nth(2).locator("button").click();
 check(
-  (await docked.getByLabel("From").inputValue()) === "2" && (await docked.getByLabel("To").inputValue()) === "3",
+  (await pickerValue(docked, "From")) === "2" && (await pickerValue(docked, "To")) === "3",
   "a version picked on the timeline inside the range becomes the older side",
 );
-await docked.getByLabel("From").selectOption("1");
+await pickIn(docked, "From", "1");
 check(
   (await docked.locator(".version-pick .pick-words").first().textContent()) === "v1 your review",
   "the From picker names the version in a few words, marking the viewer's review",
 );
-const optionsOutOfOrder = async (label: string) =>
-  docked.getByLabel(label).evaluate((select) => [...(select as HTMLSelectElement).options].filter((option) => option.disabled).map((option) => option.value).join(","));
+const optionsOutOfOrder = async (name: string) =>
+  docked.locator(`[data-picker="${name}"] [role="option"][aria-disabled="true"]`).evaluateAll((items) => items.map((item) => (item as HTMLElement).dataset.value).join(","));
 check(
   (await optionsOutOfOrder("To")) === "1" && (await optionsOutOfOrder("From")) === "3",
   `neither picker offers a version that would put the newer side before the older: To ${await optionsOutOfOrder("To")}, From ${await optionsOutOfOrder("From")}`,
 );
+await docked.locator('[data-picker="To"] > button').focus();
+await splitPage.keyboard.press("ArrowDown");
+await splitPage.keyboard.press("ArrowDown");
+await splitPage.keyboard.press("Enter");
+check(
+  (await pickerValue(docked, "To")) === "2" && (await docked.locator('[data-picker="To"] [role="listbox"]').isHidden()),
+  "the To picker opens with the down arrow, moves with the arrows and picks with Enter",
+);
+await pickIn(docked, "To", "3");
 const reviewedSlots = async () =>
   docked.locator(".timeline li.reviewed").evaluateAll((items) =>
     items.map((item) => [...item.querySelectorAll(".verdict")].map((badge) => (badge as HTMLElement).dataset.tone).join("+")),
@@ -1139,12 +1160,12 @@ check(
   JSON.stringify(await reviewedSlots()) === JSON.stringify(["muted", "attention", "success"]),
   `the timeline draws each reviewed version's reviewers with their verdicts: ${JSON.stringify(await reviewedSlots())}`,
 );
-await docked.getByLabel("Reviews").selectOption("mojombo");
+await pickIn(docked, "Reviews", "mojombo");
 check(
   JSON.stringify(await reviewedSlots()) === JSON.stringify(["attention", "success"]),
   `following one reviewer leaves only their reviews on the timeline, so their verdict's path shows: ${JSON.stringify(await reviewedSlots())}`,
 );
-await docked.getByLabel("Reviews").selectOption("");
+await pickIn(docked, "Reviews", "");
 await docked.locator(".thread-row").nth(1).waitFor();
 await docked.getByLabel("Comments").uncheck();
 check(await threadRows.first().isHidden(), "the Comments toggle hides the threads");
@@ -1269,8 +1290,8 @@ await jumpMenu.getByRole("menuitem", { name: /^Changes since v1/u }).click();
 const target = docked.locator("details.file", { hasText: "README.md" }).locator(".line.target");
 await target.first().waitFor();
 check(
-  (await docked.getByLabel("From").inputValue()) === "1" &&
-    (await docked.getByLabel("To").inputValue()) === "3" &&
+  (await pickerValue(docked, "From")) === "1" &&
+    (await pickerValue(docked, "To")) === "3" &&
     (await target.count()) === 1 &&
     (await target.innerText()).includes("Diverged stacks") &&
     (await target.evaluate((row) => {
@@ -1289,7 +1310,7 @@ check(
 await splitPage.keyboard.press("2");
 await docked.getByText("Shows the pull request's changes as v1 made them").waitFor();
 check(
-  (await docked.getByLabel("From").inputValue()) === "0" &&
+  (await pickerValue(docked, "From")) === "0" &&
     (await docked.locator(".line.target").innerText()).includes("Diverged stacks") &&
     splitPage.url().includes("flohub-versions=base..aaaaaaa"),
   "the 2 key picks Code at v1, which shows v1 against the base branch, at the commented line, and the URL says so",
@@ -1298,8 +1319,8 @@ await splitPage.locator("#current-link").click();
 await jumpMenu.getByRole("menuitem", { name: /^In the current diff/u }).click();
 await docked.getByText("Shows the pull request's changes as v3 made them").waitFor();
 check(
-  (await docked.getByLabel("From").inputValue()) === "0" &&
-    (await docked.getByLabel("To").inputValue()) === "3" &&
+  (await pickerValue(docked, "From")) === "0" &&
+    (await pickerValue(docked, "To")) === "3" &&
     (await docked.locator(".line.target").innerText()).includes("Diverged stacks"),
   "a current comment's In the current diff shows the head against the base branch, at the line as the head numbers it",
 );
