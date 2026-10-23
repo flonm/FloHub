@@ -10,6 +10,7 @@ import {
   formatRangeParam,
   keepRecentRanges,
   lastReviewedVersion,
+  outOfOrder,
   parseRangeParam,
   pickBase,
   pickOnTimeline,
@@ -17,9 +18,11 @@ import {
   rangeToSave,
   type RawVersionPull,
   restoreRange,
+  reviewsShown,
   type SavedRange,
   shortVersion,
   type Version,
+  versionReviewers,
 } from "./versions";
 
 const commit = (oid: string, committedDate: string) => ({ oid, committedDate });
@@ -53,6 +56,29 @@ const pull = (overrides: Partial<RawVersionPull> = {}): RawVersionPull => ({
 });
 
 describe("deriveVersions", () => {
+  test("keeps each reviewer's verdict on a version, which a later comment doesn't override", () => {
+    const v2 = commit("v2", "2026-10-02T09:55:00Z");
+    const { versions } = deriveVersions(
+      pull({
+        reviews: {
+          nodes: [
+            { state: "CHANGES_REQUESTED", author: { login: "cleo", avatarUrl: "https://avatars/cleo" }, submittedAt: "2026-10-02T11:00:00Z", commit: v2 },
+            { state: "COMMENTED", author: { login: "cleo" }, submittedAt: "2026-10-02T12:00:00Z", commit: v2 },
+            { state: "COMMENTED", author: { login: "dan" }, submittedAt: "2026-10-02T13:00:00Z", commit: v2 },
+            { state: "APPROVED", author: { login: "dan" }, submittedAt: "2026-10-02T14:00:00Z", commit: v2 },
+            { author: { login: "old" }, submittedAt: "2026-10-02T15:00:00Z", commit: v2 },
+          ],
+        },
+      }),
+      [],
+      "me",
+    );
+    expect(versions[1]?.reviews).toEqual([
+      { login: "cleo", avatarUrl: "https://avatars/cleo", verdict: "changes_requested" },
+      { login: "dan", avatarUrl: null, verdict: "approved" },
+    ]);
+  });
+
   test("orders both sides of every force push, current head last", () => {
     const { versions } = deriveVersions(pull(), [], "me");
     expect(versions.map((version) => [version.number, version.oid, version.pushedBy, version.current])).toEqual([
@@ -406,5 +432,52 @@ describe("a version in a few words", () => {
     ["else its age", aVersion({}), { name: "v2", tag: "3h", review: false }],
   ])("%s", (_case, given, expected) => {
     expect(shortVersion(given, now)).toEqual(expected);
+  });
+});
+
+describe("the reviews on the timeline", () => {
+  const mona = { login: "mona", avatarUrl: "https://avatars/mona", verdict: "commented" as const };
+  const octocat = { login: "octocat", avatarUrl: null, verdict: "approved" as const };
+  const versions = [
+    aVersion({ number: 1, reviews: [mona] }),
+    aVersion({ number: 2 }),
+    aVersion({ number: 3, reviews: [{ ...mona, verdict: "changes_requested" }, octocat] }),
+    aVersion({ number: 4, reviews: [{ ...mona, verdict: "approved" }] }),
+  ];
+
+  test("lists everyone who reviewed a version, first reviewer first, with how many versions each reviewed", () => {
+    expect(versionReviewers(versions)).toEqual([
+      { login: "mona", avatarUrl: "https://avatars/mona", count: 3 },
+      { login: "octocat", avatarUrl: null, count: 1 },
+    ]);
+  });
+
+  test("following one reviewer leaves only their reviews, so the strip shows how their verdict moved", () => {
+    expect(versions.map((version) => reviewsShown(version, "mona").map((review) => review.verdict))).toEqual([
+      ["commented"],
+      [],
+      ["changes_requested"],
+      ["approved"],
+    ]);
+    expect(reviewsShown(versions[2]!, null)).toHaveLength(2);
+  });
+
+  test("a history cached before verdicts has no reviews to draw", () => {
+    expect(reviewsShown(aVersion({}), null)).toEqual([]);
+    expect(versionReviewers([aVersion({})])).toEqual([]);
+  });
+});
+
+describe("keeping the range in order", () => {
+  test.each([
+    ["from", 3, { from: 1, to: 3 }, true],
+    ["from", 4, { from: 1, to: 3 }, true],
+    ["from", 2, { from: 1, to: 3 }, false],
+    ["from", 0, { from: 1, to: 3 }, false],
+    ["to", 1, { from: 1, to: 3 }, true],
+    ["to", 0, { from: 0, to: 3 }, true],
+    ["to", 2, { from: 1, to: 3 }, false],
+  ] as const)("%s v%i with the range %o is out of order: %p", (side, version, range, expected) => {
+    expect(outOfOrder(side, version, range)).toBe(expected);
   });
 });
