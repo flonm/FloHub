@@ -883,3 +883,54 @@
     transition: none;
   }
 }
+
+/*
+ * The toolbar's list of shortcuts: a panel under its keyboard button. It is fixed in the window and above GitHub's
+ * sticky headers, which an absolute panel inside the bar slid under.
+ */
+.shortcuts-panel {
+  position: fixed;
+  z-index: 2147482000;
+  width: 380px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--flo-border);
+  border-radius: var(--flo-radius-md);
+  background: var(--flo-bg);
+  box-shadow: var(--flo-shadow);
+}
+.shortcuts-panel .label {
+  margin: 0 0 8px;
+}
+.keys {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 0;
+}
+.keys dt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.keys dd {
+  margin: 0;
+}
+.then {
+  color: var(--flo-muted);
+  font-size: 11px;
+}
+kbd {
+  display: inline-block;
+  min-width: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--flo-border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--flo-bg);
+  font: 11px/16px var(--flo-font-mono);
+  text-align: center;
+}

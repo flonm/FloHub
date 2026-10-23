@@ -92,3 +92,35 @@ export function createShortcutMatcher(): (input: KeyInput) => ShortcutMatch {
     return { action: null, claim: prefix.claimFirstKey };
   };
 }
+
+/** One row of the shortcut list: the keys, pressed one after the other or as alternatives, and what they do. */
+export interface ShortcutHelp {
+  keys: string[];
+  /** How the keys go together: "then" for a sequence, "or" for alternatives, null for a single key or chord. */
+  join: "then" | "or" | null;
+  action: string;
+}
+
+/**
+ * The shortcuts FloHub adds on a pull request, as the options page and the bar's list show them.
+ * @param mac Whether the viewer is on macOS, where the stack moves with ⌘ rather than Ctrl.
+ * @returns The list, most used first.
+ */
+export function shortcutHelp(mac: boolean): ShortcutHelp[] {
+  const mod = mac ? "⌘" : "Ctrl+";
+  return [
+    { keys: [`${mod}⇧↑`, `${mod}⇧↓`], join: "or", action: "Go to the pull request above or below in the stack" },
+    { keys: ["R", "Y"], join: "then", action: "Approve right away, without a comment" },
+    { keys: ["R", "A"], join: "then", action: "Approve with a comment" },
+    { keys: ["R", "N"], join: "then", action: "Request changes, with or without a comment" },
+    { keys: ["C", "C"], join: "then", action: "Copy gh pr checkout <number>" },
+    { keys: ["C", "G"], join: "then", action: "Copy the pull request's link" },
+    { keys: ["1", "2", "3"], join: null, action: "In the menu a comment's file link opens: pick a way to see its code" },
+    { keys: ["Esc"], join: null, action: "Close a menu, a dialog or the versions view" },
+  ];
+}
+
+/** @returns Whether the browser runs on macOS, from what it says of its platform. */
+export function isMac(platform: string): boolean {
+  return /mac/iu.test(platform);
+}

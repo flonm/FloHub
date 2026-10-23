@@ -9,6 +9,8 @@ import type { DiscussionItem } from "../core/discussion";
 import { renderDiscussionControls, renderDiscussionList } from "./discussion-view";
 import { dismissedName, POKE_COOLDOWN_MS, reviewerLook, standingVerdict } from "./reviewer-look";
 import { Tooltip } from "./tooltip";
+import { isMac, shortcutHelp } from "../core/shortcuts";
+import { renderShortcutList } from "./shortcut-list";
 
 export type BarState =
   | { kind: "loading" }
@@ -77,6 +79,9 @@ export class ReviewBar {
   private entering = false;
   private minimized = false;
   private readonly tooltip = new Tooltip();
+  /** Whether the toolbar's list of shortcuts is open, kept across re-renders. */
+  private shortcutsOpen = false;
+  private releaseShortcuts: (() => void) | null = null;
 
   constructor(
     private readonly mode: "inline" | "floating",
@@ -92,6 +97,16 @@ export class ReviewBar {
     this.root.setAttribute("aria-label", "Reviewers");
     this.shadow.append(style, this.root, this.tooltip.element);
     this.tooltip.watch(this.shadow);
+    this.shadow.addEventListener("keydown", (event) => {
+      if ((event as KeyboardEvent).key !== "Escape" || !this.shortcutsOpen) return;
+      event.stopPropagation();
+      this.showShortcuts(false);
+    });
+    document.addEventListener("pointerdown", (event) => {
+      if (this.shortcutsOpen && event.composedPath().every((target) => !(target instanceof Element) || !target.classList.contains("shortcuts"))) {
+        this.showShortcuts(false);
+      }
+    });
     if (mode !== "floating") return;
     this.shadow.addEventListener("keydown", (event) => {
       if ((event as KeyboardEvent).key === "Escape" && this.expanded) this.toggle(false);
@@ -107,6 +122,7 @@ export class ReviewBar {
     const focusKey = (this.shadow.activeElement as HTMLElement | null)?.dataset.focusKey;
     this.tooltip.hide();
     this.root.replaceChildren(this.mode === "inline" ? this.renderFull() : this.renderFloating());
+    this.placeShortcuts();
     this.entering = false;
     if (focusKey) this.shadow.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus();
   }
@@ -172,12 +188,10 @@ export class ReviewBar {
     const toolbar = el("div", { class: "toolbar area-tools", role: "toolbar", "aria-label": "Pull request" });
     if (state.forcePushes.count > 0 || state.highlight) toolbar.append(...this.renderDiff(state));
     const talk = discussion ? renderDiscussionControls(discussion) : [];
-    if (talk.length > 0) {
-      const group = el("div", { class: "tool-group end" });
-      group.append(...talk);
-      toolbar.append(group);
-    }
-    if (toolbar.childElementCount > 0) layout.append(toolbar);
+    const group = el("div", { class: "tool-group end" });
+    group.append(...talk, this.renderShortcuts());
+    toolbar.append(group);
+    layout.append(toolbar);
     const list = discussion ? renderDiscussionList(discussion) : null;
     if (list) {
       list.classList.add("area-discussion");
@@ -252,6 +266,65 @@ export class ReviewBar {
       controls.push(details);
     }
     return controls;
+  }
+
+  /** @returns The keyboard button, and the list of shortcuts it opens under it. */
+  private renderShortcuts(): HTMLElement {
+    const wrapper = el("div", { class: "shortcuts" });
+    const toggle = el("button", {
+      type: "button",
+      class: "tool icon-only",
+      "aria-expanded": String(this.shortcutsOpen),
+      "aria-label": "Keyboard shortcuts",
+      "data-tip": "Keyboard shortcuts",
+      "data-focus-key": "shortcuts",
+    });
+    toggle.append(icon("keyboard"));
+    toggle.addEventListener("click", () => this.showShortcuts(!this.shortcutsOpen));
+    wrapper.append(toggle);
+    if (this.shortcutsOpen) {
+      const panel = el("div", { class: "shortcuts-panel", role: "dialog", "aria-label": "Keyboard shortcuts" });
+      const shortcuts = shortcutHelp(isMac(navigator.platform));
+      panel.append(el("p", { class: "label" }, "Keyboard shortcuts"), renderShortcutList(shortcuts));
+      wrapper.append(panel);
+    }
+    return wrapper;
+  }
+
+  private showShortcuts(open: boolean): void {
+    if (open === this.shortcutsOpen) return;
+    this.shortcutsOpen = open;
+    this.render(this.state);
+    if (open) {
+      // The panel is fixed under its button, so anything that moves the button closes it.
+      const away = (event: Event) => {
+        const panel = this.shadow.querySelector(".shortcuts-panel");
+        if (!panel || !event.composedPath().includes(panel)) this.showShortcuts(false);
+      };
+      addEventListener("scroll", away, true);
+      addEventListener("resize", away);
+      this.releaseShortcuts = () => {
+        removeEventListener("scroll", away, true);
+        removeEventListener("resize", away);
+      };
+    } else {
+      this.releaseShortcuts?.();
+      this.releaseShortcuts = null;
+      this.shadow.querySelector<HTMLElement>('[data-focus-key="shortcuts"]')?.focus();
+    }
+  }
+
+  /** Puts the open list of shortcuts under its button, right-aligned with it, or above it near the window's bottom. */
+  private placeShortcuts(): void {
+    const panel = this.shadow.querySelector<HTMLElement>(".shortcuts-panel");
+    const toggle = this.shadow.querySelector<HTMLElement>('[data-focus-key="shortcuts"]');
+    if (!panel || !toggle) return;
+    const box = toggle.getBoundingClientRect();
+    const left = Math.max(8, Math.min(box.right - panel.offsetWidth, innerWidth - panel.offsetWidth - 8));
+    const below = box.bottom + 6;
+    const top = below + panel.offsetHeight > innerHeight - 8 ? Math.max(8, box.top - 6 - panel.offsetHeight) : below;
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
   }
 
   private renderReviewers(compact: boolean): HTMLElement {

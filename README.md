@@ -38,7 +38,7 @@ A Chrome, Firefox and Safari extension that adds a Graphite-style overview to ev
 
 ## Shortcuts
 
-Graphite's shortcuts, on every pull request tab. They never fire while you type in a text field.
+Graphite's shortcuts, on every pull request tab. They never fire while you type in a text field. The keyboard button at the end of the bar's toolbar lists them on the page, and the options page does too, both from the same list.
 
 | Keys | Action |
 |---|---|

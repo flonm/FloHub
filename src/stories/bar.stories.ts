@@ -323,6 +323,15 @@ export const InlineVersionsOpen: Story = {
     ),
 };
 
+/** The keyboard button at the toolbar's end lists every shortcut. */
+export const InlineShortcuts: Story = {
+  render: () => {
+    const host = interactive(ready());
+    host.shadowRoot!.querySelector<HTMLButtonElement>('[data-focus-key="shortcuts"]')!.click();
+    return host;
+  },
+};
+
 /** Force-pushes and highlighted changes since the viewer's review. */
 export const InlineVersions: Story = {
   render: () =>

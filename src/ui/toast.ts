@@ -1,4 +1,4 @@
-import { el } from "./dom";
+import { el, icon, type IconName } from "./dom";
 
 export type ToastTone = "info" | "success" | "danger";
 
@@ -13,11 +13,13 @@ const TOAST_STYLES = `
   pointer-events: none;
 }
 .toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   max-width: min(480px, calc(100vw - 32px));
-  padding: 8px 16px;
+  padding: 8px 14px 8px 10px;
   border: 1px solid var(--borderColor-default, #d1d9e0);
-  border-left-width: 4px;
-  border-radius: 8px;
+  border-radius: 999px;
   background: var(--bgColor-default, #ffffff);
   color: var(--fgColor-default, #1f2328);
   box-shadow: var(--shadow-floating-large, 0 8px 24px rgba(140, 149, 159, 0.2));
@@ -33,12 +35,20 @@ const TOAST_STYLES = `
   clip: rect(0 0 0 0);
   animation: none;
 }
-.toast[data-tone="success"] { border-left-color: var(--fgColor-success, #1a7f37); }
-.toast[data-tone="danger"] { border-left-color: var(--fgColor-danger, #d1242f); }
-.toast[data-tone="info"] { border-left-color: var(--fgColor-accent, #0969da); }
+/* The tone shows as an icon in a tinted circle: a check for success, a cross for a failure, a dot for news. */
+.mark { display: flex; flex: none; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; }
+.mark svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mark svg .fill { fill: currentColor; stroke: none; }
+.toast[data-tone="success"] .mark { background: var(--bgColor-success-muted, #dafbe1); color: var(--fgColor-success, #1a7f37); }
+.toast[data-tone="danger"] { border-radius: 12px; }
+.toast[data-tone="danger"] .mark { background: var(--bgColor-danger-muted, #ffebe9); color: var(--fgColor-danger, #d1242f); }
+.toast[data-tone="info"] .mark { background: var(--bgColor-accent-muted, #ddf4ff); color: var(--fgColor-accent, #0969da); }
+.text { padding-top: 1px; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 `;
+
+const MARK: Record<ToastTone, IconName> = { info: "dot", success: "check", danger: "cross" };
 
 const DURATION_MS: Record<ToastTone, number> = { info: 4000, success: 4000, danger: 8000 };
 
@@ -68,9 +78,11 @@ export class Toast {
   render(text: string, tone: ToastTone): void {
     if (!this.host.isConnected) document.body.append(this.host);
     const [active, idle] = tone === "danger" ? [this.assertive, this.polite] : [this.polite, this.assertive];
-    idle.textContent = "";
+    idle.replaceChildren();
     active.dataset.tone = tone;
-    active.textContent = text;
+    const mark = el("span", { class: "mark", "aria-hidden": "true" });
+    mark.append(icon(MARK[tone]));
+    active.replaceChildren(mark, el("span", { class: "text" }, text));
     this.active = active;
   }
 
@@ -82,7 +94,7 @@ export class Toast {
     this.render(text, tone);
     clearTimeout(this.timer);
     this.timer = setTimeout(() => {
-      if (this.active) this.active.textContent = "";
+      this.active?.replaceChildren();
     }, DURATION_MS[tone]);
   }
 }
