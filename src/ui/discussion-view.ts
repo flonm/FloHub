@@ -38,50 +38,78 @@ const BLOCK_CONTENT = /<(pre|img|table|ul|ol|blockquote|details|h[1-6])\b/iu;
 /** Items whose full text the viewer opened, kept across re-renders. */
 const opened = new Set<string>();
 
-/**
- * Renders the pull request's review texts and general comments: the new ones by default, everything on demand,
- * bots and stack tools only when asked for.
- * @param options The items and display state.
- * @returns The section, or null when the pull request has no such comments.
- */
-export function renderDiscussionSection(options: DiscussionOptions): HTMLElement | null {
-  if (options.items.length === 0) return null;
+interface Shown {
+  visible: DiscussionItem[];
+  unread: DiscussionItem[];
+  shown: DiscussionItem[];
+  bots: number;
+}
+
+function select(options: DiscussionOptions): Shown {
   const bots = options.items.filter((item) => item.bot).length;
   const visible = options.showBots ? options.items : options.items.filter((item) => !item.bot);
   const unread = visible.filter((item) => isUnread(item, options.seenAt, options.viewer));
   const shown = options.expanded ? visible : (unread.length > 0 ? unread.slice(0, MAX_COLLAPSED) : visible.slice(0, 1));
+  return { visible, unread, shown, bots };
+}
 
-  const section = el("section", { class: "discussion", "aria-label": "Discussion" });
-  const header = el("div", { class: "bar" });
-  header.append(el("span", { class: "label" }, "Discussion"));
-  if (unread.length > 0) header.append(el("span", { class: "discussion-new" }, `${unread.length} new`));
-  else header.append(el("span", { class: "message" }, countLabel(visible.length)));
-  if (visible.length > shown.length || options.expanded) {
-    const toggle = el(
-      "button",
-      { type: "button", class: "text-button", "aria-expanded": String(options.expanded), "data-focus-key": "discussion-toggle" },
-      options.expanded ? "Show less" : `Show all (${visible.length})`,
-    );
-    toggle.addEventListener("click", options.toggleExpanded);
-    header.append(toggle);
-  }
+/**
+ * The discussion's controls for the bar's toolbar: how many comments there are and how many are new, which opens
+ * the rest, and the switch for bots and stack tools.
+ * @param options The items and display state.
+ * @returns The controls, or none when the pull request has no such comments.
+ */
+export function renderDiscussionControls(options: DiscussionOptions): HTMLElement[] {
+  if (options.items.length === 0) return [];
+  const { visible, unread, shown, bots } = select(options);
+  const count = countLabel(visible.length);
+  const fresh = unread.length > 0 ? `, ${unread.length} new` : "";
+  const more = visible.length > shown.length || options.expanded;
+  const toggle = more
+    ? el("button", {
+        type: "button",
+        class: "tool",
+        "aria-expanded": String(options.expanded),
+        "aria-label": `Discussion: ${count}${fresh}. ${options.expanded ? "Show only the newest" : "Show all"}`,
+        "data-tip": options.expanded ? "Show only the newest" : `Show all ${count}`,
+        "data-focus-key": "discussion-toggle",
+      })
+    : el("span", { class: "tool static", "aria-label": `Discussion: ${count}${fresh}`, "data-tip": `Discussion: ${count}${fresh}` });
+  toggle.append(icon("comment"), el("span", { class: "tool-count", "aria-hidden": "true" }, String(visible.length)));
+  if (unread.length > 0) toggle.append(el("span", { class: "discussion-new", "aria-hidden": "true" }, `${unread.length} new`));
+  if (more) toggle.append(icon("chevron", "chevron"));
+  if (toggle instanceof HTMLButtonElement) toggle.addEventListener("click", options.toggleExpanded);
+  const controls: HTMLElement[] = [toggle];
   if (bots > 0) {
-    const toggle = el(
-      "button",
-      { type: "button", class: "text-button", "aria-pressed": String(options.showBots), "data-focus-key": "discussion-bots" },
-      options.showBots ? "Hide bots" : `Show bots (${bots})`,
-    );
-    toggle.addEventListener("click", options.toggleBots);
-    header.append(toggle);
+    const label = `${options.showBots ? "Hide" : "Show"} ${bots === 1 ? "the comment" : `${bots} comments`} from bots and stack tools`;
+    const botToggle = el("button", {
+      type: "button",
+      class: "tool",
+      "aria-pressed": String(options.showBots),
+      "aria-label": label,
+      "data-tip": label,
+      "data-focus-key": "discussion-bots",
+    });
+    botToggle.append(icon("bot"), el("span", { class: "tool-count", "aria-hidden": "true" }, String(bots)));
+    botToggle.addEventListener("click", options.toggleBots);
+    controls.push(botToggle);
   }
-  section.append(header);
+  return controls;
+}
 
-  if (shown.length > 0) {
-    const list = el("ol", { class: "discussion-list" });
-    for (const item of shown) list.append(renderItem(item, isUnread(item, options.seenAt, options.viewer), options.now));
-    section.append(list);
-  }
-  return section;
+/**
+ * Renders the pull request's review texts and general comments: the new ones by default, everything on demand,
+ * bots and stack tools only when asked for.
+ * @param options The items and display state.
+ * @returns The list, or null when there is nothing to show.
+ */
+export function renderDiscussionList(options: DiscussionOptions): HTMLElement | null {
+  if (options.items.length === 0) return null;
+  const { shown } = select(options);
+  if (shown.length === 0) return null;
+  const list = el("ol", { class: "discussion-list", "aria-label": "Discussion" });
+  for (const item of shown) list.append(renderItem(item, isUnread(item, options.seenAt, options.viewer), options.now));
+  return list;
 }
 
 function renderItem(item: DiscussionItem, unread: boolean, now: number): HTMLElement {

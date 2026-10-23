@@ -639,6 +639,15 @@ function inlineBar(page: Page) {
   return page.locator('flohub-bar[data-mode="inline"]');
 }
 
+/** @returns Each reviewer row as its name and state, e.g. "defunkt: Changes requested", in order. */
+async function reviewerRows(page: Page): Promise<string[]> {
+  return inlineBar(page)
+    .locator(".reviewer")
+    .evaluateAll((rows) =>
+      rows.map((row) => `${row.querySelector(".name")?.textContent ?? ""}${row.querySelector(".visually-hidden")?.textContent.split(". ", 1)[0] ?? ""}`),
+    );
+}
+
 function floatingBar(page: Page) {
   return page.locator('flohub-bar[data-mode="floating"]');
 }
@@ -700,19 +709,35 @@ await light.route("https://api.github.com/**", async (route) => fixture.handle(r
 const page = await light.newPage();
 
 await page.goto(`${PULL_URL}/files`);
-await inlineBar(page).getByText("Changes requested").first().waitFor();
-const chips = await inlineBar(page).locator(".chips > li").allInnerTexts();
+await inlineBar(page).locator(".reviewer").first().waitFor();
+const reviewers = await reviewerRows(page);
 check(
-  JSON.stringify(chips.map((chip) => chip.replaceAll(/\s+/gu, " ").trim())) ===
+  JSON.stringify(reviewers) ===
     JSON.stringify([
-      "defunkt Changes requested",
-      "mojombo Re-requested · had requested changes",
-      "github/backend Review pending",
-      "pjhyett Dismissed approval",
-      "wycats Commented",
-      "octocat Approved",
+      "defunkt: Changes requested",
+      "mojombo: Re-requested",
+      "github/backend: Review requested",
+      "pjhyett: Approval dismissed",
+      "wycats: Commented",
+      "octocat: Approved",
     ]),
-  `inline chips render in status order: ${JSON.stringify(chips)}`,
+  `reviewers are listed one per row, in status order, each named with its state: ${JSON.stringify(reviewers)}`,
+);
+const rings = await inlineBar(page)
+  .locator(".reviewer")
+  .evaluateAll((rows) =>
+    rows.map((row) => `${(row as HTMLElement).dataset.ring}${(row as HTMLElement).dataset.waiting === undefined ? "" : " dashed"} ${row.querySelector<SVGElement>(".glyph")?.dataset.tone}`),
+  );
+check(
+  JSON.stringify(rings) ===
+    JSON.stringify(["attention attention", "attention dashed attention", "muted dashed attention", "muted success", "muted muted", "success success"]),
+  `the ring says what counts now and dashes who is asked to review, while the glyph keeps what they said: ${JSON.stringify(rings)}`,
+);
+check(
+  ((await inlineBar(page).locator(".reviewer", { hasText: "mojombo" }).getAttribute("data-tip")) ?? "").startsWith(
+    "mojombo: Review requested again. Before, they requested changes",
+  ),
+  "a row's tooltip holds what its state leaves out",
 );
 const favicons = async () =>
   page.evaluate(() => [...document.head.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]')].map((link) => decodeURIComponent(link.href)));
@@ -729,13 +754,6 @@ check(await floatingBar(page).isHidden(), "floating pill is hidden while the inl
 check(
   (await inlineBar(page).getByRole("button", { name: /Re-request review from/u }).count()) === 3,
   "re-request is offered for defunkt, pjhyett and wycats only",
-);
-const pjhyettStatus = inlineBar(page).locator(".chip", { hasText: "pjhyett" }).locator(".status");
-check(
-  (await pjhyettStatus.getAttribute("data-tone")) === "muted" &&
-    (await pjhyettStatus.locator("svg").getAttribute("data-tone")) === "success" &&
-    (await pjhyettStatus.getAttribute("title")) === "Dismissed approval",
-  "a dismissed approval's slash keeps the approval's green, its word stays grey, and its tooltip says what it was",
 );
 const dismissButtons = await inlineBar(page).getByRole("button", { name: /^Dismiss /u }).evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label")));
 check(
@@ -784,10 +802,15 @@ check((await inlineBar(page).getByText("Merged", { exact: true }).count()) === 2
 await inlineBar(page).screenshot({ path: `${SCREENSHOTS}/inline-light.png` });
 
 check(
-  visibleText(await inlineBar(page).getByText(/^Force-pushed/u).innerText()) === "Force-pushed 2 times, last 3 hours ago",
-  "versions row counts the force pushes",
+  (await inlineBar(page).getByRole("img", { name: /^Force-pushed/u }).getAttribute("aria-label")) === "Force-pushed 2 times, last 3 hours ago",
+  "the toolbar counts the force pushes",
 );
-await inlineBar(page).getByRole("button", { name: "Compare versions" }).click();
+const diffSwitch = inlineBar(page).getByRole("group", { name: "What Files changed shows" });
+await diffSwitch.getByRole("button", { name: "Versions", exact: true }).click();
+check(
+  (await diffSwitch.getByRole("button", { name: "Versions", exact: true }).getAttribute("aria-pressed")) === "true",
+  "the diff switch shows the versions view as what Files changed shows",
+);
 const versions = page.locator("flohub-versions .surface");
 await versions.locator("details.file").first().waitFor();
 check(
@@ -875,7 +898,7 @@ await versions.getByLabel("To").focus();
 await page.keyboard.press("Escape");
 check(await versions.isHidden(), "Escape inside the versions view closes it");
 check((await versionsParam()) === null, "closing the versions view takes the range off the URL");
-await inlineBar(page).getByRole("button", { name: "Compare versions" }).click();
+await diffSwitch.getByRole("button", { name: "Versions", exact: true }).click();
 await versions.locator("details.file").first().waitFor();
 const pickedRange = async () => `${await versions.getByLabel("From").inputValue()}→${await versions.getByLabel("To").inputValue()}`;
 check((await pickedRange()) === "1→2", `reopening the versions view keeps the range picked: ${await pickedRange()}`);
@@ -910,22 +933,23 @@ check(
 await readmeDiff.locator(`#${readmeAnchor}R324`).scrollIntoViewIfNeeded();
 await page.waitForTimeout(150);
 await readmeDiff.screenshot({ path: `${SCREENSHOTS}/since-review-light.png` });
-const versionsRow = inlineBar(page).locator(".bar", { hasText: "Versions" });
+const sinceReview = diffSwitch.getByRole("button", { name: /^Since v1/u });
 check(
-  visibleText(await versionsRow.innerText()).includes("3 files changed since your review (v1), highlighted in Files changed"),
-  "the versions row says what changed since the review",
+  (await sinceReview.getAttribute("aria-pressed")) === "true" &&
+    (await sinceReview.getAttribute("data-tip")) === "3 files changed since your review (v1), highlighted in GitHub's diff",
+  "the diff switch says what changed since the review, and that it is highlighted",
 );
-await versionsRow.getByText("1 file is no longer changed").click();
+await inlineBar(page).getByLabel("1 file is no longer changed").click();
 check(
-  (await versionsRow.locator(".dropped li").allInnerTexts()).join(",") === "cmd/legacy.go",
+  (await inlineBar(page).locator(".dropped li").allInnerTexts()).join(",") === "cmd/legacy.go",
   "the files the pull request no longer changes are listed on demand, reachable by keyboard",
 );
-await inlineBar(page).getByRole("button", { name: "Hide" }).click();
+await diffSwitch.getByRole("button", { name: "GitHub's diff" }).click();
 await page.waitForFunction(() => document.querySelectorAll("[data-flohub-since], flohub-removed, flohub-since-badge").length === 0);
-check(true, "Hide takes every highlight off the diff");
-await inlineBar(page).getByRole("button", { name: "Show" }).click();
+check(true, "GitHub's diff takes every highlight off the diff");
+await sinceReview.click();
 await changedCell.first().waitFor();
-check(true, "Show puts the highlights back");
+check(true, "Since v1 puts the highlights back");
 const comparesBeforeReload = fixture.compareLog.length;
 await page.reload();
 await changedCell.first().waitFor();
@@ -933,7 +957,7 @@ check(
   fixture.compareLog.length === comparesBeforeReload,
   `a reload takes the highlights from storage, without comparing again: ${fixture.compareLog.length - comparesBeforeReload} new compares`,
 );
-await inlineBar(page).getByRole("button", { name: "Compare versions" }).click();
+await diffSwitch.getByRole("button", { name: "Versions", exact: true }).click();
 await versions.locator("details.file").first().waitFor();
 check(
   (await pickedRange()) === "1→2" && fixture.compareLog.length === comparesBeforeReload,
@@ -1404,8 +1428,11 @@ check(
 );
 await inlineBar(page).screenshot({ path: `${SCREENSHOTS}/inline-collapsed-light.png` });
 await page.reload();
-await inlineBar(page).getByText("Changes requested").first().waitFor();
-check((await inlineBar(page).locator(".stack-list").count()) === 0, "collapsed stack stays collapsed after a reload");
+await inlineBar(page).locator(".reviewers .faces li").first().waitFor();
+check(
+  (await inlineBar(page).locator(".stack-list").count()) === 0 && (await inlineBar(page).locator(".reviewers .faces li").count()) === 6,
+  "collapsed stack stays collapsed after a reload, with the reviewers shrunk to their faces",
+);
 await inlineBar(page).getByRole("button", { name: "Stack" }).click();
 await inlineBar(page).locator(".stack-list").waitFor();
 await page.screenshot({ path: `${SCREENSHOTS}/page-light.png` });
@@ -1434,7 +1461,7 @@ check(
 );
 await page.screenshot({ path: `${SCREENSHOTS}/floating-minimized-light.png` });
 await page.reload();
-await inlineBar(page).getByText("Changes requested").first().waitFor();
+await inlineBar(page).locator(".reviewer").first().waitFor();
 await page.mouse.wheel(0, 2400);
 await restoreTab.waitFor();
 check(await floatingBar(page).locator(".pill").isHidden(), "the floating bar stays minimized after a reload");
@@ -1444,7 +1471,7 @@ check(await restoreTab.isHidden(), "the edge tab restores the floating pill");
 
 await page.mouse.wheel(0, -5000);
 await inlineBar(page).getByRole("button", { name: "Re-request review from defunkt" }).click();
-await inlineBar(page).locator(".chips > li", { hasText: "defunkt" }).getByText("Re-requested").waitFor();
+await inlineBar(page).locator(".reviewer[data-waiting]", { hasText: "defunkt" }).waitFor();
 check(fixture.rerequests.join(",") === "defunkt", "re-request posts only defunkt to requested_reviewers");
 
 await page.getByRole("link", { name: /Conversation/u }).first().click();
@@ -1478,14 +1505,14 @@ await cached.route("https://api.github.com/**", async (route) => cachedFixture.h
 const cachedPage = await cached.newPage();
 await cachedPage.goto(`${PULL_URL}/files`);
 await inlineBar(cachedPage).locator(".stack-list").waitFor();
-await inlineBar(cachedPage).getByText("Changes requested").first().waitFor();
+await inlineBar(cachedPage).locator(".reviewer").first().waitFor();
 cachedFixture.overviewDelay = 5000;
 await cachedPage.reload();
 const reloadStarted = Date.now();
 await inlineBar(cachedPage).locator(".stack-list").waitFor({ timeout: 3000 });
 check(
   Date.now() - reloadStarted < 3000 &&
-    (await inlineBar(cachedPage).locator(".chips > li").count()) === 6 &&
+    (await inlineBar(cachedPage).locator(".reviewer").count()) === 6 &&
     (await inlineBar(cachedPage).getByRole("button", { name: "Refresh reviewers" }).getAttribute("aria-busy")) === "true",
   "a revisit shows the cached stack and reviewers at once, marked as refreshing",
 );
@@ -1538,7 +1565,7 @@ check(
     (await inlineBar(cachedPage).getByText("Loading reviewers…").count()) === 1,
   "a layer without its own cache shows the stack cached from another layer, with reviewers still loading",
 );
-await inlineBar(cachedPage).getByText("Changes requested").first().waitFor({ timeout: 10_000 });
+await inlineBar(cachedPage).locator(".reviewer").first().waitFor({ timeout: 10_000 });
 check(true, "reviewers fill in once the fresh overview arrives");
 await cachedWorker?.evaluate(async (current) => {
   // The fresh overview is stored after it reaches the page; a write still on its way would undo the edit below.
@@ -1564,14 +1591,14 @@ check(
   (await inlineBar(cachedPage).getByText("Loading reviewers…").count()) === 1,
   "a layer's own cache gives way to a later one fetched from another layer of its stack",
 );
-await inlineBar(cachedPage).getByText("Changes requested").first().waitFor({ timeout: 10_000 });
+await inlineBar(cachedPage).locator(".reviewer").first().waitFor({ timeout: 10_000 });
 cachedFixture.overviewDelay = 3000;
 cachedFixture.overviewFailure = 502;
 await cachedPage.reload();
 await inlineBar(cachedPage).locator(".stack-list").waitFor({ timeout: 3000 });
 await inlineBar(cachedPage).getByRole("button", { name: "Retry" }).waitFor({ timeout: 10_000 });
 check(
-  (await inlineBar(cachedPage).locator(".chips > li").count()) === 0,
+  (await inlineBar(cachedPage).locator(".reviewer").count()) === 0,
   "when the first fresh load fails, the cached overview gives way to the error and Retry",
 );
 await cached.close();
@@ -1768,9 +1795,9 @@ const dark = await launch("dark");
 await dark.route("https://api.github.com/**", async (route) => createFixture().handle(route));
 const darkPage = await dark.newPage();
 await darkPage.goto(`${PULL_URL}/files`);
-await inlineBar(darkPage).getByText("Approved").first().waitFor();
+await inlineBar(darkPage).locator(".reviewer").first().waitFor();
 await inlineBar(darkPage).screenshot({ path: `${SCREENSHOTS}/inline-dark.png` });
-await inlineBar(darkPage).getByRole("button", { name: "Compare versions" }).click();
+await inlineBar(darkPage).getByRole("button", { name: "Versions", exact: true }).click();
 await darkPage.locator("flohub-versions details.file").first().waitFor();
 await darkPage.waitForTimeout(250);
 await darkPage.screenshot({ path: `${SCREENSHOTS}/versions-dark.png` });
@@ -1939,16 +1966,16 @@ check(
 );
 await inlineBar(pokePage).getByRole("button", { name: /^Poke mojombo/u }).click();
 await pokePage.locator("flohub-toast").getByText("Poked mojombo. GitHub notifies them within a minute.").waitFor();
-await inlineBar(pokePage).locator(".chips > li", { hasText: "mojombo" }).getByText("· poked just now").waitFor();
+await inlineBar(pokePage).locator(".reviewer", { hasText: "mojombo" }).locator(".poked").waitFor();
 await inlineBar(pokePage).getByRole("button", { name: /^Poke github\/backend/u }).click();
-await inlineBar(pokePage).locator(".chips > li", { hasText: "github/backend" }).getByText("· poked just now").waitFor();
+await inlineBar(pokePage).locator(".reviewer", { hasText: "github/backend" }).locator(".poked").waitFor();
 check(
   pokeFixture.requestLog.join(",") === "remove:mojombo,add:mojombo,remove:team:backend,add:team:backend",
   `a poke removes and re-adds the request, for users and teams: ${pokeFixture.requestLog.join(",")}`,
 );
 await inlineBar(pokePage).screenshot({ path: `${SCREENSHOTS}/poke-light.png` });
 await pokePage.reload();
-await inlineBar(pokePage).locator(".chips > li", { hasText: "mojombo" }).getByText("· poked just now").waitFor();
+await inlineBar(pokePage).locator(".reviewer", { hasText: "mojombo" }).locator(".poked").waitFor();
 check(
   (await inlineBar(pokePage).getByRole("button", { name: /^Poke /u }).count()) === 0,
   "a poked reviewer can't be poked again within the hour, across reloads",
@@ -1974,7 +2001,7 @@ const [discussionWorker] = discussionContext.serviceWorkers();
 await discussionWorker?.evaluate(async (at) => chrome.storage.local.set({ discussionSeen: { "github/gh-stack#344": at } }), ago(10));
 const discussionPage = await discussionContext.newPage();
 await discussionPage.goto(`${PULL_URL}/files`);
-const discussion = inlineBar(discussionPage).locator("section.discussion");
+const discussion = inlineBar(discussionPage);
 await discussion.locator(".discussion-item").first().waitFor();
 const discussionItems = async () =>
   discussion.locator(".discussion-item").evaluateAll((items) =>
@@ -1985,15 +2012,15 @@ check(
     JSON.stringify(await discussionItems()) === JSON.stringify(["mojombo*", "wycats*"]),
   `the discussion shows the comments since the last visit, not the viewer's own or bots': ${JSON.stringify(await discussionItems())}`,
 );
-await discussion.getByRole("button", { name: "Show all (4)" }).click();
+await discussion.getByRole("button", { name: "Discussion: 4 comments, 2 new. Show all" }).click();
 check(
   JSON.stringify(await discussionItems()) === JSON.stringify(["octocat", "mojombo*", "wycats*", "defunkt"]) &&
     (await discussion.locator(".discussion-item", { hasText: "defunkt" }).locator(".discussion-verdict").innerText()) === "Requested changes",
   `Show all lists every review text and comment, newest first, with the review's verdict: ${JSON.stringify(await discussionItems())}`,
 );
-await discussion.getByRole("button", { name: "Show bots (2)" }).click();
+await discussion.getByRole("button", { name: "Show 2 comments from bots and stack tools" }).click();
 check((await discussion.locator(".discussion-item").count()) === 6, "Show bots adds the bot review and the stack tool's comment");
-await discussion.getByRole("button", { name: "Hide bots" }).click();
+await discussion.getByRole("button", { name: "Hide 2 comments from bots and stack tools" }).click();
 const longText = discussion.locator(".discussion-item", { hasText: "mojombo" }).locator(".discussion-text");
 const clampedBefore = await longText.evaluate((text) => text.classList.contains("clamped") && text.scrollHeight > text.clientHeight);
 await discussion.locator(".discussion-item", { hasText: "mojombo" }).getByRole("button", { name: "Show more" }).click();
@@ -2032,13 +2059,13 @@ check(
     }) && (await discussionPage.title()) !== "pwned",
   `comments render GitHub's formatting and drop scripts, handlers and javascript: links: ${JSON.stringify(rich)}`,
 );
-await discussion.getByRole("button", { name: "Show bots (2)" }).click();
+await discussion.getByRole("button", { name: "Show 2 comments from bots and stack tools" }).click();
 check(
   (await discussion.locator(".markdown-alert.markdown-alert-warning").count()) === 1 &&
     (await discussion.locator(".markdown-alert svg").count()) === 0,
   "GitHub's alert boxes keep their kind, without their icons",
 );
-await discussion.getByRole("button", { name: "Hide bots" }).click();
+await discussion.getByRole("button", { name: "Hide 2 comments from bots and stack tools" }).click();
 const seenNow = await discussionWorker?.evaluate(async () => {
   const saved = await chrome.storage.local.get("discussionSeen");
   return (saved.discussionSeen as Record<string, string>)["github/gh-stack#344"];
@@ -2055,7 +2082,7 @@ await inlineBar(partialPage).locator(".stack-list").waitFor();
 const notice = await inlineBar(partialPage).getByRole("alert").innerText();
 check(
   notice.includes("statusCheckRollup") && notice.includes("requestedReviewer") &&
-    (await inlineBar(partialPage).locator(".chips > li").count()) === 6,
+    (await inlineBar(partialPage).locator(".reviewer").count()) === 6,
   `fields the token cannot read leave the rest of the overview intact: "${notice}"`,
 );
 await inlineBar(partialPage).screenshot({ path: `${SCREENSHOTS}/partial-light.png` });

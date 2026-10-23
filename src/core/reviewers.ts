@@ -67,6 +67,8 @@ export interface Reviewer {
   dismissedFrom: DismissedVerdict | null;
   /** The node id of the reviewer's standing approval or change request, when the viewer may dismiss it. */
   dismissId: string | null;
+  /** When the reviewer gave the verdict, or last commented when they gave none; null for one never reviewed. */
+  at: string | null;
   canRerequest: boolean;
   /** Whether the viewer can remind a currently requested reviewer who hasn't approved yet by removing and re-adding the request. */
   canPoke: boolean;
@@ -99,7 +101,10 @@ interface Candidate {
   dismissedFrom: DismissedVerdict | null;
   /** The node id of the review behind the verdict. */
   reviewId: string | null;
+  /** When the verdict was given. */
+  opinionatedAt: string | null;
   commented: boolean;
+  commentedAt: string | null;
 }
 
 /**
@@ -131,8 +136,11 @@ export function deriveReviewers(pullRequest: RawPullRequest, viewerLogin: string
     const key = actorKey(review.author);
     const candidate = candidates.get(key) ?? toCandidate(review.author);
     candidates.set(key, candidate);
-    if (verdict === "commented") candidate.commented = true;
-    else {
+    if (verdict === "commented") {
+      candidate.commented = true;
+      candidate.commentedAt = review.submittedAt;
+    } else {
+      candidate.opinionatedAt = review.submittedAt;
       candidate.opinionated = verdict;
       candidate.dismissedFrom = verdict === "dismissed" && review.url ? (dismissed.get(review.url) ?? null) : null;
       candidate.reviewId = review.id ?? null;
@@ -162,6 +170,7 @@ export function deriveReviewers(pullRequest: RawPullRequest, viewerLogin: string
           candidate.name !== viewerLogin
             ? candidate.reviewId
             : null,
+        at: candidate.opinionated ? candidate.opinionatedAt : candidate.commentedAt,
         canRerequest:
           pullRequest.viewerCanUpdate &&
           candidate.kind === "user" &&
@@ -198,7 +207,7 @@ export function dismissedVerdicts(dismissals?: RawDismissals): Map<string, Dismi
 }
 
 function toCandidate(reviewer: RawActor | RawTeam): Candidate {
-  const base = { requested: false, opinionated: null, dismissedFrom: null, reviewId: null, commented: false };
+  const base = { requested: false, opinionated: null, dismissedFrom: null, reviewId: null, opinionatedAt: null, commented: false, commentedAt: null };
   if (reviewer.__typename === "Team") {
     return {
       ...base,

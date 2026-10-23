@@ -13,7 +13,14 @@ export type IconName =
   | "gear"
   | "external"
   | "copy"
-  | "unfold";
+  | "unfold"
+  | "changes"
+  | "compare"
+  | "file"
+  | "push"
+  | "bot"
+  | "warning"
+  | "highlight";
 
 type Shape = ["path", { d: string; class?: string }] | ["circle", { cx: string; cy: string; r: string; class?: string }];
 
@@ -25,6 +32,23 @@ const ICONS: Record<IconName, Shape[]> = {
   copy: [["path", { d: "M5.75 5.75h7.5v7.5h-7.5zM10.25 5.75v-3h-7.5v7.5h3" }]],
   unfold: [["path", { d: "M8 1.75v4M5.75 3.75 8 1.75l2.25 2M8 14.25v-4M5.75 12.25 8 14.25l2.25-2M2.5 8h1M6.5 8h1M10.5 8h1M14 8h-.5" }]],
   cross: [["path", { d: "M4.25 4.25l7.5 7.5M11.75 4.25l-7.5 7.5" }]],
+  /** A page with a plus over a minus, GitHub's sign for a change request. */
+  changes: [["path", { d: "M3.75 1.75h5.5l3 3v9.5h-8.5zM8 5v4M6 7h4M6 11.25h4" }]],
+  compare: [
+    ["circle", { cx: "4", cy: "3.75", r: "1.75" }],
+    ["circle", { cx: "12", cy: "12.25", r: "1.75" }],
+    ["path", { d: "M4 5.5v4.75c0 1.1.9 2 2 2h3.5M8 10.75l1.5 1.5-1.5 1.5M12 10.5V5.75c0-1.1-.9-2-2-2H6.5M8 5.25l-1.5-1.5L8 2.25" }],
+  ],
+  file: [["path", { d: "M3.75 1.75h5.5l3 3v9.5h-8.5zM9.25 1.75v3h3" }]],
+  push: [["path", { d: "M8 12.5V2.75M4.75 6 8 2.75 11.25 6M3.25 14.25h9.5" }]],
+  bot: [
+    ["path", { d: "M3.25 6.25h9.5v6.5h-9.5zM8 3.5v2.75M1.75 8.75v2M14.25 8.75v2" }],
+    ["circle", { cx: "8", cy: "2.75", r: "0.75" }],
+    ["circle", { cx: "6", cy: "9.25", r: "0.75", class: "fill" }],
+    ["circle", { cx: "10", cy: "9.25", r: "0.75", class: "fill" }],
+  ],
+  warning: [["path", { d: "M8 2.25 14.25 13.5H1.75zM8 6.5v3.25M8 11.6v.05" }]],
+  highlight: [["path", { d: "M9.75 2.25l4 4-6.5 6.5h-4v-4zM2 14.25h5" }]],
   slash: [
     ["circle", { cx: "8", cy: "8", r: "5.75" }],
     ["path", { d: "M3.9 12.1l8.2-8.2" }],
