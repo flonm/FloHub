@@ -399,7 +399,13 @@ function createFixture(
                       { __typename: "HeadRefForcePushedEvent", createdAt: ago(3), actor: { login: "hubot" }, beforeCommit: commit("bbbbbbb2", 20), afterCommit: commit("ccccccc3", 3) },
                     ],
                   },
-                  reviews: { nodes: [{ author: { login: "octocat" }, commit: commit("aaaaaaa1", 48) }] },
+                  reviews: {
+                    nodes: [
+                      { state: "COMMENTED", author: { login: "octocat" }, submittedAt: ago(40), commit: commit("aaaaaaa1", 48) },
+                      { state: "CHANGES_REQUESTED", author: { login: "mojombo" }, submittedAt: ago(18), commit: commit("bbbbbbb2", 20) },
+                      { state: "APPROVED", author: { login: "mojombo" }, submittedAt: ago(2), commit: commit("ccccccc3", 3) },
+                    ],
+                  },
                 },
               },
             },
@@ -1109,7 +1115,36 @@ check(
   "its row opens the code as the thread saw it, at its line",
 );
 await docked.getByLabel("To").selectOption("3");
+await docked.locator(".timeline li").nth(2).locator("button").click();
+check(
+  (await docked.getByLabel("From").inputValue()) === "2" && (await docked.getByLabel("To").inputValue()) === "3",
+  "a version picked on the timeline inside the range becomes the older side",
+);
 await docked.getByLabel("From").selectOption("1");
+check(
+  (await docked.locator(".version-pick .pick-words").first().textContent()) === "v1 your review",
+  "the From picker names the version in a few words, marking the viewer's review",
+);
+const optionsOutOfOrder = async (label: string) =>
+  docked.getByLabel(label).evaluate((select) => [...(select as HTMLSelectElement).options].filter((option) => option.disabled).map((option) => option.value).join(","));
+check(
+  (await optionsOutOfOrder("To")) === "1" && (await optionsOutOfOrder("From")) === "3",
+  `neither picker offers a version that would put the newer side before the older: To ${await optionsOutOfOrder("To")}, From ${await optionsOutOfOrder("From")}`,
+);
+const reviewedSlots = async () =>
+  docked.locator(".timeline li.reviewed").evaluateAll((items) =>
+    items.map((item) => [...item.querySelectorAll(".verdict")].map((badge) => (badge as HTMLElement).dataset.tone).join("+")),
+  );
+check(
+  JSON.stringify(await reviewedSlots()) === JSON.stringify(["muted", "attention", "success"]),
+  `the timeline draws each reviewed version's reviewers with their verdicts: ${JSON.stringify(await reviewedSlots())}`,
+);
+await docked.getByLabel("Reviews").selectOption("mojombo");
+check(
+  JSON.stringify(await reviewedSlots()) === JSON.stringify(["attention", "success"]),
+  `following one reviewer leaves only their reviews on the timeline, so their verdict's path shows: ${JSON.stringify(await reviewedSlots())}`,
+);
+await docked.getByLabel("Reviews").selectOption("");
 await docked.locator(".thread-row").nth(1).waitFor();
 await docked.getByLabel("Comments").uncheck();
 check(await threadRows.first().isHidden(), "the Comments toggle hides the threads");

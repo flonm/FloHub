@@ -98,5 +98,7 @@ describe("random versions, their patches made by git", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
-  });
+    // Each case runs git twice. Alone that takes two seconds, but beside a build or the e2e run it passed bun's five
+    // second default, and the cases cut off past it read as mismatches.
+  }, 30_000);
 });

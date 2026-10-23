@@ -10,13 +10,19 @@ import {
   formatRangeParam,
   keepRecentRanges,
   lastReviewedVersion,
+  outOfOrder,
   parseRangeParam,
   pickBase,
+  pickOnTimeline,
   rangeParam,
   rangeToSave,
   type RawVersionPull,
   restoreRange,
+  reviewsShown,
   type SavedRange,
+  shortVersion,
+  type Version,
+  versionReviewers,
 } from "./versions";
 
 const commit = (oid: string, committedDate: string) => ({ oid, committedDate });
@@ -50,6 +56,29 @@ const pull = (overrides: Partial<RawVersionPull> = {}): RawVersionPull => ({
 });
 
 describe("deriveVersions", () => {
+  test("keeps each reviewer's verdict on a version, which a later comment doesn't override", () => {
+    const v2 = commit("v2", "2026-10-02T09:55:00Z");
+    const { versions } = deriveVersions(
+      pull({
+        reviews: {
+          nodes: [
+            { state: "CHANGES_REQUESTED", author: { login: "cleo", avatarUrl: "https://avatars/cleo" }, submittedAt: "2026-10-02T11:00:00Z", commit: v2 },
+            { state: "COMMENTED", author: { login: "cleo" }, submittedAt: "2026-10-02T12:00:00Z", commit: v2 },
+            { state: "COMMENTED", author: { login: "dan" }, submittedAt: "2026-10-02T13:00:00Z", commit: v2 },
+            { state: "APPROVED", author: { login: "dan" }, submittedAt: "2026-10-02T14:00:00Z", commit: v2 },
+            { author: { login: "old" }, submittedAt: "2026-10-02T15:00:00Z", commit: v2 },
+          ],
+        },
+      }),
+      [],
+      "me",
+    );
+    expect(versions[1]?.reviews).toEqual([
+      { login: "cleo", avatarUrl: "https://avatars/cleo", verdict: "changes_requested" },
+      { login: "dan", avatarUrl: null, verdict: "approved" },
+    ]);
+  });
+
   test("orders both sides of every force push, current head last", () => {
     const { versions } = deriveVersions(pull(), [], "me");
     expect(versions.map((version) => [version.number, version.oid, version.pushedBy, version.current])).toEqual([
@@ -359,5 +388,96 @@ describe("rangeParam", () => {
   test("writes a saved range as the URL keeps it", () => {
     expect(rangeParam({ from: "a1a1a1a1a1", to: "", toCurrent: true, at: 0 })).toBe("a1a1a1a..");
     expect(rangeParam({ from: BASE, to: "c3c3c3c3c3", toCurrent: false, at: 0 })).toBe("base..c3c3c3c");
+  });
+});
+
+describe("picking on the timeline", () => {
+  test.each([
+    ["an older version moves the older side", { from: 2, to: 4 }, 1, false, { from: 1, to: 4 }],
+    ["the base branch moves the older side", { from: 2, to: 4 }, 0, false, { from: 0, to: 4 }],
+    ["a version inside the range narrows it from the older side", { from: 1, to: 4 }, 3, false, { from: 3, to: 4 }],
+    ["a later version moves the newer side", { from: 1, to: 3 }, 5, false, { from: 1, to: 5 }],
+    ["Shift picks the newer side inside the range", { from: 1, to: 4 }, 3, true, { from: 1, to: 3 }],
+    ["Shift on an older version still moves the older side", { from: 2, to: 4 }, 1, true, { from: 1, to: 4 }],
+  ])("%s", (_rule, range, picked, newer, expected) => {
+    expect(pickOnTimeline(range, picked, newer)).toEqual(expected);
+  });
+
+  test("picking either end changes nothing", () => {
+    expect(pickOnTimeline({ from: 1, to: 3 }, 1)).toBeNull();
+    expect(pickOnTimeline({ from: 1, to: 3 }, 3, true)).toBeNull();
+  });
+});
+
+function aVersion(overrides: Partial<Version>): Version {
+  return {
+    oid: "aaaaaaa1",
+    number: 2,
+    at: "2026-10-23T09:00:00Z",
+    pushedBy: null,
+    reviewedBy: [],
+    viewerLatestReview: false,
+    current: false,
+    ...overrides,
+  };
+}
+
+describe("a version in a few words", () => {
+  const now = Date.parse("2026-10-23T12:00:00Z");
+
+  test.each([
+    ["the base branch", undefined, { name: "Base", tag: null, review: false }],
+    ["the viewer's review first", aVersion({ viewerLatestReview: true, current: true }), { name: "v2", tag: "your review", review: true }],
+    ["then the current head", aVersion({ current: true }), { name: "v2", tag: "current", review: false }],
+    ["else its age", aVersion({}), { name: "v2", tag: "3h", review: false }],
+  ])("%s", (_case, given, expected) => {
+    expect(shortVersion(given, now)).toEqual(expected);
+  });
+});
+
+describe("the reviews on the timeline", () => {
+  const mona = { login: "mona", avatarUrl: "https://avatars/mona", verdict: "commented" as const };
+  const octocat = { login: "octocat", avatarUrl: null, verdict: "approved" as const };
+  const versions = [
+    aVersion({ number: 1, reviews: [mona] }),
+    aVersion({ number: 2 }),
+    aVersion({ number: 3, reviews: [{ ...mona, verdict: "changes_requested" }, octocat] }),
+    aVersion({ number: 4, reviews: [{ ...mona, verdict: "approved" }] }),
+  ];
+
+  test("lists everyone who reviewed a version, first reviewer first, with how many versions each reviewed", () => {
+    expect(versionReviewers(versions)).toEqual([
+      { login: "mona", avatarUrl: "https://avatars/mona", count: 3 },
+      { login: "octocat", avatarUrl: null, count: 1 },
+    ]);
+  });
+
+  test("following one reviewer leaves only their reviews, so the strip shows how their verdict moved", () => {
+    expect(versions.map((version) => reviewsShown(version, "mona").map((review) => review.verdict))).toEqual([
+      ["commented"],
+      [],
+      ["changes_requested"],
+      ["approved"],
+    ]);
+    expect(reviewsShown(versions[2]!, null)).toHaveLength(2);
+  });
+
+  test("a history cached before verdicts has no reviews to draw", () => {
+    expect(reviewsShown(aVersion({}), null)).toEqual([]);
+    expect(versionReviewers([aVersion({})])).toEqual([]);
+  });
+});
+
+describe("keeping the range in order", () => {
+  test.each([
+    ["from", 3, { from: 1, to: 3 }, true],
+    ["from", 4, { from: 1, to: 3 }, true],
+    ["from", 2, { from: 1, to: 3 }, false],
+    ["from", 0, { from: 1, to: 3 }, false],
+    ["to", 1, { from: 1, to: 3 }, true],
+    ["to", 0, { from: 0, to: 3 }, true],
+    ["to", 2, { from: 1, to: 3 }, false],
+  ] as const)("%s v%i with the range %o is out of order: %p", (side, version, range, expected) => {
+    expect(outOfOrder(side, version, range)).toBe(expected);
   });
 });

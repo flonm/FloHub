@@ -183,7 +183,7 @@ query ($owner: String!, $name: String!, $number: Int!) {
         }
       }
       reviews(last: 100, states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]) {
-        nodes { author { login } submittedAt commit { oid committedDate } }
+        nodes { state author { login avatarUrl } submittedAt commit { oid committedDate } }
       }
     }
   }

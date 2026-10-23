@@ -1,4 +1,8 @@
 import { formatAge } from "../core/age";
+import CONTROL_STYLES from "../styles/controls.css?raw";
+import TOKEN_STYLES from "../styles/tokens.css?raw";
+import { Tooltip } from "./tooltip";
+import type { Verdict } from "../core/reviewers";
 import { el, icon } from "./dom";
 import type { VersionPatch } from "../api/github";
 import { samePatch } from "../api/version-cache";
@@ -37,7 +41,12 @@ import {
   carryRange,
   rangeToSave,
   restoreRange,
+  outOfOrder,
+  pickOnTimeline,
+  reviewsShown,
   type SavedRange,
+  shortVersion,
+  versionReviewers,
   type Version,
   type VersionHistory,
 } from "../core/versions";
@@ -166,24 +175,111 @@ const VIEW_STYLES = `
   color: var(--vd-fg);
   overflow: hidden;
 }
-header { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-bottom: 1px solid var(--vd-border); }
-.title-row { display: flex; align-items: center; gap: 8px; }
-.title-row h2 { margin: 0; font-size: 16px; }
-.close { margin-left: auto; }
-.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.controls label { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
-select {
-  max-width: min(440px, 80vw);
-  min-height: 32px;
-  padding: 0 8px;
+/*
+ * The header is the mode's toolbar, one line: what is shown, the two versions with the timeline between them, and
+ * the view's switches. The summary and the legend share the line under it.
+ */
+header { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--vd-border); font-size: 12px; container-type: inline-size; }
+@container (max-width: 900px) { .options .tool > span { display: none; } .options .tool { justify-content: center; width: 26px; padding: 0; } }
+.vbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.vbar h2 { display: inline-flex; align-items: center; gap: 6px; margin: 0 4px 0 0; font-size: 14px; }
+.vbar h2 svg { color: var(--vd-accent); }
+.controls, .options { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.options { margin-left: auto; }
+header .tool { min-height: 0; height: 26px; font-weight: 400; }
+header .tool[aria-checked="true"] { font-weight: 600; }
+.version-pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 6px 0 8px;
   border: 1px solid var(--vd-border);
   border-radius: 6px;
   background: var(--vd-bg);
-  color: inherit;
-  font: inherit;
-  font-weight: 400;
+  white-space: nowrap;
+  cursor: pointer;
 }
-.arrow { color: var(--vd-muted); }
+.version-pick:hover { background: var(--vd-bg-muted); }
+.version-pick:focus-within { outline: 2px solid var(--vd-focus); outline-offset: 1px; }
+.version-pick .pick-name { color: var(--vd-muted); }
+.version-pick .pick-text { font-weight: 600; }
+.version-pick .pick-tag { color: var(--vd-muted); }
+.version-pick .pick-tag.review { color: var(--vd-attention); }
+.version-pick svg { width: 12px; height: 12px; color: var(--vd-muted); transform: rotate(180deg); }
+.version-pick select { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; font: inherit; }
+/*
+ * The timeline: a tick for each version, and a wider slot for each version someone reviewed, with their faces and
+ * each one's verdict. The ticks share what the faces leave of 200px, so a long history still fits.
+ */
+.timeline { display: flex; flex: none; align-items: center; gap: 2px; height: 26px; margin: 0; padding: 0 2px; list-style: none; }
+.timeline li { display: flex; align-items: center; width: var(--tick, 8px); height: 100%; }
+.timeline li.reviewed { width: calc(22px + (var(--faces, 1) - 1) * 10px); }
+.timeline button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 0;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: var(--vd-neutral-square);
+}
+.timeline button:hover { background: var(--vd-muted); }
+.timeline .base button { background: transparent; box-shadow: inset 0 0 0 1px var(--vd-muted); }
+.timeline .in button { background: color-mix(in srgb, var(--vd-accent) 35%, transparent); }
+.timeline .end button { height: 20px; background: var(--vd-accent); }
+.timeline li.reviewed button { height: 22px; padding: 0 2px; border-radius: 11px; background: transparent; }
+.timeline li.reviewed button:hover { background: var(--vd-bg-muted); }
+.timeline li.reviewed.in button { background: color-mix(in srgb, var(--vd-accent) 22%, transparent); }
+.timeline li.reviewed.end button { background: var(--vd-accent); }
+.timeline .review button::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--vd-attention);
+  transform: translateX(-50%);
+}
+.face { position: relative; flex: none; width: 18px; height: 18px; }
+.face + .face { margin-left: -8px; }
+.face img, .face .initial {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--vd-bg-muted);
+  box-shadow: 0 0 0 1.5px var(--vd-bg);
+  color: var(--vd-muted);
+  font: 600 10px var(--fontStack-sansSerif, sans-serif);
+}
+.face .verdict {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--vd-bg);
+  box-shadow: 0 0 0 1px var(--vd-border);
+}
+.face .verdict svg { width: 9px; height: 9px; stroke-width: 2.25; }
+.face .verdict[data-tone="success"] { color: var(--vd-success); }
+.face .verdict[data-tone="attention"] { color: var(--vd-attention); }
+.face .verdict[data-tone="muted"] { color: var(--vd-muted); }
+.reviewer-pick .pick-face { width: 16px; height: 16px; border-radius: 50%; }
+.meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 16px; }
 .summary, .hint { margin: 0; color: var(--vd-muted); font-size: 12px; }
 .summary strong { color: var(--vd-fg); }
 .error { margin: 0; color: var(--vd-danger); }
@@ -343,8 +439,6 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 .legend .new i { background: var(--vd-add-word); }
 .legend .gone i { background: var(--vd-del-word); }
 .legend kbd { font: 600 12px var(--vd-mono); }
-.wrap-toggle { margin-left: auto; font-weight: 400 !important; font-size: 12px; }
-.wrap-toggle + .wrap-toggle { margin-left: 0; }
 
 .diff { overflow-x: auto; font: 12px/20px var(--vd-mono); }
 .line { display: flex; min-width: max-content; }
@@ -471,14 +565,16 @@ export class VersionsView {
   private alignUntil = 0;
   /** Shows a range, and a line in it, once the view has its versions. */
   private target: ((range: SavedRange, line?: CommentLine) => void) | null = null;
+  private readonly tooltip = new Tooltip();
 
   constructor() {
     this.host = document.createElement("flohub-versions");
     const shadow = this.host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
-    style.textContent = VIEW_STYLES;
+    style.textContent = [TOKEN_STYLES, CONTROL_STYLES, VIEW_STYLES].join("\n");
     this.surface = el("section", { class: "surface", "aria-labelledby": "versions-title" });
-    shadow.append(style, this.surface);
+    shadow.append(style, this.surface, this.tooltip.element);
+    this.tooltip.watch(shadow, () => this.surface.getBoundingClientRect());
     for (const type of ["keydown", "keyup", "keypress"]) {
       shadow.addEventListener(type, (event) => event.stopPropagation());
     }
@@ -562,17 +658,28 @@ export class VersionsView {
     const run = ++this.generation;
     const live = () => run === this.generation;
 
-    const close = el("button", { type: "button", class: "close" }, "Close");
+    const close = el("button", {
+      type: "button",
+      class: "tool icon-only close",
+      "aria-label": "Close",
+      "data-tip": this.host.dataset.mode === "docked" ? "Close, and show GitHub's diff again" : "Close",
+    });
+    close.append(icon("cross"));
     close.addEventListener("click", () => this.dismiss());
-    const titleRow = el("div", { class: "title-row" });
-    titleRow.append(el("h2", { id: "versions-title" }, `Compare versions of #${request.number}`), close);
+    const title = el("h2", { id: "versions-title" });
+    title.append(icon("compare"), "Versions", el("span", { class: "visually-hidden" }, ` of #${request.number}`));
     const controls = el("div", { class: "controls" });
+    const options = el("div", { class: "options" });
+    const bar = el("div", { class: "vbar" });
+    bar.append(title, controls, options);
     const summary = el("p", { class: "summary", "aria-live": "polite" });
     const legend = el("p", { class: "legend" });
+    const meta = el("div", { class: "meta" });
+    meta.append(summary, legend);
     const error = el("p", { class: "error", role: "alert" });
     const notice = el("p", { class: "notice", role: "status" });
     const header = el("header");
-    header.append(titleRow, controls, summary, legend, error, notice);
+    header.append(bar, meta, error, notice);
     const files = el("nav", { class: "files", "aria-label": "Files" });
     const main = el("main");
     main.append(el("p", { class: "message", role: "status" }, "Loading versions…"));
@@ -581,7 +688,13 @@ export class VersionsView {
     this.surface.replaceChildren(header, body);
 
     let history: VersionHistory | null = null;
-    let picker: { from: HTMLSelectElement; to: HTMLSelectElement; link: HTMLAnchorElement } | null = null;
+    let picker: {
+      from: HTMLSelectElement;
+      to: HTMLSelectElement;
+      link: HTMLAnchorElement;
+      refresh: () => void;
+      placeReviewers: (versions: Version[]) => void;
+    } | null = null;
     /** The compared commits and the bases each was diffed against, so a refresh that changes neither keeps the diff. */
     let compared = "";
     /** The patches on screen, so a refresh whose bases moved only redraws when what the versions change differs. */
@@ -666,9 +779,10 @@ export class VersionsView {
       request.onShow?.(older, newer);
       const kept = quiet && onScreen?.oids === oids ? onScreen : null;
       picker.link.href = `${request.repoUrl}/compare/${older?.oid ?? versions.baseRefOid}...${newer.oid}`;
-      picker.link.title = older
+      picker.link.dataset.tip = older
         ? "GitHub's plain compare of the two heads, including everything the base branch gained in between"
         : "GitHub's compare of the version with the base branch's current head";
+      picker.refresh();
       if (!kept) {
         onScreen = null;
         tracking?.abort();
@@ -768,6 +882,7 @@ export class VersionsView {
     const onlyOne = () => {
       picker = null;
       controls.replaceChildren();
+      options.replaceChildren(close);
       main.replaceChildren(
         el("p", { class: "message" }, "This pull request has only one known version. Versions come from force pushes and reviews."),
       );
@@ -788,58 +903,80 @@ export class VersionsView {
       if (picker) {
         fillVersions(picker.from, next.versions, range.from, now, true);
         fillVersions(picker.to, next.versions, range.to, now);
+        picker.placeReviewers(next.versions);
+        picker.refresh();
       } else {
         const from = versionSelect("From", next.versions, range.from, now, true);
         const to = versionSelect("To", next.versions, range.to, now);
-        const link = el("a", { target: "_blank", rel: "noopener" }, "GitHub's compare");
-        const wrap = el("input", { type: "checkbox" });
-        wrap.addEventListener("change", () => main.classList.toggle("wrap", wrap.checked));
-        const wrapLabel = el("label", { class: "wrap-toggle" });
-        wrapLabel.append(wrap, "Wrap lines");
-        const comments = el("input", { type: "checkbox" });
-        comments.checked = threadsShown;
-        comments.addEventListener("change", () => {
-          threadsShown = comments.checked;
-          main.classList.toggle("hide-threads", !threadsShown);
-          files.classList.toggle("hide-threads", !threadsShown);
-          placeAll();
-        });
-        const commentsLabel = el("label", { class: "wrap-toggle" });
-        commentsLabel.append(comments, "Comments");
-        const sideBySide = el("input", { type: "checkbox" });
-        sideBySide.checked = split;
-        sideBySide.addEventListener("change", () => {
-          // Redrawing the diff in the other layout would throw away what's being written.
-          if (drafting()) {
-            sideBySide.checked = split;
-            notice.textContent = "Post or cancel your comment before switching the layout.";
-            return;
-          }
-          split = sideBySide.checked;
-          main.classList.toggle("split", split);
-          request.saveSplitView?.(split);
-          void compare(false);
-        });
-        const splitLabel = el("label", { class: "wrap-toggle" });
-        splitLabel.append(sideBySide, "Split view");
-        controls.replaceChildren(
-          from.label,
-          el("span", { class: "arrow", "aria-hidden": "true" }, "→"),
-          to.label,
-          link,
-          splitLabel,
-          commentsLabel,
-          wrapLabel,
-        );
-        picker = { from: from.select, to: to.select, link };
+        const link = el("a", { class: "tool icon-only", target: "_blank", rel: "noopener", "aria-label": "GitHub's compare" });
+        link.append(icon("external"));
+        const timeline = el("ol", { class: "timeline", "aria-hidden": "true" });
+        let focus: string | null = null;
         const picked = () => {
           if (!history) return;
           const remembered = rangeToSave(history.versions, Number(from.select.value), Number(to.select.value), Date.now());
           if (remembered) request.saveRange?.(remembered);
           void compare(false);
         };
-        from.select.addEventListener("change", picked);
-        to.select.addEventListener("change", picked);
+        const refresh = () => {
+          if (!history) return;
+          const limits = { from: Number(from.select.value), to: Number(to.select.value) };
+          // The strip is drawn anew, so a tooltip shown for one of its bars would outlive the bar.
+          this.tooltip.hide();
+          for (const option of from.select.options) option.disabled = outOfOrder("from", Number(option.value), limits);
+          for (const option of to.select.options) option.disabled = outOfOrder("to", Number(option.value), limits);
+          from.show(history.versions);
+          to.show(history.versions);
+          renderTimeline(timeline, history.versions, limits, focus, Date.now(), (version, newer) => {
+            const moved = pickOnTimeline({ from: Number(from.select.value), to: Number(to.select.value) }, version, newer);
+            if (!moved) return;
+            from.select.value = String(moved.from);
+            to.select.value = String(moved.to);
+            refresh();
+            picked();
+          });
+        };
+        const wrap = switchTool("Wrap lines", "Wrap", "wrap", false, (on) => {
+          main.classList.toggle("wrap", on);
+          return true;
+        });
+        const comments = switchTool("Comments", "Comments", "comment", threadsShown, (on) => {
+          threadsShown = on;
+          main.classList.toggle("hide-threads", !threadsShown);
+          files.classList.toggle("hide-threads", !threadsShown);
+          placeAll();
+          return true;
+        });
+        const sideBySide = switchTool("Split view", "Split", "columns", split, (on) => {
+          // Redrawing the diff in the other layout would throw away what's being written.
+          if (drafting()) {
+            notice.textContent = "Post or cancel your comment before switching the layout.";
+            return false;
+          }
+          split = on;
+          main.classList.toggle("split", split);
+          request.saveSplitView?.(split);
+          void compare(false);
+          return true;
+        });
+        const placeReviewers = (versions: Version[]) => {
+          const chooser = reviewerSelect(versions, focus, (login) => {
+            focus = login;
+            refresh();
+          });
+          if (versionReviewers(versions).every((reviewer) => reviewer.login !== focus)) focus = null;
+          controls.replaceChildren(from.label, timeline, to.label, ...(chooser ? [chooser] : []));
+        };
+        placeReviewers(next.versions);
+        options.replaceChildren(sideBySide, comments, wrap, link, close);
+        picker = { from: from.select, to: to.select, link, refresh, placeReviewers };
+        for (const select of [from.select, to.select]) {
+          select.addEventListener("change", () => {
+            refresh();
+            picked();
+          });
+        }
+        refresh();
       }
       if (pending && !previous) {
         aim();
@@ -915,12 +1052,182 @@ function comparedKey(history: VersionHistory, older: Version | null, newer: Vers
   return [older, newer].map((version) => (version ? `${version.oid}:${baseCandidates(history, version).join(",")}` : BASE)).join("|");
 }
 
+/**
+ * A version picker: a native select, so the keyboard and screen readers get all it offers, under a button that
+ * shows the picked version in a few words.
+ * @param name What it picks, "From" or "To", which also names the select.
+ * @param versions Oldest first.
+ * @param selected The version to select, 0 for the base branch.
+ * @param now The current time.
+ * @param base Whether to offer the base branch.
+ * @returns The picker, its select, and a way to redraw its words after the select changed.
+ */
 function versionSelect(name: string, versions: Version[], selected: number, now: number, base = false) {
-  const select = el("select");
+  const select = el("select", { "aria-label": name });
   fillVersions(select, versions, selected, now, base);
-  const label = el("label", {}, name);
-  label.append(select);
-  return { label, select };
+  const label = el("label", { class: "version-pick" });
+  const words = el("span", { class: "pick-words", "aria-hidden": "true" });
+  label.append(el("span", { class: "pick-name", "aria-hidden": "true" }, name), words, icon("chevron"), select);
+  const show = (all: Version[]) => {
+    const version = all[Number(select.value) - 1];
+    const short = shortVersion(version, now);
+    words.replaceChildren(el("span", { class: "pick-text" }, short.name));
+    if (short.tag) words.append(" ", el("span", { class: short.review ? "pick-tag review" : "pick-tag" }, short.tag));
+    label.dataset.tip = version ? describeVersion(version, now) : "The base branch: the newer version's own changes";
+  };
+  show(versions);
+  return { label, select, show };
+}
+
+const VERDICT_GLYPH: Record<Verdict, { glyph: "check" | "changes" | "comment" | "slash"; tone: string; said: string }> = {
+  approved: { glyph: "check", tone: "success", said: "approved" },
+  changes_requested: { glyph: "changes", tone: "attention", said: "requested changes" },
+  commented: { glyph: "comment", tone: "muted", said: "commented" },
+  dismissed: { glyph: "slash", tone: "muted", said: "had a review dismissed" },
+};
+
+/** The most faces a version's slot shows; its tooltip names the rest. */
+const MAX_FACES = 3;
+/** The width the timeline fits into. */
+const TIMELINE_WIDTH = 200;
+
+/**
+ * Draws the versions as a strip from the base branch to the current head, the compared range filled in. A version
+ * someone reviewed gets a wider slot with their faces, each with their verdict on it, so the versions worth
+ * comparing stand out from the many nobody reviewed.
+ * @param list The strip to fill.
+ * @param versions Oldest first.
+ * @param range The compared range, 0 for the base branch.
+ * @param focus The one reviewer to follow, or null for everyone.
+ * @param now The current time.
+ * @param pick Called with the version clicked, and whether Shift asked for the newer side.
+ */
+function renderTimeline(
+  list: HTMLElement,
+  versions: Version[],
+  range: { from: number; to: number },
+  focus: string | null,
+  now: number,
+  pick: (version: number, newer: boolean) => void,
+): void {
+  const entries = [
+    { number: 0, tip: "Base: the newer version's own changes", version: null as Version | null, reviews: [] as ReturnType<typeof reviewsShown> },
+    ...versions.map((version) => ({ number: version.number, tip: describeVersion(version, now), version, reviews: reviewsShown(version, focus) })),
+  ];
+  const reviewed = entries.filter((entry) => entry.reviews.length > 0);
+  const room = TIMELINE_WIDTH - reviewed.reduce((width, entry) => width + slotWidth(entry.reviews.length) + 2, 0);
+  const plain = Math.max(entries.length - reviewed.length, 1);
+  const tick = Math.floor(room / plain) - 2;
+  list.style.setProperty("--tick", `${Math.max(2, Math.min(10, tick))}px`);
+  list.replaceChildren(
+    ...entries.map(({ number, tip, version, reviews }) => {
+      const classes = [number === 0 ? "base" : ""];
+      if (number === range.from || number === range.to) classes.push("end");
+      else if (number > range.from && number < range.to) classes.push("in");
+      if (version?.viewerLatestReview) classes.push("review");
+      if (reviews.length > 0) classes.push("reviewed");
+      const item = el("li", { class: classes.filter(Boolean).join(" ") });
+      const said = reviews.map((review) => `${review.login} ${VERDICT_GLYPH[review.verdict].said}`).join(", ");
+      const button = el("button", { type: "button", tabindex: "-1", "data-tip": said ? `${tip}. ${said}` : tip });
+      if (reviews.length > 0) {
+        item.style.setProperty("--faces", String(Math.min(reviews.length, MAX_FACES)));
+        for (const review of reviews.slice(0, MAX_FACES)) button.append(reviewFace(review));
+      }
+      button.addEventListener("click", (event) => pick(number, event.shiftKey));
+      item.append(button);
+      return item;
+    }),
+  );
+}
+
+/**
+ * @param faces How many reviewers a version's slot shows.
+ * @returns The slot's width in pixels, its faces overlapping.
+ */
+function slotWidth(faces: number): number {
+  return 22 + (Math.min(faces, MAX_FACES) - 1) * 10;
+}
+
+/**
+ * @param review A reviewer's verdict on a version.
+ * @returns Their face, with the verdict's icon on it in its colour.
+ */
+function reviewFace(review: { login: string; avatarUrl: string | null; verdict: Verdict }): HTMLElement {
+  const face = el("span", { class: "face" });
+  const initial = el("span", { class: "initial" }, review.login.charAt(0).toUpperCase());
+  if (review.avatarUrl) {
+    const url = new URL(review.avatarUrl);
+    url.searchParams.set("s", "40");
+    const image = el("img", { src: url.href, alt: "", width: "18", height: "18" });
+    image.addEventListener("error", () => image.replaceWith(initial));
+    face.append(image);
+  } else {
+    face.append(initial);
+  }
+  const look = VERDICT_GLYPH[review.verdict];
+  const badge = el("span", { class: "verdict", "data-tone": look.tone });
+  badge.append(icon(look.glyph));
+  face.append(badge);
+  return face;
+}
+
+/**
+ * The reviewer picker: everyone, or one reviewer whose reviews alone the timeline then shows.
+ * @param versions Oldest first.
+ * @param focus The reviewer followed so far, or null for everyone.
+ * @param onPick Called with the reviewer picked, or null for everyone.
+ * @returns The picker, or null when nobody reviewed a version.
+ */
+function reviewerSelect(versions: Version[], focus: string | null, onPick: (login: string | null) => void): HTMLElement | null {
+  const reviewers = versionReviewers(versions);
+  if (reviewers.length === 0) return null;
+  const select = el("select", { "aria-label": "Reviews" });
+  select.append(el("option", { value: "" }, "Everyone's reviews"));
+  for (const reviewer of reviewers) {
+    select.append(el("option", { value: reviewer.login }, `${reviewer.login} · ${reviewer.count} ${reviewer.count === 1 ? "version" : "versions"} reviewed`));
+  }
+  const label = el("label", { class: "version-pick reviewer-pick" });
+  const words = el("span", { class: "pick-words", "aria-hidden": "true" });
+  const show = () => {
+    const reviewer = reviewers.find((entry) => entry.login === select.value);
+    words.replaceChildren();
+    if (reviewer?.avatarUrl) {
+      const url = new URL(reviewer.avatarUrl);
+      url.searchParams.set("s", "32");
+      words.append(el("img", { class: "pick-face", src: url.href, alt: "" }), " ");
+    }
+    words.append(el("span", { class: "pick-text" }, reviewer ? reviewer.login : "Everyone"));
+    label.dataset.tip = reviewer
+      ? `The timeline shows only ${reviewer.login}'s reviews, so you can see how their verdict moved`
+      : "Follow one reviewer, to see how their verdict moved from version to version";
+  };
+  select.value = reviewers.some((reviewer) => reviewer.login === focus) ? (focus ?? "") : "";
+  select.addEventListener("change", () => {
+    show();
+    onPick(select.value || null);
+  });
+  show();
+  label.append(el("span", { class: "pick-name", "aria-hidden": "true" }, "Reviews"), words, icon("chevron"), select);
+  return label;
+}
+
+/**
+ * A toolbar switch, for a setting of the view.
+ * @param label Its name, for screen readers and the tooltip.
+ * @param text The word it shows.
+ * @param glyph Its icon.
+ * @param on Whether it starts on.
+ * @param toggle Applies the new state, and says whether it took.
+ * @returns The switch.
+ */
+function switchTool(label: string, text: string, glyph: Parameters<typeof icon>[0], on: boolean, toggle: (on: boolean) => boolean): HTMLButtonElement {
+  const button = el("button", { type: "button", class: "tool", role: "switch", "aria-checked": String(on), "aria-label": label, "data-tip": label });
+  button.append(icon(glyph), el("span", { "aria-hidden": "true" }, text));
+  button.addEventListener("click", () => {
+    const next = button.getAttribute("aria-checked") !== "true";
+    if (toggle(next)) button.setAttribute("aria-checked", String(next));
+  });
+  return button;
 }
 
 /**

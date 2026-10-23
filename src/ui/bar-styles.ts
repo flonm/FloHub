@@ -1,5 +1,6 @@
 import base from "../styles/base.css?raw";
 import bar from "../styles/bar.css?raw";
+import controls from "../styles/controls.css?raw";
 import tokens from "../styles/tokens.css?raw";
 
 /**
@@ -7,4 +8,4 @@ import tokens from "../styles/tokens.css?raw";
  * composed here because a shadow root takes its CSS as text. GitHub's Primer variables reach into the shadow root,
  * so the light/dark fallbacks in tokens.css only apply where GitHub provides no variable.
  */
-export const BAR_STYLES = [tokens, base, bar].join("\n");
+export const BAR_STYLES = [tokens, base, controls, bar].join("\n");

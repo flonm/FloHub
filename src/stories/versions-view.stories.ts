@@ -20,9 +20,35 @@ function version(overrides: Partial<Version> & Pick<Version, "oid" | "number">):
   };
 }
 
-const V1 = version({ oid: "1111111", number: 1, at: new Date(NOW - 8 * HOUR).toISOString(), reviewedBy: ["tizian"] });
-const V2 = version({ oid: "2222222", number: 2, at: new Date(NOW - 3 * HOUR).toISOString(), viewerLatestReview: true });
-const V3 = version({ oid: "3333333", number: 3, at: new Date(NOW - HOUR).toISOString(), current: true });
+/** GitHub's mascot, the one avatar the stories load; everyone else shows their initial. */
+const OCTOCAT = "https://avatars.githubusercontent.com/u/583231?v=4";
+
+const V1 = version({
+  oid: "1111111",
+  number: 1,
+  at: new Date(NOW - 8 * HOUR).toISOString(),
+  reviewedBy: ["octocat", "tizian"],
+  reviews: [
+    { login: "octocat", avatarUrl: OCTOCAT, verdict: "changes_requested" },
+    { login: "tizian", avatarUrl: null, verdict: "commented" },
+  ],
+});
+const V2 = version({
+  oid: "2222222",
+  number: 2,
+  at: new Date(NOW - 3 * HOUR).toISOString(),
+  reviewedBy: ["tizian"],
+  reviews: [{ login: "tizian", avatarUrl: null, verdict: "changes_requested" }],
+  viewerLatestReview: true,
+});
+const V3 = version({
+  oid: "3333333",
+  number: 3,
+  at: new Date(NOW - HOUR).toISOString(),
+  reviewedBy: ["octocat"],
+  reviews: [{ login: "octocat", avatarUrl: OCTOCAT, verdict: "approved" }],
+  current: true,
+});
 
 /** A renamed file's patch: a change in the middle of enough context that each side folds away. */
 function retryPatch(delay: string): string {
@@ -466,6 +492,39 @@ export const SplitCodeAtAVersion: Story = {
  * from one base, so their patches are compared line by line, and a line above the diff says it won't match GitHub's
  * diff of the two commits.
  */
+/**
+ * A branch force-pushed often: versions nobody reviewed shrink to ticks, the reviewed ones show their reviewers'
+ * faces and verdicts. Pick a reviewer under Reviews to follow how their verdict moved.
+ */
+export const ManyVersions: Story = {
+  render: () => {
+    // A few of the older versions were reviewed; most were pushed and replaced before anyone looked.
+    const reviewedAt: Record<number, Version["reviews"]> = {
+      4: [{ login: "octocat", avatarUrl: OCTOCAT, verdict: "commented" }],
+      11: [{ login: "tizian", avatarUrl: null, verdict: "changes_requested" }],
+      17: [
+        { login: "octocat", avatarUrl: OCTOCAT, verdict: "changes_requested" },
+        { login: "ada", avatarUrl: null, verdict: "approved" },
+      ],
+    };
+    const older = Array.from({ length: 24 }, (_, index) => ({
+      ...V1,
+      oid: `${String(index).padStart(2, "0")}aaaaa`,
+      number: index + 1,
+      viewerLatestReview: false,
+      reviewedBy: (reviewedAt[index + 1] ?? []).map((review) => review.login),
+      reviews: reviewedAt[index + 1] ?? [],
+      current: false,
+    }));
+    const recent = [
+      { ...V1, number: 25 },
+      { ...V2, number: 26 },
+      { ...V3, number: 27 },
+    ];
+    return view("loading", PATCHES, { cached: { baseRefOid: "0000000", versions: [...older, ...recent], baseHeads: [] } });
+  },
+};
+
 export const Rebased: Story = {
   render: () => view(3, { ...PATCHES, "2222222": { ...PATCHES["2222222"]!, mergeBase: "9999999" } }),
 };
