@@ -761,6 +761,13 @@ check(
   ),
   "a row's tooltip holds what its state leaves out",
 );
+await inlineBar(page).getByRole("button", { name: "Keyboard shortcuts" }).click();
+const shortcutRows = await inlineBar(page).getByRole("dialog", { name: "Keyboard shortcuts" }).locator("dd").count();
+await page.keyboard.press("Escape");
+check(
+  shortcutRows === 8 && (await inlineBar(page).getByRole("dialog", { name: "Keyboard shortcuts" }).count()) === 0,
+  `the toolbar's keyboard button lists every shortcut, and Escape closes the list: ${shortcutRows} rows`,
+);
 const favicons = async () =>
   page.evaluate(() => [...document.head.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]')].map((link) => decodeURIComponent(link.href)));
 check(

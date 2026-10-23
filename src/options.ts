@@ -2,6 +2,8 @@ import { el } from "./ui/dom";
 import { fetchViewerLogin, GitHubError, readToken, writeToken } from "./api/github";
 import type { Inbox } from "./core/inbox";
 import { parseRepo, readDirectRepos, REVIEW_SCOPES_KEY, type ReviewScope, writeReviewScope } from "./core/review-scope";
+import { isMac, shortcutHelp } from "./core/shortcuts";
+import { renderShortcutList } from "./ui/shortcut-list";
 
 const form = document.querySelector<HTMLFormElement>("#token-form");
 const input = document.querySelector<HTMLInputElement>("#token");
@@ -14,6 +16,9 @@ const repoForm = document.querySelector<HTMLFormElement>("#add-repo");
 const repoInput = document.querySelector<HTMLInputElement>("#repo");
 const scopeStatus = document.querySelector<HTMLParagraphElement>("#scope-status");
 const origins = requiredOrigins();
+
+const shortcuts = shortcutHelp(isMac(navigator.platform));
+document.querySelector("#keys")?.replaceWith(Object.assign(renderShortcutList(shortcuts), { id: "keys" }));
 /** Repositories added on this page, kept in the list after they go back to the default. */
 const added = new Map<string, string>();
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CHORD_TIMEOUT_MS, createShortcutMatcher, type KeyInput } from "./shortcuts";
+import { CHORD_TIMEOUT_MS, createShortcutMatcher, isMac, type KeyInput, shortcutHelp } from "./shortcuts";
 
 function press(key: string, time: number, overrides: Partial<KeyInput> = {}): KeyInput {
   return { key, time, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, repeat: false, editable: false, ...overrides };
@@ -89,5 +89,31 @@ describe("createShortcutMatcher", () => {
     expect(claims([press("x", 0), press("j", 10)])).toEqual([false, false]);
     expect(claims([press("c", 0, { editable: true })])).toEqual([false]);
     expect(claims([press("ArrowUp", 0, { metaKey: true, shiftKey: true }), press("ArrowLeft", 10, { metaKey: true, shiftKey: true })])).toEqual([true, false]);
+  });
+});
+
+describe("the shortcut list", () => {
+  test("moves through the stack with ⌘ on macOS and Ctrl elsewhere", () => {
+    expect(shortcutHelp(true)[0]?.keys).toEqual(["⌘⇧↑", "⌘⇧↓"]);
+    expect(shortcutHelp(false)[0]?.keys).toEqual(["Ctrl+⇧↑", "Ctrl+⇧↓"]);
+  });
+
+  test("every chord it lists is one the matcher acts on", () => {
+    for (const row of shortcutHelp(true)) {
+      if (row.join !== "then") continue;
+      const match = createShortcutMatcher();
+      const [first = "", second = ""] = row.keys.map((key) => key.toLowerCase());
+      match(press(first, 0));
+      expect(match(press(second, 100)).action).not.toBeNull();
+    }
+  });
+
+  test.each([
+    ["MacIntel", true],
+    ["macOS", true],
+    ["Win32", false],
+    ["Linux x86_64", false],
+  ])("%s is macOS: %p", (platform, mac) => {
+    expect(isMac(platform)).toBe(mac);
   });
 });

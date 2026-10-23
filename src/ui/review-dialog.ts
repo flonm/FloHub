@@ -1,4 +1,4 @@
-import { el } from "./dom";
+import { el, icon } from "./dom";
 import type { DismissedVerdict } from "../core/reviewers";
 import type { ReviewEvent } from "../core/shortcuts";
 
@@ -33,6 +33,8 @@ const COPY: Record<ReviewEvent | "DISMISS", { title: string; action: string; bus
   DISMISS: { title: "Dismiss", action: "Dismiss review", busy: "Dismissing…" },
 };
 
+const GLYPH: Record<ReviewEvent | "DISMISS", "check" | "changes" | "slash"> = { APPROVE: "check", REQUEST_CHANGES: "changes", DISMISS: "slash" };
+
 const DISMISSED_NAME: Record<DismissedVerdict, string> = { approved: "approval", changes_requested: "change request" };
 
 const DIALOG_STYLES = `
@@ -66,6 +68,14 @@ dialog::backdrop { background: rgba(31, 35, 40, 0.4); }
 @keyframes appear { from { opacity: 0; transform: translateY(6px); } }
 form { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
 h2 { margin: 0; font-size: 16px; }
+/* The verdict's icon in a tinted circle beside the title, in the reviewer rows' colours. */
+.title-row { display: flex; align-items: center; gap: 10px; }
+.glyph { display: flex; flex: none; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; }
+.glyph svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.glyph[data-event="APPROVE"] { background: var(--bgColor-success-muted, #dafbe1); color: var(--fgColor-success, #1a7f37); }
+.glyph[data-event="REQUEST_CHANGES"] { background: var(--bgColor-attention-muted, #fff8c5); color: var(--fgColor-attention, #9a6700); }
+.glyph[data-event="DISMISS"] { background: var(--bgColor-neutral-muted, #818b981f); color: var(--rd-muted); }
+kbd { padding: 0 5px; border: 1px solid var(--rd-border); border-bottom-width: 2px; border-radius: 4px; font: 11px/16px var(--fontStack-monospace, ui-monospace, monospace); }
 label { font-weight: 600; }
 .optional { color: var(--rd-muted); font-weight: 400; }
 textarea {
@@ -157,11 +167,17 @@ export class ReviewDialog {
     const blank = () => dismissing && body.value.trim() === "";
     submit.disabled = blank();
     const actions = el("div", { class: "actions" });
-    actions.append(el("span", { class: "keys" }, "⌘↵ to submit · Esc to cancel"), cancel, submit);
+    const keys = el("span", { class: "keys" });
+    keys.append(el("kbd", {}, "⌘↵"), " to submit · ", el("kbd", {}, "Esc"), " to cancel");
+    actions.append(keys, cancel, submit);
     const title = dismissing
       ? `${copy.title} ${request.reviewer}'s ${DISMISSED_NAME[request.verdict]}`
       : `${copy.title} #${request.number}`;
-    form.append(el("h2", { id: "review-title" }, title), label, body, hint, error, actions);
+    const titleRow = el("div", { class: "title-row" });
+    const glyph = el("span", { class: "glyph", "data-event": request.event, "aria-hidden": "true" });
+    glyph.append(icon(GLYPH[request.event]));
+    titleRow.append(glyph, el("h2", { id: "review-title" }, title));
+    form.append(titleRow, label, body, hint, error, actions);
     this.dialog.replaceChildren(form);
 
     const send = async () => {

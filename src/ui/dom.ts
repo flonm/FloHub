@@ -23,7 +23,8 @@ export type IconName =
   | "highlight"
   | "columns"
   | "wrap"
-  | "target";
+  | "target"
+  | "keyboard";
 
 type Shape = ["path", { d: string; class?: string }] | ["circle", { cx: string; cy: string; r: string; class?: string }];
 
@@ -53,6 +54,7 @@ const ICONS: Record<IconName, Shape[]> = {
   warning: [["path", { d: "M8 2.25 14.25 13.5H1.75zM8 6.5v3.25M8 11.6v.05" }]],
   highlight: [["path", { d: "M9.75 2.25l4 4-6.5 6.5h-4v-4zM2 14.25h5" }]],
   columns: [["path", { d: "M2.25 2.75h11.5v10.5H2.25zM8 2.75v10.5" }]],
+  keyboard: [["path", { d: "M1.75 4.25h12.5v7.5H1.75zM4 6.75h.01M6.5 6.75h.01M9 6.75h.01M11.5 6.75h.01M5 9.25h6" }]],
   target: [
     ["circle", { cx: "8", cy: "8", r: "5.25" }],
     ["circle", { cx: "8", cy: "8", r: "1.75", class: "fill" }],
