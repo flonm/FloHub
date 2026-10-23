@@ -18,6 +18,7 @@ import {
   rangeToSave,
   type RawVersionPull,
   restoreRange,
+  reviewPath,
   reviewsShown,
   type SavedRange,
   shortVersion,
@@ -56,6 +57,27 @@ const pull = (overrides: Partial<RawVersionPull> = {}): RawVersionPull => ({
 });
 
 describe("deriveVersions", () => {
+  test("a dismissed review keeps the verdict it gave, marked as dismissed, when the timeline still says", () => {
+    const v2 = commit("v2", "2026-10-02T09:55:00Z");
+    const { versions } = deriveVersions(
+      pull({
+        reviews: {
+          nodes: [
+            { state: "DISMISSED", url: "r1", author: { login: "cleo" }, submittedAt: "2026-10-02T11:00:00Z", commit: v2 },
+            { state: "DISMISSED", url: "r2", author: { login: "dan" }, submittedAt: "2026-10-02T12:00:00Z", commit: v2 },
+          ],
+        },
+        dismissals: { nodes: [{ previousReviewState: "APPROVED", review: { url: "r1" } }] },
+      }),
+      [],
+      "me",
+    );
+    expect(versions[1]?.reviews).toEqual([
+      { login: "cleo", avatarUrl: null, verdict: "approved", dismissed: true },
+      { login: "dan", avatarUrl: null, verdict: "dismissed", dismissed: true },
+    ]);
+  });
+
   test("keeps each reviewer's verdict on a version, which a later comment doesn't override", () => {
     const v2 = commit("v2", "2026-10-02T09:55:00Z");
     const { versions } = deriveVersions(
@@ -460,6 +482,15 @@ describe("the reviews on the timeline", () => {
       ["approved"],
     ]);
     expect(reviewsShown(versions[2]!, null)).toHaveLength(2);
+  });
+
+  test("a reviewer's path lists their verdict on each version they reviewed, oldest first", () => {
+    expect(reviewPath(versions, "mona").map(({ version, review }) => `v${version} ${review.verdict}`)).toEqual([
+      "v1 commented",
+      "v3 changes_requested",
+      "v4 approved",
+    ]);
+    expect(reviewPath(versions, "nobody")).toEqual([]);
   });
 
   test("a history cached before verdicts has no reviews to draw", () => {

@@ -1,5 +1,5 @@
 import { formatAge } from "./age";
-import type { RawReviewState, Verdict } from "./reviewers";
+import { dismissedVerdicts, type RawDismissals, type RawReviewState, type Verdict } from "./reviewers";
 
 interface RawCommitRef {
   oid: string;
@@ -24,10 +24,13 @@ export interface RawVersionPull {
   createdAt: string;
   commits: { nodes: { commit: RawCommitRef }[] };
   timelineItems: { nodes: (RawVersionEvent | null)[] };
+  /** Missing from histories cached before dismissals were fetched. */
+  dismissals?: RawDismissals;
   reviews: {
     nodes: {
       /** Missing from histories cached before review states were fetched. */
       state?: RawReviewState;
+      url?: string;
       author: { login: string; avatarUrl?: string } | null;
       submittedAt: string | null;
       commit: RawCommitRef | null;
@@ -68,7 +71,10 @@ export interface Version {
 export interface VersionReview {
   login: string;
   avatarUrl: string | null;
+  /** What the review said at the time; "dismissed" only when the timeline no longer says. */
   verdict: Verdict;
+  /** Whether the review has since been dismissed. */
+  dismissed?: boolean;
 }
 
 const VERDICTS: Partial<Record<RawReviewState, Verdict>> = {
@@ -133,19 +139,23 @@ export function deriveVersions(pull: RawVersionPull, basePulls: RawBasePull[], v
   }
 
   let viewerLatest: string | null = null;
+  const dismissed = dismissedVerdicts(pull.dismissals);
   for (const review of pull.reviews.nodes) {
     if (!review.commit) continue;
     const version = see(review.commit, Date.parse(review.submittedAt ?? review.commit.committedDate));
     const login = review.author?.login;
     if (login && !version.reviewedBy.includes(login)) version.reviewedBy.push(login);
-    const verdict = review.state ? VERDICTS[review.state] : undefined;
+    const stated = review.state ? VERDICTS[review.state] : undefined;
+    // A dismissed review keeps what it said when it was given; the dismissal is marked beside it.
+    const verdict = stated === "dismissed" && review.url ? (dismissed.get(review.url) ?? stated) : stated;
     if (login && verdict) {
       version.reviews ??= [];
       const { reviews } = version;
-      const known = reviews.find((entry) => entry.login === login);
-      if (!known) reviews.push({ login, avatarUrl: review.author?.avatarUrl ?? null, verdict });
+      const entry = { login, avatarUrl: review.author?.avatarUrl ?? null, verdict, ...(stated === "dismissed" && { dismissed: true }) };
+      const at = reviews.findIndex((other) => other.login === login);
       // A later comment never overrides a verdict, as on the reviewer rows.
-      else if (verdict !== "commented" || known.verdict === "commented") known.verdict = verdict;
+      if (at === -1) reviews.push(entry);
+      else if (verdict !== "commented" || reviews[at]?.verdict === "commented") reviews[at] = entry;
     }
     if (login === viewer) viewerLatest = review.commit.oid;
   }
@@ -453,4 +463,18 @@ export function reviewsShown(version: Version, focus: string | null): VersionRev
  */
 export function outOfOrder(side: "from" | "to", version: number, range: { from: number; to: number }): boolean {
   return side === "from" ? version >= range.to : version <= range.from;
+}
+
+/**
+ * @param versions Oldest first.
+ * @param login The reviewer.
+ * @returns Their review on each version they reviewed, oldest first: how their verdict moved.
+ */
+export function reviewPath(versions: Version[], login: string): { version: number; review: VersionReview }[] {
+  const path: { version: number; review: VersionReview }[] = [];
+  for (const version of versions) {
+    const review = version.reviews?.find((entry) => entry.login === login);
+    if (review) path.push({ version: version.number, review });
+  }
+  return path;
 }

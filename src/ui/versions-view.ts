@@ -1,6 +1,7 @@
 import { formatAge } from "../core/age";
 import CONTROL_STYLES from "../styles/controls.css?raw";
 import TOKEN_STYLES from "../styles/tokens.css?raw";
+import { Picker, type PickerOption } from "./picker";
 import { Tooltip } from "./tooltip";
 import type { Verdict } from "../core/reviewers";
 import { el, icon } from "./dom";
@@ -43,12 +44,14 @@ import {
   restoreRange,
   outOfOrder,
   pickOnTimeline,
+  reviewPath,
   reviewsShown,
   type SavedRange,
   shortVersion,
   versionReviewers,
   type Version,
   type VersionHistory,
+  type VersionReview,
 } from "../core/versions";
 
 /** A line a review comment is on, as GitHub's API names it. */
@@ -208,7 +211,57 @@ header .tool[aria-checked="true"] { font-weight: 600; }
 .version-pick .pick-tag { color: var(--vd-muted); }
 .version-pick .pick-tag.review { color: var(--vd-attention); }
 .version-pick svg { width: 12px; height: 12px; color: var(--vd-muted); transform: rotate(180deg); }
-.version-pick select { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; font: inherit; }
+.version-pick { min-height: 0; font-weight: 400; }
+.version-pick[aria-expanded="true"] { background: var(--vd-bg-muted); }
+.version-pick .face { width: 16px; height: 16px; }
+.version-pick .face img, .version-pick .face .initial { width: 16px; height: 16px; }
+/* The pickers' lists: fixed, so the view's own scrolling and clipping never cut them off. */
+.picker-list {
+  position: fixed;
+  z-index: 20;
+  min-width: 320px;
+  max-width: min(440px, calc(100vw - 16px));
+  margin: 0;
+  padding: 4px;
+  overflow: auto;
+  border: 1px solid var(--vd-border);
+  border-radius: 8px;
+  background: var(--overlay-bgColor, var(--vd-bg));
+  box-shadow: var(--shadow-floating-large, 0 8px 24px rgba(140, 149, 159, 0.2));
+  list-style: none;
+  font-size: 12px;
+}
+.picker-list[hidden] { display: none; }
+.picker-list [role="option"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 12px;
+  padding: 6px 8px 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.picker-list [role="option"]:hover, .picker-list [role="option"]:focus { background: var(--vd-bg-muted); outline: none; }
+.picker-list [role="option"]:focus-visible { box-shadow: inset 0 0 0 2px var(--vd-focus); }
+.picker-list [aria-selected="true"] { box-shadow: inset 3px 0 0 var(--vd-accent); background: color-mix(in srgb, var(--vd-accent) 8%, transparent); }
+.picker-list [aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+.choice-main { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13px; }
+.choice-main svg { width: 16px; height: 16px; color: var(--vd-muted); }
+.choice-tag { padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 18px; }
+.choice-tag.current { background: var(--bgColor-accent-muted, #ddf4ff); color: var(--vd-accent); }
+.choice-tag.review { background: var(--vd-attention-bg); color: var(--vd-attention); }
+.choice-side { display: flex; grid-row: span 2; align-items: center; gap: 8px; color: var(--vd-muted); font-variant-numeric: tabular-nums; }
+.choice-side .face + .face { margin-left: -4px; }
+.choice-sub { grid-column: 1; overflow: hidden; color: var(--vd-muted); text-overflow: ellipsis; white-space: nowrap; }
+.choice-sub code { font: 11px var(--vd-mono); }
+.trail { display: flex; flex-wrap: wrap; gap: 2px 10px; white-space: normal; }
+.step { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
+.step.dismissed { text-decoration: line-through; text-decoration-color: var(--vd-muted); }
+.verdict-inline { display: inline-flex; }
+.verdict-inline svg { width: 12px; height: 12px; stroke-width: 2; }
+.verdict-inline[data-tone="success"] { color: var(--vd-success); }
+.verdict-inline[data-tone="attention"] { color: var(--vd-attention); }
+.verdict-inline[data-tone="muted"] { color: var(--vd-muted); }
 /*
  * The timeline: a tick for each version, and a wider slot for each version someone reviewed, with their faces and
  * each one's verdict. The ticks share what the faces leave of 200px, so a long history still fits.
@@ -261,6 +314,8 @@ header .tool[aria-checked="true"] { font-weight: 600; }
   color: var(--vd-muted);
   font: 600 10px var(--fontStack-sansSerif, sans-serif);
 }
+/* A dismissed review keeps its verdict's icon and colour; its face greys out, as the reviewer rows grey their border. */
+.face.dismissed img, .face.dismissed .initial { filter: grayscale(1); opacity: 0.45; }
 .face .verdict {
   position: absolute;
   right: -4px;
@@ -278,7 +333,6 @@ header .tool[aria-checked="true"] { font-weight: 600; }
 .face .verdict[data-tone="success"] { color: var(--vd-success); }
 .face .verdict[data-tone="attention"] { color: var(--vd-attention); }
 .face .verdict[data-tone="muted"] { color: var(--vd-muted); }
-.reviewer-pick .pick-face { width: 16px; height: 16px; border-radius: 50%; }
 .meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 16px; }
 .summary, .hint { margin: 0; color: var(--vd-muted); font-size: 12px; }
 .summary strong { color: var(--vd-fg); }
@@ -689,8 +743,8 @@ export class VersionsView {
 
     let history: VersionHistory | null = null;
     let picker: {
-      from: HTMLSelectElement;
-      to: HTMLSelectElement;
+      from: Picker;
+      to: Picker;
       link: HTMLAnchorElement;
       refresh: () => void;
       placeReviewers: (versions: Version[]) => void;
@@ -906,34 +960,37 @@ export class VersionsView {
         picker.placeReviewers(next.versions);
         picker.refresh();
       } else {
-        const from = versionSelect("From", next.versions, range.from, now, true);
-        const to = versionSelect("To", next.versions, range.to, now);
+        const changed = () => {
+          refresh();
+          picked();
+        };
+        const from = versionPicker("From", changed, now);
+        const to = versionPicker("To", changed, now);
+        fillVersions(from, next.versions, range.from, now, true);
+        fillVersions(to, next.versions, range.to, now);
         const link = el("a", { class: "tool icon-only", target: "_blank", rel: "noopener", "aria-label": "GitHub's compare" });
         link.append(icon("external"));
         const timeline = el("ol", { class: "timeline", "aria-hidden": "true" });
         let focus: string | null = null;
         const picked = () => {
           if (!history) return;
-          const remembered = rangeToSave(history.versions, Number(from.select.value), Number(to.select.value), Date.now());
+          const remembered = rangeToSave(history.versions, Number(from.value), Number(to.value), Date.now());
           if (remembered) request.saveRange?.(remembered);
           void compare(false);
         };
         const refresh = () => {
           if (!history) return;
-          const limits = { from: Number(from.select.value), to: Number(to.select.value) };
+          const limits = { from: Number(from.value), to: Number(to.value) };
           // The strip is drawn anew, so a tooltip shown for one of its bars would outlive the bar.
           this.tooltip.hide();
-          for (const option of from.select.options) option.disabled = outOfOrder("from", Number(option.value), limits);
-          for (const option of to.select.options) option.disabled = outOfOrder("to", Number(option.value), limits);
-          from.show(history.versions);
-          to.show(history.versions);
+          from.disable((value) => outOfOrder("from", Number(value), limits));
+          to.disable((value) => outOfOrder("to", Number(value), limits));
           renderTimeline(timeline, history.versions, limits, focus, Date.now(), (version, newer) => {
-            const moved = pickOnTimeline({ from: Number(from.select.value), to: Number(to.select.value) }, version, newer);
+            const moved = pickOnTimeline({ from: Number(from.value), to: Number(to.value) }, version, newer);
             if (!moved) return;
-            from.select.value = String(moved.from);
-            to.select.value = String(moved.to);
-            refresh();
-            picked();
+            from.value = String(moved.from);
+            to.value = String(moved.to);
+            changed();
           });
         };
         const wrap = switchTool("Wrap lines", "Wrap", "wrap", false, (on) => {
@@ -959,23 +1016,24 @@ export class VersionsView {
           void compare(false);
           return true;
         });
-        const placeReviewers = (versions: Version[]) => {
-          const chooser = reviewerSelect(versions, focus, (login) => {
-            focus = login;
+        const reviewers = new Picker(
+          "Reviews",
+          (login) => {
+            focus = login || null;
             refresh();
-          });
+          },
+          (option) => reviewerButton(option?.value ?? "", history?.versions ?? []),
+        );
+        reviewers.element.classList.add("reviewer-pick");
+        const placeReviewers = (versions: Version[]) => {
           if (versionReviewers(versions).every((reviewer) => reviewer.login !== focus)) focus = null;
-          controls.replaceChildren(from.label, timeline, to.label, ...(chooser ? [chooser] : []));
+          const choices = reviewerOptions(versions);
+          reviewers.setOptions(choices, focus ?? "");
+          controls.replaceChildren(from.element, timeline, to.element, ...(choices.length > 1 ? [reviewers.element] : []));
         };
         placeReviewers(next.versions);
         options.replaceChildren(sideBySide, comments, wrap, link, close);
-        picker = { from: from.select, to: to.select, link, refresh, placeReviewers };
-        for (const select of [from.select, to.select]) {
-          select.addEventListener("change", () => {
-            refresh();
-            picked();
-          });
-        }
+        picker = { from, to, link, refresh, placeReviewers };
         refresh();
       }
       if (pending && !previous) {
@@ -1052,33 +1110,6 @@ function comparedKey(history: VersionHistory, older: Version | null, newer: Vers
   return [older, newer].map((version) => (version ? `${version.oid}:${baseCandidates(history, version).join(",")}` : BASE)).join("|");
 }
 
-/**
- * A version picker: a native select, so the keyboard and screen readers get all it offers, under a button that
- * shows the picked version in a few words.
- * @param name What it picks, "From" or "To", which also names the select.
- * @param versions Oldest first.
- * @param selected The version to select, 0 for the base branch.
- * @param now The current time.
- * @param base Whether to offer the base branch.
- * @returns The picker, its select, and a way to redraw its words after the select changed.
- */
-function versionSelect(name: string, versions: Version[], selected: number, now: number, base = false) {
-  const select = el("select", { "aria-label": name });
-  fillVersions(select, versions, selected, now, base);
-  const label = el("label", { class: "version-pick" });
-  const words = el("span", { class: "pick-words", "aria-hidden": "true" });
-  label.append(el("span", { class: "pick-name", "aria-hidden": "true" }, name), words, icon("chevron"), select);
-  const show = (all: Version[]) => {
-    const version = all[Number(select.value) - 1];
-    const short = shortVersion(version, now);
-    words.replaceChildren(el("span", { class: "pick-text" }, short.name));
-    if (short.tag) words.append(" ", el("span", { class: short.review ? "pick-tag review" : "pick-tag" }, short.tag));
-    label.dataset.tip = version ? describeVersion(version, now) : "The base branch: the newer version's own changes";
-  };
-  show(versions);
-  return { label, select, show };
-}
-
 const VERDICT_GLYPH: Record<Verdict, { glyph: "check" | "changes" | "comment" | "slash"; tone: string; said: string }> = {
   approved: { glyph: "check", tone: "success", said: "approved" },
   changes_requested: { glyph: "changes", tone: "attention", said: "requested changes" },
@@ -1127,7 +1158,7 @@ function renderTimeline(
       if (version?.viewerLatestReview) classes.push("review");
       if (reviews.length > 0) classes.push("reviewed");
       const item = el("li", { class: classes.filter(Boolean).join(" ") });
-      const said = reviews.map((review) => `${review.login} ${VERDICT_GLYPH[review.verdict].said}`).join(", ");
+      const said = reviews.map((review) => saidOf(review)).join(", ");
       const button = el("button", { type: "button", tabindex: "-1", "data-tip": said ? `${tip}. ${said}` : tip });
       if (reviews.length > 0) {
         item.style.setProperty("--faces", String(Math.min(reviews.length, MAX_FACES)));
@@ -1138,6 +1169,15 @@ function renderTimeline(
       return item;
     }),
   );
+}
+
+/**
+ * @param review A reviewer's verdict on a version.
+ * @returns What they said, for a tooltip, e.g. "mona approved, since dismissed".
+ */
+function saidOf(review: VersionReview): string {
+  const said = `${review.login} ${VERDICT_GLYPH[review.verdict].said}`;
+  return review.dismissed && review.verdict !== "dismissed" ? `${said}, since dismissed` : said;
 }
 
 /**
@@ -1152,8 +1192,8 @@ function slotWidth(faces: number): number {
  * @param review A reviewer's verdict on a version.
  * @returns Their face, with the verdict's icon on it in its colour.
  */
-function reviewFace(review: { login: string; avatarUrl: string | null; verdict: Verdict }): HTMLElement {
-  const face = el("span", { class: "face" });
+function reviewFace(review: VersionReview, badge = true): HTMLElement {
+  const face = el("span", { class: review.dismissed ? "face dismissed" : "face" });
   const initial = el("span", { class: "initial" }, review.login.charAt(0).toUpperCase());
   if (review.avatarUrl) {
     const url = new URL(review.avatarUrl);
@@ -1164,51 +1204,12 @@ function reviewFace(review: { login: string; avatarUrl: string | null; verdict: 
   } else {
     face.append(initial);
   }
+  if (!badge) return face;
   const look = VERDICT_GLYPH[review.verdict];
-  const badge = el("span", { class: "verdict", "data-tone": look.tone });
-  badge.append(icon(look.glyph));
-  face.append(badge);
+  const mark = el("span", { class: "verdict", "data-tone": look.tone });
+  mark.append(icon(look.glyph));
+  face.append(mark);
   return face;
-}
-
-/**
- * The reviewer picker: everyone, or one reviewer whose reviews alone the timeline then shows.
- * @param versions Oldest first.
- * @param focus The reviewer followed so far, or null for everyone.
- * @param onPick Called with the reviewer picked, or null for everyone.
- * @returns The picker, or null when nobody reviewed a version.
- */
-function reviewerSelect(versions: Version[], focus: string | null, onPick: (login: string | null) => void): HTMLElement | null {
-  const reviewers = versionReviewers(versions);
-  if (reviewers.length === 0) return null;
-  const select = el("select", { "aria-label": "Reviews" });
-  select.append(el("option", { value: "" }, "Everyone's reviews"));
-  for (const reviewer of reviewers) {
-    select.append(el("option", { value: reviewer.login }, `${reviewer.login} · ${reviewer.count} ${reviewer.count === 1 ? "version" : "versions"} reviewed`));
-  }
-  const label = el("label", { class: "version-pick reviewer-pick" });
-  const words = el("span", { class: "pick-words", "aria-hidden": "true" });
-  const show = () => {
-    const reviewer = reviewers.find((entry) => entry.login === select.value);
-    words.replaceChildren();
-    if (reviewer?.avatarUrl) {
-      const url = new URL(reviewer.avatarUrl);
-      url.searchParams.set("s", "32");
-      words.append(el("img", { class: "pick-face", src: url.href, alt: "" }), " ");
-    }
-    words.append(el("span", { class: "pick-text" }, reviewer ? reviewer.login : "Everyone"));
-    label.dataset.tip = reviewer
-      ? `The timeline shows only ${reviewer.login}'s reviews, so you can see how their verdict moved`
-      : "Follow one reviewer, to see how their verdict moved from version to version";
-  };
-  select.value = reviewers.some((reviewer) => reviewer.login === focus) ? (focus ?? "") : "";
-  select.addEventListener("change", () => {
-    show();
-    onPick(select.value || null);
-  });
-  show();
-  label.append(el("span", { class: "pick-name", "aria-hidden": "true" }, "Reviews"), words, icon("chevron"), select);
-  return label;
 }
 
 /**
@@ -1231,25 +1232,129 @@ function switchTool(label: string, text: string, glyph: Parameters<typeof icon>[
 }
 
 /**
- * @param select The select to fill.
+ * A version picker: the button names the picked version in a few words, the list shows each version with its
+ * commit, who pushed it, its age, and its reviewers with their verdicts.
+ * @param name What it picks, "From" or "To".
+ * @param onChange Called once the viewer picked another version.
+ * @param now The current time.
+ * @returns The picker; fillVersions gives it its versions.
+ */
+function versionPicker(name: string, onChange: () => void, now: number): Picker {
+  return new Picker(name, onChange, (option) => {
+    const short = shortVersion(option ? versionsOf.get(option) : undefined, now);
+    const words: Node[] = [el("span", { class: "pick-text" }, short.name)];
+    if (short.tag) words.push(document.createTextNode(" "), el("span", { class: short.review ? "pick-tag review" : "pick-tag" }, short.tag));
+    return words;
+  });
+}
+
+/** The version behind each of a version picker's options; the base branch's option has none. */
+const versionsOf = new WeakMap<PickerOption, Version>();
+
+/**
+ * @param picker The picker to fill.
  * @param versions Oldest first.
  * @param selected The version to select, 0 for the base branch.
  * @param now The current time.
  * @param base Whether to offer the base branch, last, which shows the newer version's own changes.
  */
-function fillVersions(select: HTMLSelectElement, versions: Version[], selected: number, now: number, base = false): void {
-  const options = versions.toReversed().map((version) => {
-    const option = el("option", { value: String(version.number) }, describeVersion(version, now));
-    option.selected = version.number === selected;
+function fillVersions(picker: Picker, versions: Version[], selected: number, now: number, base = false): void {
+  const options: PickerOption[] = versions.toReversed().map((version) => {
+    const option: PickerOption = { value: String(version.number), label: describeVersion(version, now), content: () => versionChoice(version, now) };
+    versionsOf.set(option, version);
     return option;
   });
   if (base) {
-    const option = el("option", { value: "0" }, "Base · the base branch, for the version's own changes");
-    option.selected = selected === 0;
-    options.push(option);
+    options.push({
+      value: "0",
+      label: "Base · the base branch, for the version's own changes",
+      content: () => {
+        const main = el("span", { class: "choice-main" });
+        main.append(el("strong", {}, "Base"));
+        return [main, el("span", { class: "choice-sub" }, "The base branch: the newer version's own changes")];
+      },
+    });
   }
-  select.replaceChildren(...options);
+  picker.setOptions(options, String(selected));
 }
+
+/**
+ * @param version The version.
+ * @param now The current time.
+ * @returns How the list shows it: number and tags, its reviewers with their verdicts and its age, then commit and pusher.
+ */
+function versionChoice(version: Version, now: number): Node[] {
+  const main = el("span", { class: "choice-main" });
+  main.append(el("strong", {}, `v${version.number}`));
+  if (version.current) main.append(el("span", { class: "choice-tag current" }, "current"));
+  if (version.viewerLatestReview) main.append(el("span", { class: "choice-tag review" }, "your review"));
+  const age = formatAge(version.at, now);
+  const side = el("span", { class: "choice-side" });
+  const faces = (version.reviews ?? []).slice(0, MAX_FACES);
+  for (const review of faces) side.append(reviewFace(review));
+  side.append(el("time", { datetime: version.at }, age.short));
+  const sub = el("span", { class: "choice-sub" });
+  sub.append(el("code", {}, version.oid.slice(0, 7)), version.pushedBy ? ` · force-pushed by ${version.pushedBy}` : "");
+  return [main, side, sub];
+}
+
+/**
+ * @param versions Oldest first.
+ * @returns The reviewer picker's choices: everyone, then each reviewer with their verdicts version by version.
+ */
+function reviewerOptions(versions: Version[]): PickerOption[] {
+  const everyone: PickerOption = {
+    value: "",
+    label: "Everyone's reviews",
+    content: () => {
+      const main = el("span", { class: "choice-main" });
+      main.append(icon("people"), el("strong", {}, "Everyone"));
+      return [main, el("span", { class: "choice-sub" }, "Every review on the timeline")];
+    },
+  };
+  const reviewers = versionReviewers(versions).map((reviewer): PickerOption => {
+    const path = reviewPath(versions, reviewer.login);
+    const said = path.map(({ version, review }) => `v${version}: ${saidOf(review)}`).join(", ");
+    return {
+      value: reviewer.login,
+      label: `${reviewer.login}. ${said}`,
+      content: () => {
+        const main = el("span", { class: "choice-main" });
+        main.append(reviewFace({ login: reviewer.login, avatarUrl: reviewer.avatarUrl, verdict: "commented" }, false), el("strong", {}, reviewer.login));
+        const trail = el("span", { class: "choice-sub trail" });
+        for (const { version, review } of path) trail.append(trailStep(version, review));
+        return [main, trail];
+      },
+    };
+  });
+  return [everyone, ...reviewers];
+}
+
+/**
+ * @param version The version reviewed.
+ * @param review The reviewer's verdict on it.
+ * @returns One step of a reviewer's path: the version and the verdict's icon, greyed when since dismissed.
+ */
+function trailStep(version: number, review: VersionReview): HTMLElement {
+  const step = el("span", { class: review.dismissed ? "step dismissed" : "step" });
+  const look = VERDICT_GLYPH[review.verdict];
+  const glyph = el("span", { class: "verdict-inline", "data-tone": look.tone });
+  glyph.append(icon(look.glyph));
+  step.append(`v${version}`, glyph);
+  return step;
+}
+
+/**
+ * @param login The reviewer followed, or "" for everyone.
+ * @param versions Oldest first.
+ * @returns What the reviewer picker's button shows.
+ */
+function reviewerButton(login: string, versions: Version[]): Node[] {
+  const reviewer = versionReviewers(versions).find((entry) => entry.login === login);
+  if (!reviewer) return [el("span", { class: "pick-text" }, "Everyone")];
+  return [reviewFace({ login: reviewer.login, avatarUrl: reviewer.avatarUrl, verdict: "commented" }, false), el("span", { class: "pick-text" }, reviewer.login)];
+}
+
 
 /**
  * @param version The version.
