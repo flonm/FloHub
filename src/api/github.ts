@@ -444,6 +444,15 @@ export async function rerequestReview(ref: PullRef, login: string): Promise<void
 }
 
 /**
+ * Comments on the pull request's conversation, which notifies whoever it mentions.
+ * @param ref The pull request.
+ * @param body The comment, in Markdown.
+ */
+export async function postComment(ref: PullRef, body: string): Promise<void> {
+  await request(`/repos/${ref.owner}/${ref.repo}/issues/${ref.number}/comments`, { method: "POST", body: JSON.stringify({ body }) });
+}
+
+/**
  * Dismisses an approval or change request. GitHub posts the reason on the pull request and notifies the reviewer.
  * @param reviewId The review's node id.
  * @param message Why it no longer applies; GitHub refuses an empty one.

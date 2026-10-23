@@ -9,10 +9,12 @@ import { ReviewDialog } from "./ui/review-dialog";
 import { deriveDiscussion, lastReviewBy } from "./core/discussion";
 import { deriveReviewers, type DismissedVerdict, type Reviewer } from "./core/reviewers";
 import { type CopyTarget, createShortcutMatcher, type ReviewEvent } from "./core/shortcuts";
-import type { Overview } from "./api/github";
+import type { Overview, VersionPatch } from "./api/github";
 import { readCachedOverview } from "./api/overview-cache";
 import { overviewTurnInput, repliesAwaiting, type Turn, whoseTurn } from "./core/turn";
 import { type ProgressCounts, roughProgress } from "./core/addressed";
+import { pokeMessage, rangeFileStats, type StandingVerdict, standingVerdict, unseenRange, VERSIONS_PARAM, versionsRangeUrl } from "./core/since-review";
+import { interdiff } from "./core/interdiff";
 import { deriveStack } from "./core/stack";
 import { Toast } from "./ui/toast";
 import {
@@ -23,6 +25,7 @@ import {
   parseRangeParam,
   rangeParam,
   type SavedRange,
+  type Version,
   type VersionHistory,
 } from "./core/versions";
 import { commentIsCurrent, commentJump, type CommentLink, type CommentPlace, currentLines, githubFileAnchor, githubLineSelector, type JumpTarget, parseCommentLink, storedVersionsWillDo } from "./core/comment-jump";
@@ -47,7 +50,6 @@ const COMMENTS_PANEL = "#docked-side-panel-content";
 /** Whether the viewer reads the versions view side by side. */
 const SPLIT_KEY = "versionsSplitView";
 /** The URL parameter that keeps the versions view open on the Files changed tab, with the range it compares. */
-const VERSIONS_PARAM = "flohub-versions";
 
 let current: PullRef | null = null;
 let state: BarState = { kind: "loading" };
@@ -79,6 +81,9 @@ let versionsFromUrl: SavedRange | null = null;
 let versionsParam = "";
 /** When the viewer last opened the pull request on screen before this visit, once read from storage. */
 let visit: { key: string; previous: string | null } | null = null;
+const NO_REVIEWERS: Reviewer[] = [];
+/** The versions of the pull request on screen, for how far each reviewer's standing verdict lags behind. */
+let versionHistory: { key: string; versions: VersionHistory } | null = null;
 const busy = new Set<string>();
 const dialog = new ReviewDialog();
 const versionsView = new VersionsView();
@@ -92,6 +97,8 @@ const actions = {
   rerequest: (reviewer: Reviewer) => void rerequest(reviewer),
   poke: (reviewer: Reviewer) => void poke(reviewer),
   dismiss: (reviewer: Reviewer, verdict: DismissedVerdict) => openDismissal(reviewer, verdict),
+  showUnseen: (reviewer: Reviewer) => showUnseen(reviewer),
+  nudge: (reviewer: Reviewer) => void openNudge(reviewer),
   openOptions: () => void send({ type: "open-options" }),
   toggleStack: () => {
     stackCollapsed = !stackCollapsed;
@@ -340,9 +347,10 @@ function readyState(overview: Overview, ref: PullRef, exact: boolean): Extract<B
     if (!sibling || !pullRequest.stack) return null;
     stack = deriveStack({ ...sibling, stack: pullRequest.stack }, pullRequest.stack.baseRefName);
   }
+  const reviewers = exact ? deriveReviewers(pullRequest, overview.viewer.login) : null;
   return {
     kind: "ready",
-    reviewers: exact ? deriveReviewers(pullRequest, overview.viewer.login) : null,
+    reviewers,
     stack,
     stackCollapsed,
     showMerged,
@@ -364,7 +372,100 @@ function readyState(overview: Overview, ref: PullRef, exact: boolean): Extract<B
     viewer: overview.viewer.login,
     versionsOpen: versionsView.isOpen,
     ...turnOf(pullRequest, overview.viewer.login, exact),
+    standings: standingsFor(ref, reviewers),
   };
+}
+
+/**
+ * @param ref The pull request on screen.
+ * @param reviewers Its reviewers.
+ * @returns Each reviewer's standing approval or change request, by login, once the versions are known.
+ */
+function standingsFor(ref: PullRef, reviewers: Reviewer[] | null): ReadonlyMap<string, StandingVerdict> {
+  const standings = new Map<string, StandingVerdict>();
+  if (versionHistory?.key !== pullKey(ref)) return standings;
+  const { versions } = versionHistory.versions;
+  const everyone = reviewers ?? NO_REVIEWERS;
+  for (const reviewer of everyone) {
+    const standing = standingVerdict(versions, reviewer.name);
+    if (standing) standings.set(reviewer.name, standing);
+  }
+  return standings;
+}
+
+/**
+ * Fetches the versions when a reviewer's approval or change request is on an older commit than the head, so their
+ * row can say how far behind it is. The cached versions show first; the fresh ones only when the cache lacks the head.
+ * @param ref The pull request.
+ * @param head Its head commit.
+ * @param verdicts The commits the reviews were given on, with their states.
+ */
+async function loadHistory(ref: PullRef, head: string, verdicts: { state: string; commit?: { oid: string } | null }[]): Promise<void> {
+  const key = pullKey(ref);
+  const behind = verdicts.some((review) => (review.state === "APPROVED" || review.state === "CHANGES_REQUESTED") && review.commit && review.commit.oid !== head);
+  if (!behind) return;
+  const cached = versionHistory?.key === key ? versionHistory.versions : await readCachedHistory(ref);
+  if (cached) showHistory(key, cached);
+  // A history cached before versions kept their reviews can't say whose verdict is where.
+  if (cached?.versions.at(-1)?.oid === head && cached.versions.every((version) => version.reviews !== undefined)) return;
+  const fresh = await freshVersions(ref);
+  if (typeof fresh !== "string") showHistory(key, fresh);
+}
+
+function showHistory(key: string, versions: VersionHistory): void {
+  if (!current || pullKey(current) !== key) return;
+  versionHistory = { key, versions };
+  if (state.kind === "ready") update({ standings: standingsFor(current, state.reviewers) });
+}
+
+/** Opens the versions view from the version a reviewer's standing verdict is on to the head. */
+function showUnseen(reviewer: Reviewer): void {
+  const ref = current;
+  const standing = state.kind === "ready" ? state.standings?.get(reviewer.name) : undefined;
+  if (!ref || !standing || !unseenRange(standing)) return;
+  showInVersions(ref, { range: { from: standing.version.oid, to: standing.current.oid, toCurrent: true, at: Date.now() } });
+}
+
+/**
+ * Asks a reviewer to look again at what changed since their approval or change request: a comment that names the
+ * files and links the range in the versions view, and a new review request when they aren't asked already.
+ */
+async function openNudge(reviewer: Reviewer): Promise<void> {
+  const ref = current;
+  const standing = state.kind === "ready" ? state.standings?.get(reviewer.name) : undefined;
+  if (!ref || !standing || !versionHistory) return;
+  const { versions } = versionHistory;
+  const pullUrl = `https://github.com/${ref.owner}/${ref.repo}/pull/${ref.number}`;
+  let files = null;
+  try {
+    const [before, after] = await Promise.all([versionPatch(ref, versions, standing.version), versionPatch(ref, versions, standing.current)]);
+    files = rangeFileStats(interdiff(before.files, after.files, { sameBase: before.mergeBase === after.mergeBase }));
+  } catch {
+    // Without the patches the comment only counts the versions.
+  }
+  const body = pokeMessage(reviewer.name, standing, files, versionsRangeUrl(pullUrl, standing.version, standing.current));
+  if (!body || !current || pullKey(current) !== pullKey(ref)) return;
+  const asked = reviewer.status === "pending" || reviewer.status === "rerequested";
+  dialog.open({
+    event: "NUDGE",
+    reviewer: reviewer.name,
+    body,
+    rerequest: !asked && reviewer.canRerequest,
+    submit: async (text) => {
+      const reply = await send({ type: "post-comment", ref, body: text });
+      if (!reply.ok) return `Could not post the comment: ${reply.message}`;
+      if (!asked && reviewer.canRerequest) await send({ type: "rerequest", ref, login: reviewer.name });
+      toast.show(`Asked ${reviewer.name} to look again.`, "success");
+      if (current && pullKey(current) === pullKey(ref)) void load(true);
+      return null;
+    },
+  });
+}
+
+async function versionPatch(ref: PullRef, versions: VersionHistory, version: Version): Promise<VersionPatch> {
+  const reply = await send({ type: "version-patch", ref, head: version.oid, bases: baseCandidates(versions, version) });
+  if (!reply.ok) throw new Error(reply.message);
+  return reply.value;
 }
 
 /**
@@ -437,6 +538,7 @@ async function load(force: boolean): Promise<void> {
       const reviews = pullRequest.reviews.nodes.filter((review) => review.author?.login === viewer && review.state !== "PENDING");
       const reviewed = reviews.at(-1)?.commit?.oid ?? null;
       highlights.update(ref, { head: pullRequest.headRefOid, base: pullRequest.baseRefOid, reviewed });
+      void loadHistory(ref, pullRequest.headRefOid, pullRequest.reviews.nodes);
     }
     const ready = readyState(reply.value, ref, true);
     loadedFresh = ready !== null;

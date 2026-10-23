@@ -13,6 +13,7 @@ import { isMac, shortcutHelp } from "../core/shortcuts";
 import { renderShortcutList } from "./shortcut-list";
 import type { Turn } from "../core/turn";
 import type { ProgressCounts } from "../core/addressed";
+import { type StandingVerdict, staleLabel } from "../core/since-review";
 import { reasonWords } from "./turn-words";
 
 export type BarState =
@@ -53,6 +54,8 @@ export type BarState =
       repliesFor?: ReadonlyMap<string, number>;
       /** How the open threads stand since their comments, by GitHub's outdated marks; null while unknown. */
       progress?: ProgressCounts | null;
+      /** Each reviewer's standing approval or change request with its version, by login, once the versions are known. */
+      standings?: ReadonlyMap<string, StandingVerdict>;
     };
 
 /** What Files changed shows: GitHub's diff, the same with what changed since the viewer's review highlighted, or the versions view. */
@@ -64,6 +67,10 @@ export interface BarActions {
   poke: (reviewer: Reviewer) => void;
   /** Asks for the reason and dismisses the reviewer's standing approval or change request. */
   dismiss: (reviewer: Reviewer, verdict: DismissedVerdict) => void;
+  /** Opens the versions view on what changed since the reviewer's standing verdict. */
+  showUnseen: (reviewer: Reviewer) => void;
+  /** Asks the reviewer to look again, with what changed since their standing verdict. */
+  nudge: (reviewer: Reviewer) => void;
   openOptions: () => void;
   toggleStack: () => void;
   toggleMerged: () => void;
@@ -75,6 +82,17 @@ export interface BarActions {
 }
 
 const MAX_FACES = 6;
+
+/** What a reviewer's row needs beyond the reviewer. */
+interface RowState {
+  busy: boolean;
+  pokedAt: number | undefined;
+  now: number;
+  replies: number | undefined;
+  standing: StandingVerdict | undefined;
+  /** Whether the reviewer is the viewer, who isn't asked to look again. */
+  self: boolean;
+}
 
 /** A reviewer summary rendered into its own shadow root, either inline in the header or floating. */
 export class ReviewBar {
@@ -386,7 +404,16 @@ export class ReviewBar {
     } else {
       const list = el("ul", { class: "reviewer-list" });
       for (const reviewer of reviewers) {
-        list.append(this.renderReviewer(reviewer, state.busy.has(reviewer.key), state.pokedAt.get(reviewer.key), state.now, state.repliesFor?.get(reviewer.name)));
+        list.append(
+          this.renderReviewer(reviewer, {
+            busy: state.busy.has(reviewer.key),
+            pokedAt: state.pokedAt.get(reviewer.key),
+            now: state.now,
+            replies: state.repliesFor?.get(reviewer.name),
+            standing: state.standings?.get(reviewer.name),
+            self: reviewer.name === state.viewer,
+          }),
+        );
       }
       section.append(list);
     }
@@ -395,24 +422,30 @@ export class ReviewBar {
     return section;
   }
 
-  private renderReviewer(reviewer: Reviewer, busy: boolean, pokedAt: number | undefined, now: number, replies?: number): HTMLElement {
+  private renderReviewer(reviewer: Reviewer, row: RowState): HTMLElement {
+    const { busy, pokedAt, now, replies } = row;
     const look = reviewerLook(reviewer, now, pokedAt, replies);
-    const row = el("li", {
+    // The versions may lag behind the overview, as after a re-request: only a verdict that still stands is behind.
+    const verdict = reviewer.status === "rerequested" ? reviewer.previous : reviewer.status;
+    const standing = row.standing?.verdict === verdict ? row.standing : undefined;
+    const stale = staleLabel(standing ?? null);
+    const detail = stale ? `${look.detail} ${stale.charAt(0).toUpperCase()}${stale.slice(1)}.` : look.detail;
+    const item = el("li", {
       class: busy ? "reviewer busy" : "reviewer",
       "data-ring": look.ring,
-      "data-tip": `${reviewer.name}: ${look.detail}`,
+      "data-tip": `${reviewer.name}: ${detail}`,
     });
-    if (look.waiting) row.dataset.waiting = "";
-    row.append(
+    if (look.waiting) item.dataset.waiting = "";
+    item.append(
       avatar(reviewer),
       el(
         "a",
         { class: "name", href: reviewer.url, target: "_top", "data-focus-key": `reviewer:${reviewer.key}` },
         reviewer.name,
       ),
-      el("span", { class: "visually-hidden" }, `: ${look.label}. ${look.detail}`),
+      el("span", { class: "visually-hidden" }, `: ${look.label}. ${detail}`),
     );
-    if (reviewer.kind === "bot") row.append(icon("bot", "kind"));
+    if (reviewer.kind === "bot") item.append(icon("bot", "kind"));
 
     const actions = el("span", { class: "actions" });
     if (reviewer.canRerequest) {
@@ -433,15 +466,24 @@ export class ReviewBar {
       }
       actions.append(tipped(poke));
     }
-    const standing = standingVerdict(reviewer);
-    if (standing) {
-      const dismiss = iconButton("cross", `Dismiss ${reviewer.name}'s ${dismissedName(standing)}`, () => this.actions.dismiss(reviewer, standing), `dismiss:${reviewer.key}`);
+    if (stale && standing) {
+      const range = `v${standing.version.number} to v${standing.current.number}`;
+      actions.append(tipped(iconButton("compare", `What ${reviewer.name} hasn't seen: ${range} in the versions view`, () => this.actions.showUnseen(reviewer), `unseen:${reviewer.key}`)));
+      if (!row.self) {
+        const nudge = iconButton("comment", `Ask ${reviewer.name} to look again, with what changed since v${standing.version.number}`, () => this.actions.nudge(reviewer), `nudge:${reviewer.key}`);
+        actions.append(tipped(nudge));
+      }
+    }
+    const dismissable = standingVerdict(reviewer);
+    if (dismissable) {
+      const dismiss = iconButton("cross", `Dismiss ${reviewer.name}'s ${dismissedName(dismissable)}`, () => this.actions.dismiss(reviewer, dismissable), `dismiss:${reviewer.key}`);
       dismiss.classList.add("dismiss");
       actions.append(tipped(dismiss));
     }
-    if (actions.childElementCount > 0) row.append(actions);
+    if (actions.childElementCount > 0) item.append(actions);
 
     const state = el("span", { class: "reviewer-state", "aria-hidden": "true" });
+    if (stale && standing) state.append(el("span", { class: "behind" }, `v${standing.version.number}`));
     if (recentlyPoked) state.append(icon("pointer", "poked"));
     if (replies !== undefined && replies > 0) {
       const mark = el("span", { class: "turn-mark" });
@@ -451,8 +493,8 @@ export class ReviewBar {
     const glyph = icon(look.glyph, "glyph");
     glyph.dataset.tone = look.tone;
     state.append(glyph);
-    row.append(state);
-    return row;
+    item.append(state);
+    return item;
   }
 
   private renderFloating(): HTMLElement {

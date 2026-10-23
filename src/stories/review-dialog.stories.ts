@@ -58,7 +58,7 @@ const meta = {
     docs: {
       description: {
         component:
-          "Approving or requesting changes from the bar, or dismissing someone's review with the reason GitHub requires. An empty change request is sent with a zero-width space, since GitHub refuses a bodyless one; a pending review with draft comments is submitted along with it.",
+          "Approving or requesting changes from the bar, dismissing someone's review with the reason GitHub requires, or asking a reviewer to look again at what changed since their verdict. An empty change request is sent with a zero-width space, since GitHub refuses a bodyless one; a pending review with draft comments is submitted along with it.",
       },
     },
   },
@@ -95,4 +95,24 @@ export const DismissChangeRequest: Story = { render: () => dismissal("changes_re
 /** Branch protection can keep the viewer from dismissing; type a reason and submit to see GitHub's refusal. */
 export const DismissFails: Story = {
   render: () => dismissal("approved", "Could not dismiss the review: You do not have permission to dismiss this review."),
+};
+
+/** Asking a reviewer to look again: the composed comment, ready to edit, and a new review request with it. */
+export const AskToLookAgain: Story = {
+  render: () => {
+    for (const previous of document.querySelectorAll("flohub-dialog")) previous.remove();
+    new ReviewDialog().open({
+      event: "NUDGE",
+      reviewer: "mona",
+      rerequest: true,
+      body:
+        "@mona Since your approval on v2: 3 files changed (+12 −4): `src/api.ts`, `src/ui/bar.ts`, `README.md`. " +
+        "[See what changed](https://github.com/octo-org/api/pull/7/changes?flohub-versions=aaaaaaa..)",
+      submit: async () => {
+        await settle();
+        return null;
+      },
+    });
+    return el("p", {}, "The dialog opens over the page; Esc closes it.");
+  },
 };

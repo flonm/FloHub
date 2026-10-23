@@ -35,6 +35,7 @@ import {
 import { renderComposer, renderThread, THREAD_STYLES, type ThreadActions, threadPlace } from "./review-thread";
 import { renderRichText } from "../core/rich-text";
 import { type ProgressBasis, type ThreadProgress, threadProgress } from "../core/addressed";
+import { standingVerdict, unseenRange } from "../core/since-review";
 import { type JumpTarget, threadElsewhere } from "../core/comment-jump";
 import { type SplitSide, splitRows } from "../core/split";
 import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
@@ -459,6 +460,8 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 .note { margin: 0; padding: 8px 12px; color: var(--vd-muted); font-size: 12px; }
 
 .legend:empty { display: none; }
+/* A tool sets its own display, which would show the button while it has nothing to offer. */
+.tool.unseen[hidden] { display: none; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; color: var(--vd-muted); font-size: 12px; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .legend i { width: 12px; height: 12px; border-radius: 3px; }
@@ -994,6 +997,7 @@ export class VersionsView {
           const limits = { from: Number(from.value), to: Number(to.value) };
           // The strip is drawn anew, so a tooltip shown for one of its bars would outlive the bar.
           this.tooltip.hide();
+          showUnseen(unseen, focus, history.versions, limits);
           from.disable((value) => outOfOrder("from", Number(value), limits));
           to.disable((value) => outOfOrder("to", Number(value), limits));
           renderTimeline(timeline, history.versions, limits, focus, Date.now(), (version, newer) => {
@@ -1036,11 +1040,20 @@ export class VersionsView {
           (option) => reviewerButton(option?.value ?? "", history?.versions ?? []),
         );
         reviewers.element.classList.add("reviewer-pick");
+        // Following a reviewer whose verdict the pull request has moved past offers the range they haven't seen.
+        const unseen = el("button", { type: "button", class: "tool unseen", hidden: "" });
+        unseen.append(icon("compare"), el("span", { class: "unseen-text" }));
+        unseen.addEventListener("click", () => {
+          if (!unseen.dataset.from || !unseen.dataset.to) return;
+          from.value = unseen.dataset.from;
+          to.value = unseen.dataset.to;
+          changed();
+        });
         const placeReviewers = (versions: Version[]) => {
           if (versionReviewers(versions).every((reviewer) => reviewer.login !== focus)) focus = null;
           const choices = reviewerOptions(versions);
           reviewers.setOptions(choices, focus ?? "");
-          controls.replaceChildren(from.element, timeline, to.element, ...(choices.length > 1 ? [reviewers.element] : []));
+          controls.replaceChildren(from.element, timeline, to.element, ...(choices.length > 1 ? [reviewers.element, unseen] : []));
         };
         placeReviewers(next.versions);
         options.replaceChildren(sideBySide, comments, wrap, link, close);
@@ -1322,6 +1335,27 @@ function trailStep(version: number, review: VersionReview): HTMLElement {
   glyph.append(icon(look.glyph));
   step.append(`v${version}`, glyph);
   return step;
+}
+
+/**
+ * Offers the range a followed reviewer hasn't seen: from the version of their standing approval or change request to
+ * the head, unless that is the range on screen already.
+ * @param button The button.
+ * @param login The reviewer followed, or null for everyone.
+ * @param versions Oldest first.
+ * @param range The range on screen.
+ */
+function showUnseen(button: HTMLButtonElement, login: string | null, versions: Version[], range: { from: number; to: number }): void {
+  const standing = login ? standingVerdict(versions, login) : null;
+  const unseen = unseenRange(standing);
+  button.hidden = !unseen || (unseen.from === range.from && unseen.to === range.to);
+  if (!unseen || !standing || button.hidden) return;
+  button.dataset.from = String(unseen.from);
+  button.dataset.to = String(unseen.to);
+  const said = standing.verdict === "approved" ? "approval" : "change request";
+  button.dataset.tip = `Compare v${unseen.from}, where ${login} gave their ${said}, with v${unseen.to}: what they haven't seen since.`;
+  const text = button.querySelector(".unseen-text");
+  if (text) text.textContent = `What ${login} hasn't seen`;
 }
 
 /**

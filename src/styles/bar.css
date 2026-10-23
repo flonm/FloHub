@@ -512,6 +512,12 @@
   outline: 2px solid var(--flo-focus, var(--flo-accent));
   outline-offset: 1px;
 }
+/* The version a standing verdict was given on, when the pull request has moved past it. */
+.reviewer-state .behind {
+  color: var(--flo-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
 .reviewer-state .turn-mark {
   display: inline-flex;
   align-items: center;
