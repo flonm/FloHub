@@ -650,6 +650,7 @@ async function openJumpMenu(ref: PullRef, link: HTMLAnchorElement, named: Commen
       label: "In the current diff",
       detail: isCurrent ? "Where the comment sits in the pull request's current changes" : "The comment is outdated: its lines are gone from the current diff",
       disabled: !isCurrent,
+      icon: "target",
       run: () => void showCurrent(ref, named, fetched),
     };
   };
@@ -692,9 +693,15 @@ async function openJumpMenu(ref: PullRef, link: HTMLAnchorElement, named: Commen
         label: `Changes since ${name}`,
         detail: since ? `How the code changed from ${name}, where the comment was written, to the current version` : `${name}, where the comment was written, is the current version`,
         disabled: !since,
+        icon: "compare",
         run: choose(() => since && showInVersions(ref, since)),
       },
-      { label: `Code at ${name}`, detail: `The pull request's changes as ${name} made them, as the comment saw them`, run: choose(() => showInVersions(ref, jump.at)) },
+      {
+        label: `Code at ${name}`,
+        detail: `The pull request's changes as ${name} made them, as the comment saw them`,
+        icon: "file",
+        run: choose(() => showInVersions(ref, jump.at)),
+      },
       inCurrentDiff(comment),
     ],
     ...(nearest && { note: nearest }),

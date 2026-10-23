@@ -1281,13 +1281,18 @@ check(
   "Changes since v1 compares v1 with the head and marks the commented line, found by the number v1 gave it",
 );
 await jumpLink.click();
-await jumpMenu.getByRole("menuitem", { name: /^Code at v1/u }).click();
+await jumpMenu.getByRole("menuitem", { name: /^Code at v1/u }).waitFor();
+check(
+  (await jumpMenu.getByRole("menuitem", { name: /^Code at v1/u }).getAttribute("aria-keyshortcuts")) === "2",
+  "each choice in the jump menu carries the number key that picks it",
+);
+await splitPage.keyboard.press("2");
 await docked.getByText("Shows the pull request's changes as v1 made them").waitFor();
 check(
   (await docked.getByLabel("From").inputValue()) === "0" &&
     (await docked.locator(".line.target").innerText()).includes("Diverged stacks") &&
     splitPage.url().includes("flohub-versions=base..aaaaaaa"),
-  "Code at v1 shows v1 against the base branch, at the commented line, and the URL says so",
+  "the 2 key picks Code at v1, which shows v1 against the base branch, at the commented line, and the URL says so",
 );
 await splitPage.locator("#current-link").click();
 await jumpMenu.getByRole("menuitem", { name: /^In the current diff/u }).click();
