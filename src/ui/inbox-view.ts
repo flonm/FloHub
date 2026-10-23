@@ -6,6 +6,7 @@ import { formatDiffStat } from "../core/viewed";
 import { el, icon } from "./dom";
 import { VERDICT_LOOK, verdictFace } from "./verdict-face";
 import { reasonWords, type ReasonTone } from "./turn-words";
+import { applyMarks, type InboxMarks, isPinned, isSnoozed, NO_MARKS, type SnoozePreset } from "../core/inbox-marks";
 
 /** The sections the popup draws: review requests asked again, then whose move each pull request waits for. */
 export type SectionKind = InboxSection;
@@ -22,6 +23,12 @@ export interface InboxViewState {
   problem: Problem | null;
   /** The sections the user folded away. */
   collapsed: ReadonlySet<SectionKind>;
+  /** The pull requests the user pinned or snoozed. */
+  marks?: InboxMarks;
+  /** The sections whose snoozed pull requests the user asked to see. */
+  showSnoozed?: ReadonlySet<SectionKind>;
+  /** The current time, for which snoozes are over. */
+  now?: number;
 }
 
 /** What the popup does when the user acts on the inbox. */
@@ -31,6 +38,10 @@ export interface InboxViewActions {
   focusRow: (key: string) => void;
   toggleSection: (kind: SectionKind) => void;
   hideTeamRequests: (repo: string) => void;
+  togglePin: (url: string) => void;
+  /** Snoozes a pull request, or wakes it with null. */
+  snooze: (pull: InboxPull, preset: SnoozePreset | null) => void;
+  toggleSnoozed: (kind: SectionKind) => void;
   retryRefresh: () => void;
   openSettings: () => void;
 }
@@ -210,7 +221,11 @@ function renderSection(
   state: InboxViewState,
   actions: InboxViewActions,
 ): HTMLElement {
-  const count = groups.reduce((sum, entry) => sum + entry.pulls.length, 0);
+  const marks = state.marks ?? NO_MARKS;
+  const now = state.now ?? Date.now();
+  const showing = state.showSnoozed?.has(kind) ?? false;
+  const marked = applyMarks(groups, marks, now, showing);
+  const count = groups.reduce((sum, entry) => sum + entry.pulls.length, 0) - marked.snoozed;
   const id = `section-${kind}`;
   const bodyId = `section-body-${kind}`;
   const open = !state.collapsed.has(kind);
@@ -231,29 +246,48 @@ function renderSection(
   body.hidden = !open;
   section.append(heading, body);
   if (!open) return section;
-  if (groups.length === 0) {
+  if (marked.groups.length === 0 && marked.snoozed === 0) {
     body.append(el("p", { class: "empty" }, empty));
     return section;
   }
   const list = el("ul", { class: "groups" });
-  for (const entry of groups) list.append(renderGroup(entry, kind, actions));
-  body.append(list);
+  for (const entry of marked.groups) list.append(renderGroup(entry, kind, actions, { marks, now }));
+  if (marked.groups.length > 0) body.append(list);
+  if (marked.snoozed > 0) {
+    const snoozed = `${marked.snoozed} snoozed`;
+    const more = el(
+      "button",
+      { type: "button", class: "snoozed-toggle", "aria-expanded": String(showing), "data-focus-key": `snoozed:${kind}` },
+      showing ? `Hide ${snoozed}` : `Show ${snoozed}`,
+    );
+    more.prepend(icon("clock"));
+    more.addEventListener("click", () => actions.toggleSnoozed(kind));
+    body.append(more);
+  }
   return section;
 }
 
-function renderGroup(entry: TurnGroup, kind: SectionKind, actions: InboxViewActions): HTMLElement {
+/** The marks the rows are drawn with, and when. */
+interface Marking {
+  marks: InboxMarks;
+  now: number;
+}
+
+function renderGroup(entry: TurnGroup, kind: SectionKind, actions: InboxViewActions, marking: Marking): HTMLElement {
   // Layers of one stack stay adjacent; a rail joins them only when the inbox holds more than one.
   const joined = entry.stackNumber !== null && entry.pulls.length > 1;
   const item = el("li", { class: joined ? "group joined" : "group" });
   const list = el("ul", { class: "layers" });
   if (entry.stackNumber !== null) list.setAttribute("aria-label", `Stack of ${entry.stackSize} in ${entry.repo}`);
-  for (const pull of entry.pulls) list.append(renderPull(pull, entry, kind, actions));
+  for (const pull of entry.pulls) list.append(renderPull(pull, entry, kind, actions, marking));
   item.append(list);
   return item;
 }
 
-function renderPull(pull: InboxPull, entry: TurnGroup, kind: SectionKind, actions: InboxViewActions): HTMLElement {
-  const item = el("li", { class: "layer" });
+function renderPull(pull: InboxPull, entry: TurnGroup, kind: SectionKind, actions: InboxViewActions, marking: Marking): HTMLElement {
+  const pinned = isPinned(marking.marks, pull.url);
+  const snoozed = isSnoozed(marking.marks, pull, marking.now);
+  const item = el("li", { class: ["layer", ...(pinned ? ["pinned"] : []), ...(snoozed ? ["snoozed"] : [])].join(" ") });
   const { role } = entry;
   const key = `${kind}:${pull.url}`;
   const ids = { title: `title-${kind}-${pull.number}-${entry.repo}`, meta: `meta-${kind}-${pull.number}-${entry.repo}` };
@@ -280,6 +314,7 @@ function renderPull(pull: InboxPull, entry: TurnGroup, kind: SectionKind, action
   link.addEventListener("focus", () => actions.focusRow(key));
 
   const title = el("span", { class: "title", id: ids.title, title: `#${pull.number} ${pull.title}` });
+  if (pinned) title.append(icon("pin", "pin-mark"), el("span", { class: "visually-hidden" }, "Pinned: "));
   title.append(el("span", { class: "number" }, `#${pull.number} `), pull.title);
 
   const time = el("time", { class: "age", datetime: pull.lastActivity, "aria-hidden": "true" });
@@ -287,6 +322,7 @@ function renderPull(pull: InboxPull, entry: TurnGroup, kind: SectionKind, action
   const spoken = el("span", { class: "visually-hidden spoken-age" });
 
   const meta = el("span", { class: "meta", id: ids.meta });
+  if (snoozed) meta.append(flag("Snoozed", "neutral"));
   meta.append(...renderReasons(pull, role, kind));
   if (role !== "mine" && pull.author) meta.append(el("span", { class: "item author" }, pull.author));
   meta.append(el("span", { class: "item repo" }, entry.repo));
@@ -311,9 +347,85 @@ function renderPull(pull: InboxPull, entry: TurnGroup, kind: SectionKind, action
     link.append(faces);
     meta.append(el("span", { class: "visually-hidden" }, `. Reviews: ${faces.title}`));
   }
-  item.append(link);
-  if (role === "review" && pull.viaTeam) item.append(renderHideTeams(entry.repo, pull, actions));
+  item.append(link, renderRowTools(pull, entry, role, actions, { pinned, snoozed }));
   return item;
+}
+
+/**
+ * The row's own buttons, shown on hover or focus at the end of its title line: hiding team requests on a team
+ * request, pinning, and snoozing or waking it, with a menu of how long.
+ */
+function renderRowTools(
+  pull: InboxPull,
+  entry: TurnGroup,
+  role: InboxRole,
+  actions: InboxViewActions,
+  marks: { pinned: boolean; snoozed: boolean },
+): HTMLElement {
+  const tools = el("span", { class: "row-tools" });
+  if (role === "review" && pull.viaTeam) tools.append(renderHideTeams(entry.repo, pull, actions));
+  const pin = rowButton(marks.pinned ? "Unpin" : "Pin to the top", "pin", `pin:${pull.url}`);
+  pin.setAttribute("aria-pressed", String(marks.pinned));
+  pin.addEventListener("click", () => actions.togglePin(pull.url));
+  tools.append(pin);
+  if (marks.snoozed) {
+    const wake = rowButton("Wake: show it again", "clock", `wake:${pull.url}`);
+    wake.addEventListener("click", () => actions.snooze(pull, null));
+    tools.append(wake);
+    return tools;
+  }
+  const snooze = rowButton("Snooze", "clock", `snooze:${pull.url}`);
+  snooze.setAttribute("aria-haspopup", "menu");
+  snooze.setAttribute("aria-expanded", "false");
+  const menu = el("span", { class: "snooze-menu", role: "menu", hidden: "" });
+  for (const [preset, label] of SNOOZE_CHOICES) {
+    const choice = el("button", { type: "button", role: "menuitem", tabindex: "-1", "data-preset": preset }, label);
+    choice.addEventListener("click", () => actions.snooze(pull, preset));
+    menu.append(choice);
+  }
+  const close = (refocus: boolean) => {
+    menu.hidden = true;
+    snooze.setAttribute("aria-expanded", "false");
+    if (refocus) snooze.focus();
+  };
+  snooze.addEventListener("click", () => {
+    const opening = menu.hidden === true;
+    menu.hidden = !opening;
+    snooze.setAttribute("aria-expanded", String(opening));
+    if (opening) menu.querySelector<HTMLElement>("button")?.focus();
+  });
+  menu.addEventListener("keydown", (event) => {
+    const items = [...menu.querySelectorAll<HTMLElement>("button")];
+    const at = items.indexOf(event.target as HTMLElement);
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      close(true);
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      event.stopPropagation();
+      items[(at + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus();
+    }
+  });
+  menu.addEventListener("focusout", (event) => {
+    if (!(event.relatedTarget instanceof Node) || !tools.contains(event.relatedTarget)) close(false);
+  });
+  tools.append(snooze, menu);
+  return tools;
+}
+
+/** The ways to snooze a pull request, in the menu's order. */
+const SNOOZE_CHOICES: [SnoozePreset, string][] = [
+  ["hour", "For an hour"],
+  ["tomorrow", "Until tomorrow, 9:00"],
+  ["activity", "Until something happens on it"],
+];
+
+/** An icon button among a row's tools; the list's single tab stop moves it with its row. */
+function rowButton(label: string, name: "pin" | "clock", focusKey: string): HTMLButtonElement {
+  const button = el("button", { type: "button", class: "row-tool", tabindex: "-1", "aria-label": label, title: label, "data-focus-key": focusKey });
+  button.append(icon(name));
+  return button;
 }
 
 /**

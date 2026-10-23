@@ -75,6 +75,17 @@ label {
   margin: 0 0 6px;
   font-weight: 600;
 }
+label.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+label.check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--flo-accent);
+}
 input {
   width: 100%;
   min-width: 0;

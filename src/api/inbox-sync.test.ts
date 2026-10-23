@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { Inbox } from "../core/inbox";
-import { ensureInboxAlarm, INBOX_ALARM, INBOX_PERIOD_MINUTES, isFresh } from "./inbox-sync";
+import { alertUrl, ensureInboxAlarm, INBOX_ALARM, INBOX_PERIOD_MINUTES, isFresh } from "./inbox-sync";
 
 interface Alarm {
   name: string;
@@ -71,5 +71,12 @@ describe("isFresh", () => {
 
   test("without a maximum age, even a brand-new inbox is fetched again", () => {
     expect(isFresh(inbox, inbox.fetchedAt)).toBe(false);
+  });
+});
+
+describe("alertUrl", () => {
+  test("opens the pull request a notification is about, and GitHub's list for the one that sums up the rest", () => {
+    expect(alertUrl("https://github.com/octo-org/api/pull/7#checks-failed")).toBe("https://github.com/octo-org/api/pull/7");
+    expect(alertUrl("inbox-alerts-more")).toBe("https://github.com/pulls");
   });
 });

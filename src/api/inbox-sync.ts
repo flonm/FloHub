@@ -1,6 +1,13 @@
 import { fetchInbox, GitHubError, readToken } from "./github";
 import { buildInbox, type Inbox, type RawInbox } from "../core/inbox";
 import { readDirectRepos } from "../core/review-scope";
+import { type InboxAlert, inboxAlerts } from "../core/inbox-alerts";
+import { MARKS_KEY, pruneMarks, readMarks } from "../core/inbox-marks";
+
+/** Whether the viewer wants desktop notifications, in storage.local; on unless turned off. */
+export const NOTIFY_KEY = "inboxNotify";
+/** The notification that sums up the rest, which opens GitHub's list of pull requests. */
+const MORE_URL = "https://github.com/pulls";
 
 const STORAGE_KEY = "inbox";
 export const INBOX_ALARM = "inbox";
@@ -33,9 +40,11 @@ export function isFresh(inbox: Inbox | undefined, now: number, maxAgeMs?: number
  * Fetches the inbox, stores it for the popup and shows the review count on the toolbar icon.
  * Calls that arrive while a fetch runs share it.
  * @param maxAgeMs How old a stored inbox may be to be returned instead of fetching; omit it to always fetch.
+ * @param notify Whether to tell the viewer, with desktop notifications, what became theirs to do since the last
+ *   refresh. The scheduled refresh does; one the popup asks for doesn't, since the viewer is looking at it.
  * @returns The fresh inbox.
  */
-export async function refreshInbox(maxAgeMs?: number): Promise<Inbox> {
+export async function refreshInbox(maxAgeMs?: number, notify = false): Promise<Inbox> {
   if (maxAgeMs !== undefined && !running) {
     const stored = await chrome.storage.local.get(STORAGE_KEY);
     const inbox = stored[STORAGE_KEY] as Inbox | undefined;
@@ -43,7 +52,7 @@ export async function refreshInbox(maxAgeMs?: number): Promise<Inbox> {
   }
   running ??= (async () => {
     try {
-      return await fetchAndStore();
+      return await fetchAndStore(notify);
     } finally {
       running = null;
     }
@@ -64,7 +73,7 @@ export async function refreshInboxAgain(): Promise<Inbox> {
   return refreshInbox();
 }
 
-async function fetchAndStore(): Promise<Inbox> {
+async function fetchAndStore(notify: boolean): Promise<Inbox> {
   const token = await readToken();
   if (!token) {
     await clearInbox();
@@ -78,11 +87,43 @@ async function fetchAndStore(): Promise<Inbox> {
     if (error instanceof GitHubError && error.code !== "failed") await clearInbox();
     throw error;
   }
-  const inbox = buildInbox(raw, Date.now(), await readDirectRepos());
+  const now = Date.now();
+  const inbox = buildInbox(raw, now, await readDirectRepos());
   if ((await readToken()) !== token) throw new GitHubError("failed", "The token changed. Try again.");
-  await chrome.storage.local.set({ [STORAGE_KEY]: inbox });
+  const stored = await chrome.storage.local.get([STORAGE_KEY, MARKS_KEY, NOTIFY_KEY]);
+  const previous = stored[STORAGE_KEY] as Inbox | undefined;
+  const marks = readMarks(stored[MARKS_KEY]);
+  // A pull request that left the inbox was merged, closed or stopped waiting: its marks go with it.
+  const kept = pruneMarks(marks, inbox, now);
+  await chrome.storage.local.set({ [STORAGE_KEY]: inbox, ...(kept !== marks && { [MARKS_KEY]: kept }) });
+  if (notify && stored[NOTIFY_KEY] !== false && previous?.viewer === inbox.viewer) await showAlerts(inboxAlerts(previous, inbox, kept, now));
   await showBadge(inbox.turnCount ?? inbox.reviewCount);
   return inbox;
+}
+
+/** @param alerts What became the viewer's to do, each shown as a desktop notification. */
+async function showAlerts(alerts: InboxAlert[]): Promise<void> {
+  await Promise.all(
+    alerts.map(async (alert) =>
+      chrome.notifications.create(alert.id, {
+        type: "basic",
+        iconUrl: chrome.runtime.getURL("icons/icon-128.png"),
+        title: alert.title,
+        message: alert.message,
+      }),
+    ),
+  );
+}
+
+/**
+ * The pull request a notification opens is in its id, before the reason, so a click after the service worker slept
+ * still knows where to go.
+ * @param id A notification's id.
+ * @returns The pull request it opens, or GitHub's list for the one that sums up the rest.
+ */
+export function alertUrl(id: string): string {
+  const url = id.split("#", 1)[0] ?? "";
+  return url.startsWith("https://github.com/") ? url : MORE_URL;
 }
 
 /** Drops the stored inbox and the badge, for when the token changes. */

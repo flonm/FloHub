@@ -14,6 +14,7 @@ import {
 } from "./ui/inbox-view";
 import { send } from "./api/messages";
 import { writeReviewScope } from "./core/review-scope";
+import { type InboxMarks, isPinned, MARKS_KEY, NO_MARKS, readMarks, setSnooze, snoozeFor, togglePin } from "./core/inbox-marks";
 
 const TICK_MS = 15_000;
 /** How old the stored inbox may be for opening the popup to skip asking GitHub; the alarm refreshes it every few minutes. */
@@ -32,6 +33,10 @@ let selectedKey: string | null = null;
 let placedFocus = false;
 /** Sections the user folded away, kept across popups. */
 let collapsed = new Set<SectionKind>();
+/** The pull requests the user pinned or snoozed, kept in storage for the service worker's notifications too. */
+let marks: InboxMarks = NO_MARKS;
+/** The sections whose snoozed pull requests are shown, for this popup only. */
+const showSnoozed = new Set<SectionKind>();
 
 const top = el("div", { class: "top" });
 const header = el("header");
@@ -50,6 +55,16 @@ const actions: InboxViewActions = {
   },
   toggleSection: (kind) => void toggleSection(kind),
   hideTeamRequests: (repo) => void hideTeamRequests(repo),
+  togglePin: (url) => void saveMarks(togglePin(marks, url), isPinned(marks, url) ? "Unpinned" : "Pinned to the top"),
+  snooze: (pull, preset) => {
+    const snooze = preset ? snoozeFor(preset, new Date(), pull) : null;
+    void saveMarks(setSnooze(marks, pull.url, snooze), preset ? `Snoozed #${pull.number}` : `#${pull.number} is back`);
+  },
+  toggleSnoozed: (kind) => {
+    if (showSnoozed.has(kind)) showSnoozed.delete(kind);
+    else showSnoozed.add(kind);
+    render();
+  },
   retryRefresh: () => void refresh(true),
   openSettings: () => void openSettings(),
 };
@@ -61,6 +76,10 @@ if (app) {
   document.addEventListener("keydown", onKeydown);
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
+    if (Object.hasOwn(changes, MARKS_KEY)) {
+      marks = readMarks(changes[MARKS_KEY]?.newValue);
+      render();
+    }
     if ("token" in changes) void refresh();
     else if ("inbox" in changes && !refreshing) {
       // The service worker refreshed it on its schedule, or dropped it and is about to fetch it again.
@@ -80,9 +99,10 @@ if (app) {
 
 /** Shows the inbox the service worker stored last, until the refresh answers. */
 async function showStored(): Promise<void> {
-  const stored = await chrome.storage.local.get(["inbox", "inboxCollapsed"]);
+  const stored = await chrome.storage.local.get(["inbox", "inboxCollapsed", MARKS_KEY]);
   inbox ??= (stored.inbox as Inbox | undefined) ?? null;
   collapsed = new Set(stored.inboxCollapsed as SectionKind[] | undefined);
+  marks = readMarks(stored[MARKS_KEY]);
   loaded = true;
   render();
 }
@@ -131,7 +151,7 @@ function render(): void {
   const focusIndex = rows().indexOf(focused as HTMLAnchorElement);
 
   renderHeader();
-  main.replaceChildren(...renderInbox({ inbox, problem, collapsed }, actions));
+  main.replaceChildren(...renderInbox({ inbox, problem, collapsed, marks, showSnoozed, now: Date.now() }, actions));
   main.setAttribute("aria-busy", String(refreshing && !inbox));
   updateTabStop();
   document.documentElement.style.scrollPaddingTop = `${top.offsetHeight}px`;
@@ -175,6 +195,17 @@ async function toggleSection(kind: SectionKind): Promise<void> {
   await chrome.storage.local.set({ inboxCollapsed: [...collapsed] });
 }
 
+/**
+ * @param next The marks after the user's change.
+ * @param said What a screen reader hears.
+ */
+async function saveMarks(next: InboxMarks, said: string): Promise<void> {
+  marks = next;
+  render();
+  live.textContent = said;
+  await chrome.storage.local.set({ [MARKS_KEY]: next });
+}
+
 async function hideTeamRequests(repo: string): Promise<void> {
   await writeReviewScope(repo, "direct");
   live.textContent = `Team requests in ${repo} hidden. Undo it in the settings.`;
@@ -199,8 +230,8 @@ function updateTabStop(): void {
   const selected = all.find((row) => row.dataset.focusKey === selectedKey) ?? all[0];
   for (const row of all) {
     row.tabIndex = row === selected ? 0 : -1;
-    const hide = row.parentElement?.querySelector<HTMLButtonElement>(".hide-teams");
-    if (hide) hide.tabIndex = row.tabIndex;
+    const tools = row.parentElement?.querySelectorAll<HTMLButtonElement>(":scope > .row-tools > button") ?? [];
+    for (const tool of tools) tool.tabIndex = row.tabIndex;
   }
 }
 
@@ -220,6 +251,15 @@ function onKeydown(event: KeyboardEvent): void {
     return;
   }
   if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+  // p pins the focused row, s opens its snooze menu, or wakes it while it's snoozed.
+  if (row && (event.key === "p" || event.key === "s")) {
+    const tool = row.parentElement?.querySelector<HTMLButtonElement>(event.key === "p" ? '[data-focus-key^="pin:"]' : '[data-focus-key^="snooze:"], [data-focus-key^="wake:"]');
+    if (tool) {
+      event.preventDefault();
+      tool.click();
+    }
+    return;
+  }
   // From the header, only the arrow down and j step into the list; elsewhere they keep their usual meaning.
   if (index < 0 && event.key !== "ArrowDown" && event.key !== "j") return;
   const next = moveSelection(event.key, index < 0 ? -1 : index, all.length);
