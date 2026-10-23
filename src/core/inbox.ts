@@ -1,3 +1,4 @@
+import type { Verdict } from "./reviewers";
 import { deriveStatus, lastActivity, type RawStackPull, type StackTone } from "./stack";
 
 /** A pull request as the inbox search returns it. */
@@ -7,7 +8,7 @@ export type RawInboxPull = RawStackPull & {
   deletions: number;
   repository: { nameWithOwner: string };
   author: { login: string; avatarUrl: string } | null;
-  latestReviews: { nodes: { state?: string; author: { login: string } | null; submittedAt: string | null }[] };
+  latestReviews: { nodes: { state?: string; author: { login: string; avatarUrl?: string } | null; submittedAt: string | null }[] };
   /** Reviewers that are neither users nor teams come back as empty objects. */
   reviewRequests: { nodes: { requestedReviewer: { login?: string; combinedSlug?: string } | null }[] };
   reviewRequestedEvents: { nodes: { createdAt: string; requestedReviewer: { combinedSlug?: string } | null }[] };
@@ -67,6 +68,13 @@ function hitsOf(nodes: RawInboxIds["review"]["nodes"]): { id: string }[] {
   return nodes.filter((node): node is { id: string } => typeof node.id === "string");
 }
 
+/** Another reviewer's latest verdict on a pull request in the inbox. */
+export interface InboxReview {
+  login: string;
+  avatarUrl: string | null;
+  verdict: Verdict;
+}
+
 export interface InboxPull {
   number: number;
   title: string;
@@ -91,6 +99,8 @@ export interface InboxPull {
   rerequested: boolean;
   /** It waits for the viewer only through a team; missing in an inbox cached before this was tracked. */
   viaTeam?: boolean;
+  /** Everyone else's latest verdict, change requests first; missing from an inbox stored before verdicts. */
+  reviews?: InboxReview[];
 }
 
 export interface InboxGroup {
@@ -255,9 +265,36 @@ function toInboxPull(pull: RawInboxPull, viewer: string, kind: "review" | "waiti
     additions: pull.additions,
     deletions: pull.deletions,
     rerequested: pull.latestReviews.nodes.some((latest) => latest.author?.login === viewer),
+    reviews: othersReviews(pull, viewer),
     viaTeam: kind === "review" && pull.reviewRequests.nodes.every((request) => request.requestedReviewer?.login !== viewer),
     ...(kind === "waiting" && { yourVerdict: waitingVerdict(pull, viewer), pushedSinceReview: pushedSinceReview(pull, viewer) }),
   };
+}
+
+const VERDICTS: Record<string, Verdict | undefined> = {
+  APPROVED: "approved",
+  CHANGES_REQUESTED: "changes_requested",
+  DISMISSED: "dismissed",
+  COMMENTED: "commented",
+};
+
+/** Change requests matter most, then approvals; a dismissed review and a comment say the least. */
+const VERDICT_ORDER: Record<Verdict, number> = { changes_requested: 0, approved: 1, dismissed: 2, commented: 3 };
+
+/**
+ * @param pull The pull request.
+ * @param viewer The viewer, whose own verdict the row already says.
+ * @returns Everyone else's latest verdict, leaving out the author's own comments, change requests first.
+ */
+export function othersReviews(pull: Pick<RawInboxPull, "latestReviews" | "author">, viewer: string): InboxReview[] {
+  const reviews: InboxReview[] = [];
+  for (const review of pull.latestReviews.nodes) {
+    const login = review.author?.login;
+    const verdict = review.state ? VERDICTS[review.state] : undefined;
+    if (!login || !verdict || login === viewer || login === pull.author?.login) continue;
+    reviews.push({ login, avatarUrl: review.author?.avatarUrl ?? null, verdict });
+  }
+  return reviews.toSorted((a, b) => VERDICT_ORDER[a.verdict] - VERDICT_ORDER[b.verdict]);
 }
 
 function newest(entry: InboxGroup): number {

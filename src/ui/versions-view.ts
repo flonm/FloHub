@@ -1,9 +1,10 @@
 import { formatAge } from "../core/age";
 import CONTROL_STYLES from "../styles/controls.css?raw";
+import FACE_STYLES from "../styles/faces.css?raw";
 import TOKEN_STYLES from "../styles/tokens.css?raw";
 import { Picker, type PickerOption } from "./picker";
 import { Tooltip } from "./tooltip";
-import type { Verdict } from "../core/reviewers";
+import { VERDICT_LOOK, verdictFace } from "./verdict-face";
 import { el, icon } from "./dom";
 import type { VersionPatch } from "../api/github";
 import { samePatch } from "../api/version-cache";
@@ -213,8 +214,7 @@ header .tool[aria-checked="true"] { font-weight: 600; }
 .version-pick svg { width: 12px; height: 12px; color: var(--vd-muted); transform: rotate(180deg); }
 .version-pick { min-height: 0; font-weight: 400; }
 .version-pick[aria-expanded="true"] { background: var(--vd-bg-muted); }
-.version-pick .face { width: 16px; height: 16px; }
-.version-pick .face img, .version-pick .face .initial { width: 16px; height: 16px; }
+.version-pick .verdict-face { width: 16px; height: 16px; }
 /* The pickers' lists: fixed, so the view's own scrolling and clipping never cut them off. */
 .picker-list {
   position: fixed;
@@ -251,7 +251,7 @@ header .tool[aria-checked="true"] { font-weight: 600; }
 .choice-tag.current { background: var(--bgColor-accent-muted, #ddf4ff); color: var(--vd-accent); }
 .choice-tag.review { background: var(--vd-attention-bg); color: var(--vd-attention); }
 .choice-side { display: flex; grid-row: span 2; align-items: center; gap: 8px; color: var(--vd-muted); font-variant-numeric: tabular-nums; }
-.choice-side .face + .face { margin-left: -4px; }
+.choice-side .verdict-face + .verdict-face { margin-left: -4px; }
 .choice-sub { grid-column: 1; overflow: hidden; color: var(--vd-muted); text-overflow: ellipsis; white-space: nowrap; }
 .choice-sub code { font: 11px var(--vd-mono); }
 .trail { display: flex; flex-wrap: wrap; gap: 2px 10px; white-space: normal; }
@@ -300,39 +300,6 @@ header .tool[aria-checked="true"] { font-weight: 600; }
   background: var(--vd-attention);
   transform: translateX(-50%);
 }
-.face { position: relative; flex: none; width: 18px; height: 18px; }
-.face + .face { margin-left: -8px; }
-.face img, .face .initial {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--vd-bg-muted);
-  box-shadow: 0 0 0 1.5px var(--vd-bg);
-  color: var(--vd-muted);
-  font: 600 10px var(--fontStack-sansSerif, sans-serif);
-}
-/* A dismissed review keeps its verdict's icon and colour; its face greys out, as the reviewer rows grey their border. */
-.face.dismissed img, .face.dismissed .initial { filter: grayscale(1); opacity: 0.45; }
-.face .verdict {
-  position: absolute;
-  right: -4px;
-  bottom: -4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: var(--vd-bg);
-  box-shadow: 0 0 0 1px var(--vd-border);
-}
-.face .verdict svg { width: 9px; height: 9px; stroke-width: 2.25; }
-.face .verdict[data-tone="success"] { color: var(--vd-success); }
-.face .verdict[data-tone="attention"] { color: var(--vd-attention); }
-.face .verdict[data-tone="muted"] { color: var(--vd-muted); }
 .meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 16px; }
 .summary, .hint { margin: 0; color: var(--vd-muted); font-size: 12px; }
 .summary strong { color: var(--vd-fg); }
@@ -625,7 +592,7 @@ export class VersionsView {
     this.host = document.createElement("flohub-versions");
     const shadow = this.host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
-    style.textContent = [TOKEN_STYLES, CONTROL_STYLES, VIEW_STYLES].join("\n");
+    style.textContent = [TOKEN_STYLES, CONTROL_STYLES, FACE_STYLES, VIEW_STYLES].join("\n");
     this.surface = el("section", { class: "surface", "aria-labelledby": "versions-title" });
     shadow.append(style, this.surface, this.tooltip.element);
     this.tooltip.watch(shadow, () => this.surface.getBoundingClientRect());
@@ -1110,13 +1077,6 @@ function comparedKey(history: VersionHistory, older: Version | null, newer: Vers
   return [older, newer].map((version) => (version ? `${version.oid}:${baseCandidates(history, version).join(",")}` : BASE)).join("|");
 }
 
-const VERDICT_GLYPH: Record<Verdict, { glyph: "check" | "changes" | "comment" | "slash"; tone: string; said: string }> = {
-  approved: { glyph: "check", tone: "success", said: "approved" },
-  changes_requested: { glyph: "changes", tone: "attention", said: "requested changes" },
-  commented: { glyph: "comment", tone: "muted", said: "commented" },
-  dismissed: { glyph: "slash", tone: "muted", said: "had a review dismissed" },
-};
-
 /** The most faces a version's slot shows; its tooltip names the rest. */
 const MAX_FACES = 3;
 /** The width the timeline fits into. */
@@ -1162,7 +1122,7 @@ function renderTimeline(
       const button = el("button", { type: "button", tabindex: "-1", "data-tip": said ? `${tip}. ${said}` : tip });
       if (reviews.length > 0) {
         item.style.setProperty("--faces", String(Math.min(reviews.length, MAX_FACES)));
-        for (const review of reviews.slice(0, MAX_FACES)) button.append(reviewFace(review));
+        for (const review of reviews.slice(0, MAX_FACES)) button.append(verdictFace(review));
       }
       button.addEventListener("click", (event) => pick(number, event.shiftKey));
       item.append(button);
@@ -1176,7 +1136,7 @@ function renderTimeline(
  * @returns What they said, for a tooltip, e.g. "mona approved, since dismissed".
  */
 function saidOf(review: VersionReview): string {
-  const said = `${review.login} ${VERDICT_GLYPH[review.verdict].said}`;
+  const said = `${review.login} ${VERDICT_LOOK[review.verdict].said}`;
   return review.dismissed && review.verdict !== "dismissed" ? `${said}, since dismissed` : said;
 }
 
@@ -1186,30 +1146,6 @@ function saidOf(review: VersionReview): string {
  */
 function slotWidth(faces: number): number {
   return 22 + (Math.min(faces, MAX_FACES) - 1) * 10;
-}
-
-/**
- * @param review A reviewer's verdict on a version.
- * @returns Their face, with the verdict's icon on it in its colour.
- */
-function reviewFace(review: VersionReview, badge = true): HTMLElement {
-  const face = el("span", { class: review.dismissed ? "face dismissed" : "face" });
-  const initial = el("span", { class: "initial" }, review.login.charAt(0).toUpperCase());
-  if (review.avatarUrl) {
-    const url = new URL(review.avatarUrl);
-    url.searchParams.set("s", "40");
-    const image = el("img", { src: url.href, alt: "", width: "18", height: "18" });
-    image.addEventListener("error", () => image.replaceWith(initial));
-    face.append(image);
-  } else {
-    face.append(initial);
-  }
-  if (!badge) return face;
-  const look = VERDICT_GLYPH[review.verdict];
-  const mark = el("span", { class: "verdict", "data-tone": look.tone });
-  mark.append(icon(look.glyph));
-  face.append(mark);
-  return face;
 }
 
 /**
@@ -1291,7 +1227,7 @@ function versionChoice(version: Version, now: number): Node[] {
   const age = formatAge(version.at, now);
   const side = el("span", { class: "choice-side" });
   const faces = (version.reviews ?? []).slice(0, MAX_FACES);
-  for (const review of faces) side.append(reviewFace(review));
+  for (const review of faces) side.append(verdictFace(review));
   side.append(el("time", { datetime: version.at }, age.short));
   const sub = el("span", { class: "choice-sub" });
   sub.append(el("code", {}, version.oid.slice(0, 7)), version.pushedBy ? ` · force-pushed by ${version.pushedBy}` : "");
@@ -1320,7 +1256,7 @@ function reviewerOptions(versions: Version[]): PickerOption[] {
       label: `${reviewer.login}. ${said}`,
       content: () => {
         const main = el("span", { class: "choice-main" });
-        main.append(reviewFace({ login: reviewer.login, avatarUrl: reviewer.avatarUrl, verdict: "commented" }, false), el("strong", {}, reviewer.login));
+        main.append(verdictFace({ login: reviewer.login, avatarUrl: reviewer.avatarUrl, verdict: "commented" }, false), el("strong", {}, reviewer.login));
         const trail = el("span", { class: "choice-sub trail" });
         for (const { version, review } of path) trail.append(trailStep(version, review));
         return [main, trail];
@@ -1337,7 +1273,7 @@ function reviewerOptions(versions: Version[]): PickerOption[] {
  */
 function trailStep(version: number, review: VersionReview): HTMLElement {
   const step = el("span", { class: review.dismissed ? "step dismissed" : "step" });
-  const look = VERDICT_GLYPH[review.verdict];
+  const look = VERDICT_LOOK[review.verdict];
   const glyph = el("span", { class: "verdict-inline", "data-tone": look.tone });
   glyph.append(icon(look.glyph));
   step.append(`v${version}`, glyph);
@@ -1352,7 +1288,7 @@ function trailStep(version: number, review: VersionReview): HTMLElement {
 function reviewerButton(login: string, versions: Version[]): Node[] {
   const reviewer = versionReviewers(versions).find((entry) => entry.login === login);
   if (!reviewer) return [el("span", { class: "pick-text" }, "Everyone")];
-  return [reviewFace({ login: reviewer.login, avatarUrl: reviewer.avatarUrl, verdict: "commented" }, false), el("span", { class: "pick-text" }, reviewer.login)];
+  return [verdictFace({ login: reviewer.login, avatarUrl: reviewer.avatarUrl, verdict: "commented" }, false), el("span", { class: "pick-text" }, reviewer.login)];
 }
 
 

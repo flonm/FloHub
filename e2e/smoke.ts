@@ -122,7 +122,12 @@ const INBOX = {
           author: { login: "mojombo", avatarUrl: "https://avatars.githubusercontent.com/mojombo?v=4" },
           reviewDecision: "CHANGES_REQUESTED",
           reviewRequests: { nodes: [] },
-          latestReviews: { nodes: [{ state: "CHANGES_REQUESTED", author: { login: "octocat" }, submittedAt: ago(5) }] },
+          latestReviews: {
+            nodes: [
+              { state: "CHANGES_REQUESTED", author: { login: "octocat" }, submittedAt: ago(5) },
+              { state: "APPROVED", author: { login: "defunkt" }, submittedAt: ago(4) },
+            ],
+          },
           latestOpinionatedReviews: { nodes: [{ state: "CHANGES_REQUESTED", author: { login: "octocat" } }] },
           timelineItems: { nodes: [{ __typename: "HeadRefForcePushedEvent", createdAt: ago(2) }] },
         },
@@ -1154,7 +1159,7 @@ check(
 await pickIn(docked, "To", "3");
 const reviewedSlots = async () =>
   docked.locator(".timeline li.reviewed").evaluateAll((items) =>
-    items.map((item) => [...item.querySelectorAll(".verdict")].map((badge) => (badge as HTMLElement).dataset.tone).join("+")),
+    items.map((item) => [...item.querySelectorAll(".verdict-mark")].map((badge) => (badge as HTMLElement).dataset.tone).join("+")),
   );
 check(
   JSON.stringify(await reviewedSlots()) === JSON.stringify(["muted", "attention", "success"]),
@@ -1706,6 +1711,11 @@ for (const scheme of ["light", "dark"] as const) {
     check(
       waitingFlags.join(",") === "You requested changes,New commits",
       `a pull request waiting for its author shows the viewer's verdict and the author's push since: ${waitingFlags.join(",")}`,
+    );
+    check(
+      (await popup.locator(".pull", { hasText: "#130" }).locator(".faces").getAttribute("title")) === "defunkt approved" &&
+        (await popup.locator(".pull", { hasText: "#130" }).locator(".faces .verdict-mark").getAttribute("data-tone")) === "success",
+      "a row shows everyone else's verdict as faces, the viewer's own left to its flag",
     );
     check(
       (await popup.locator(".pull .tag").count()) === 0,

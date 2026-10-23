@@ -5,6 +5,7 @@ import {
   chunk,
   inboxIds,
   isStale,
+  othersReviews,
   type RawInbox,
   type RawInboxIds,
   type RawInboxPull,
@@ -308,5 +309,33 @@ describe("assembleRawInbox", () => {
 
     expect(numbersOf(raw.review)).toEqual([1]);
     expect(raw.mine.nodes).toEqual([]);
+  });
+});
+
+function latest(login: string, state: string, avatarUrl?: string) {
+  return { state, author: { login, ...(avatarUrl && { avatarUrl }) }, submittedAt: "2026-10-20T10:00:00Z" };
+}
+
+describe("othersReviews", () => {
+  test("lists everyone else's latest verdict, change requests first, without the viewer's or the author's own", () => {
+    const pull = {
+      author: { login: "hubot", avatarUrl: "https://avatars/hubot" },
+      latestReviews: {
+        nodes: [
+          latest("mona", "APPROVED", "https://avatars/mona"),
+          latest("octocat", "COMMENTED"),
+          latest("me", "CHANGES_REQUESTED"),
+          latest("hubot", "COMMENTED"),
+          latest("wycats", "CHANGES_REQUESTED"),
+          latest("pending", "PENDING"),
+          { state: "APPROVED", author: null, submittedAt: null },
+        ],
+      },
+    };
+    expect(othersReviews(pull, "me")).toEqual([
+      { login: "wycats", avatarUrl: null, verdict: "changes_requested" },
+      { login: "mona", avatarUrl: "https://avatars/mona", verdict: "approved" },
+      { login: "octocat", avatarUrl: null, verdict: "commented" },
+    ]);
   });
 });

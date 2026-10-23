@@ -110,7 +110,7 @@ fragment InboxPull on PullRequest {
   deletions
   repository { nameWithOwner }
   author { login avatarUrl }
-  latestReviews(first: 20) { nodes { state author { login } submittedAt } }
+  latestReviews(first: 20) { nodes { state author { login avatarUrl } submittedAt } }
   reviewRequests(first: 50) {
     nodes { requestedReviewer { ... on User { login } ... on Team { combinedSlug } } }
   }

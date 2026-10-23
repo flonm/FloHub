@@ -1,6 +1,7 @@
 @import "./tokens.css";
 @import "./dark.css";
 @import "./base.css";
+@import "./faces.css";
 
 /*
  * The popup: a 504px list of sections, each a stack or a lone pull request. It follows the operating system's color
@@ -163,7 +164,7 @@ ul {
   --row-bg: var(--flo-bg);
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) max-content;
-  grid-template-areas: "lead title age" "lead meta meta";
+  grid-template-areas: "lead title age" "lead meta faces";
   column-gap: 10px;
   padding: 6px 12px;
   background: var(--row-bg);
@@ -259,6 +260,32 @@ ul {
 }
 .author {
   color: var(--flo-fg);
+}
+/* Everyone else's verdict, as faces at the end of the meta line: who approved, who wants changes. */
+.faces {
+  grid-area: faces;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  align-self: center;
+  padding: 0 4px 0 8px;
+}
+.faces .verdict-face {
+  width: 16px;
+  height: 16px;
+}
+.faces .verdict-face + .verdict-face {
+  margin-left: 4px;
+}
+.faces .verdict-face img,
+.faces .verdict-face .initial {
+  box-shadow: 0 0 0 1.5px var(--row-bg);
+}
+.faces .more {
+  margin-left: 6px;
+  color: var(--flo-muted);
+  font-size: 11px;
+  font-weight: 600;
 }
 .repo {
   overflow: hidden;

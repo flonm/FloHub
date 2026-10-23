@@ -46,6 +46,10 @@ const REVIEW: InboxGroup = group("octo-org/api", 12, [
     resolvedThreads: 3,
     additions: 48,
     deletions: 7,
+    reviews: [
+      { login: "octocat", avatarUrl: AVATAR, verdict: "approved" },
+      { login: "ada", avatarUrl: null, verdict: "approved" },
+    ],
   }),
   pull({
     number: 902,
@@ -55,6 +59,7 @@ const REVIEW: InboxGroup = group("octo-org/api", 12, [
     position: 2,
     totalThreads: 1,
     lastActivity: new Date(NOW - 26 * HOUR).toISOString(),
+    reviews: [{ login: "octocat", avatarUrl: AVATAR, verdict: "changes_requested" }],
   }),
   pull({
     number: 901,
@@ -75,6 +80,7 @@ const WAITING: InboxGroup[] = [
       label: "Checks failed",
       yourVerdict: "changes_requested",
       pushedSinceReview: true,
+      reviews: [{ login: "linus", avatarUrl: null, verdict: "commented" }],
     }),
   ]),
   group("octo-org/docs", null, [
@@ -94,6 +100,13 @@ const MINE: InboxGroup[] = [
       additions: 10,
       deletions: 2,
       lastActivity: new Date(NOW - 40 * MINUTE).toISOString(),
+      reviews: [
+        { login: "mona", avatarUrl: null, verdict: "changes_requested" },
+        { login: "octocat", avatarUrl: AVATAR, verdict: "approved" },
+        { login: "ada", avatarUrl: null, verdict: "approved" },
+        { login: "grace", avatarUrl: null, verdict: "commented" },
+        { login: "linus", avatarUrl: null, verdict: "commented" },
+      ],
     }),
     pull({
       number: 120,
@@ -104,6 +117,7 @@ const MINE: InboxGroup[] = [
       position: 1,
       totalThreads: 2,
       resolvedThreads: 1,
+      reviews: [{ login: "octocat", avatarUrl: AVATAR, verdict: "approved" }],
     }),
   ]),
 ];

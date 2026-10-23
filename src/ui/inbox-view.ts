@@ -4,6 +4,7 @@ import type { FailureCode } from "../api/github";
 import { type Inbox, type InboxGroup, type InboxPull, isStale } from "../core/inbox";
 import { formatDiffStat } from "../core/viewed";
 import { el, icon } from "./dom";
+import { VERDICT_LOOK, verdictFace } from "./verdict-face";
 
 /** The three sections the popup draws. */
 export type SectionKind = "review" | "waiting" | "mine";
@@ -311,6 +312,11 @@ function renderPull(pull: InboxPull, entry: InboxGroup, kind: SectionKind, actio
   lead.append(kind === "mine" ? el("span", { class: "node", "data-tone": pull.tone }) : renderAvatar(pull));
 
   link.append(lead, title, time, meta);
+  const faces = renderFaces(pull);
+  if (faces) {
+    link.append(faces);
+    meta.append(el("span", { class: "visually-hidden" }, `. Reviews: ${faces.title}`));
+  }
   item.append(link);
   if (kind === "review" && pull.viaTeam) item.append(renderHideTeams(entry.repo, pull, actions));
   return item;
@@ -340,6 +346,23 @@ function renderHideTeams(repo: string, pull: InboxPull, actions: InboxViewAction
     actions.hideTeamRequests(repo);
   });
   return hide;
+}
+
+/** The most faces a row shows; the rest are counted. */
+const MAX_FACES = 4;
+
+/**
+ * @param pull The pull request.
+ * @returns Everyone else's latest verdict as faces, its tooltip naming each, or null when nobody else reviewed.
+ */
+function renderFaces(pull: InboxPull): HTMLElement | null {
+  const reviews = pull.reviews ?? [];
+  if (reviews.length === 0) return null;
+  const said = reviews.map((review) => `${review.login} ${VERDICT_LOOK[review.verdict].said}`).join(", ");
+  const faces = el("span", { class: "faces", title: said, "aria-hidden": "true" });
+  for (const review of reviews.slice(0, MAX_FACES)) faces.append(verdictFace(review));
+  if (reviews.length > MAX_FACES) faces.append(el("span", { class: "more" }, `+${reviews.length - MAX_FACES}`));
+  return faces;
 }
 
 function renderStatus(pull: InboxPull): HTMLElement {
