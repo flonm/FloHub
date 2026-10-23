@@ -466,6 +466,26 @@ export const SplitCodeAtAVersion: Story = {
  * from one base, so their patches are compared line by line, and a line above the diff says it won't match GitHub's
  * diff of the two commits.
  */
+/** A branch force-pushed often: the timeline fits every version into the toolbar, your review marked under its bar. */
+export const ManyVersions: Story = {
+  render: () => {
+    const older = Array.from({ length: 24 }, (_, index) => ({
+      ...V1,
+      oid: `${String(index).padStart(2, "0")}aaaaa`,
+      number: index + 1,
+      viewerLatestReview: false,
+      reviewedBy: [],
+      current: false,
+    }));
+    const recent = [
+      { ...V1, number: 25 },
+      { ...V2, number: 26 },
+      { ...V3, number: 27 },
+    ];
+    return view("loading", PATCHES, { cached: { baseRefOid: "0000000", versions: [...older, ...recent], baseHeads: [] } });
+  },
+};
+
 export const Rebased: Story = {
   render: () => view(3, { ...PATCHES, "2222222": { ...PATCHES["2222222"]!, mergeBase: "9999999" } }),
 };

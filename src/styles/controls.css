@@ -1,0 +1,130 @@
+/*
+ * Controls the bar and the versions view share: tool buttons, the segmented switch, switches and the tooltip. Each
+ * shadow root takes this file as text after tokens.css, so it reads only --flo- tokens.
+ */
+.tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--flo-border);
+  border-radius: var(--flo-radius-sm);
+  background: var(--flo-bg);
+  color: var(--flo-fg);
+  font: inherit;
+  white-space: nowrap;
+}
+button.tool,
+summary.tool {
+  cursor: pointer;
+}
+button.tool:hover,
+summary.tool:hover {
+  background: var(--flo-bg-muted);
+}
+.tool.static {
+  border-color: transparent;
+  background: transparent;
+  color: var(--flo-muted);
+  padding: 0 4px;
+}
+.tool.warning {
+  color: var(--flo-attention);
+}
+.tool[aria-pressed="true"] {
+  border-color: var(--flo-accent-border);
+  background: var(--flo-accent-bg);
+  color: var(--flo-accent);
+}
+.tool svg {
+  flex: none;
+}
+.tool .chevron {
+  transform: rotate(90deg);
+}
+.tool[aria-expanded="true"] .chevron {
+  transform: rotate(180deg);
+}
+.tool-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--flo-border);
+  border-radius: var(--flo-radius-md);
+  background: var(--flo-bg-muted);
+}
+.segment-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--flo-radius-sm);
+  background: transparent;
+  color: var(--flo-muted);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.segment-option:hover {
+  color: var(--flo-fg);
+}
+.segment-option[aria-pressed="true"] {
+  border-color: var(--flo-border);
+  background: var(--flo-bg);
+  color: var(--flo-fg);
+  font-weight: 600;
+  box-shadow: 0 1px 0 rgba(31, 35, 40, 0.04);
+  cursor: default;
+}
+.segment-option[aria-pressed="true"] svg {
+  color: var(--flo-accent);
+}
+.segment-option .tool-count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: var(--flo-radius-pill);
+  background: var(--flo-neutral-bg);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+button.tool[role="switch"][aria-checked="true"] {
+  border-color: var(--flo-accent-border);
+  background: var(--flo-accent-bg);
+  color: var(--flo-accent);
+}
+a.tool {
+  text-decoration: none;
+}
+.tool.icon-only {
+  justify-content: center;
+  width: 26px;
+  padding: 0;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 100;
+  top: 0;
+  left: 0;
+  max-width: 280px;
+  padding: 4px 8px;
+  border-radius: var(--flo-radius-sm);
+  background: var(--tooltip-bgColor, #25292e);
+  color: var(--tooltip-fgColor, #ffffff);
+  font: 12px/1.4 var(--flo-font);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 80ms ease;
+}
+.tooltip.shown {
+  opacity: 1;
+  visibility: visible;
+}

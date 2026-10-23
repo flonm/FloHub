@@ -12,11 +12,14 @@ import {
   lastReviewedVersion,
   parseRangeParam,
   pickBase,
+  pickOnTimeline,
   rangeParam,
   rangeToSave,
   type RawVersionPull,
   restoreRange,
   type SavedRange,
+  shortVersion,
+  type Version,
 } from "./versions";
 
 const commit = (oid: string, committedDate: string) => ({ oid, committedDate });
@@ -359,5 +362,49 @@ describe("rangeParam", () => {
   test("writes a saved range as the URL keeps it", () => {
     expect(rangeParam({ from: "a1a1a1a1a1", to: "", toCurrent: true, at: 0 })).toBe("a1a1a1a..");
     expect(rangeParam({ from: BASE, to: "c3c3c3c3c3", toCurrent: false, at: 0 })).toBe("base..c3c3c3c");
+  });
+});
+
+describe("picking on the timeline", () => {
+  test.each([
+    ["an older version moves the older side", { from: 2, to: 4 }, 1, false, { from: 1, to: 4 }],
+    ["the base branch moves the older side", { from: 2, to: 4 }, 0, false, { from: 0, to: 4 }],
+    ["a version inside the range narrows it from the older side", { from: 1, to: 4 }, 3, false, { from: 3, to: 4 }],
+    ["a later version moves the newer side", { from: 1, to: 3 }, 5, false, { from: 1, to: 5 }],
+    ["Shift picks the newer side inside the range", { from: 1, to: 4 }, 3, true, { from: 1, to: 3 }],
+    ["Shift on an older version still moves the older side", { from: 2, to: 4 }, 1, true, { from: 1, to: 4 }],
+  ])("%s", (_rule, range, picked, newer, expected) => {
+    expect(pickOnTimeline(range, picked, newer)).toEqual(expected);
+  });
+
+  test("picking either end changes nothing", () => {
+    expect(pickOnTimeline({ from: 1, to: 3 }, 1)).toBeNull();
+    expect(pickOnTimeline({ from: 1, to: 3 }, 3, true)).toBeNull();
+  });
+});
+
+function aVersion(overrides: Partial<Version>): Version {
+  return {
+    oid: "aaaaaaa1",
+    number: 2,
+    at: "2026-10-23T09:00:00Z",
+    pushedBy: null,
+    reviewedBy: [],
+    viewerLatestReview: false,
+    current: false,
+    ...overrides,
+  };
+}
+
+describe("a version in a few words", () => {
+  const now = Date.parse("2026-10-23T12:00:00Z");
+
+  test.each([
+    ["the base branch", undefined, { name: "Base", tag: null, review: false }],
+    ["the viewer's review first", aVersion({ viewerLatestReview: true, current: true }), { name: "v2", tag: "your review", review: true }],
+    ["then the current head", aVersion({ current: true }), { name: "v2", tag: "current", review: false }],
+    ["else its age", aVersion({}), { name: "v2", tag: "3h", review: false }],
+  ])("%s", (_case, given, expected) => {
+    expect(shortVersion(given, now)).toEqual(expected);
   });
 });

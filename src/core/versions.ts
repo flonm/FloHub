@@ -1,3 +1,5 @@
+import { formatAge } from "./age";
+
 interface RawCommitRef {
   oid: string;
   committedDate: string;
@@ -334,4 +336,32 @@ export function lastReviewedVersion(versions: Version[]): Version | null {
 
 function earliest(a: string, b?: string): string {
   return b !== undefined && Date.parse(b) < Date.parse(a) ? b : a;
+}
+
+/**
+ * Moves the compared range to a version picked on the timeline. A version before the range, or inside it, becomes
+ * the older side, since "what changed since vN" is the usual question; one after the range becomes the newer side,
+ * and so does any later version picked with Shift. The base branch, 0, can only be the older side.
+ * @param range The compared range, `from` 0 for the base branch.
+ * @param picked The version picked, 0 for the base branch.
+ * @param newer Whether the viewer asked for the newer side (Shift).
+ * @returns The new range, or null when it doesn't change.
+ */
+export function pickOnTimeline(range: { from: number; to: number }, picked: number, newer = false): { from: number; to: number } | null {
+  if (picked === range.from || picked === range.to) return null;
+  if (picked > range.to || (newer && picked > range.from)) return { from: range.from, to: picked };
+  return { from: picked, to: range.to };
+}
+
+/**
+ * @param version The version, or undefined for the base branch.
+ * @param now The current time.
+ * @returns The version in a few words for the picker: its number and what sets it apart.
+ */
+export function shortVersion(version: Version | undefined, now: number): { name: string; tag: string | null; review: boolean } {
+  if (!version) return { name: "Base", tag: null, review: false };
+  const name = `v${version.number}`;
+  if (version.viewerLatestReview) return { name, tag: "your review", review: true };
+  if (version.current) return { name, tag: "current", review: false };
+  return { name, tag: formatAge(version.at, now).short, review: false };
 }

@@ -1109,7 +1109,16 @@ check(
   "its row opens the code as the thread saw it, at its line",
 );
 await docked.getByLabel("To").selectOption("3");
+await docked.locator(".timeline li").nth(2).locator("button").click();
+check(
+  (await docked.getByLabel("From").inputValue()) === "2" && (await docked.getByLabel("To").inputValue()) === "3",
+  "a version picked on the timeline inside the range becomes the older side",
+);
 await docked.getByLabel("From").selectOption("1");
+check(
+  (await docked.locator(".version-pick .pick-words").first().textContent()) === "v1 your review",
+  "the From picker names the version in a few words, marking the viewer's review",
+);
 await docked.locator(".thread-row").nth(1).waitFor();
 await docked.getByLabel("Comments").uncheck();
 check(await threadRows.first().isHidden(), "the Comments toggle hides the threads");

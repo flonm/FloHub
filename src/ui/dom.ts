@@ -20,7 +20,9 @@ export type IconName =
   | "push"
   | "bot"
   | "warning"
-  | "highlight";
+  | "highlight"
+  | "columns"
+  | "wrap";
 
 type Shape = ["path", { d: string; class?: string }] | ["circle", { cx: string; cy: string; r: string; class?: string }];
 
@@ -49,6 +51,8 @@ const ICONS: Record<IconName, Shape[]> = {
   ],
   warning: [["path", { d: "M8 2.25 14.25 13.5H1.75zM8 6.5v3.25M8 11.6v.05" }]],
   highlight: [["path", { d: "M9.75 2.25l4 4-6.5 6.5h-4v-4zM2 14.25h5" }]],
+  columns: [["path", { d: "M2.25 2.75h11.5v10.5H2.25zM8 2.75v10.5" }]],
+  wrap: [["path", { d: "M2.25 4h11.5M2.25 8h9.25a2.25 2.25 0 0 1 0 4.5H8.5M10 11 8.5 12.5 10 14M2.25 12.5H5.5" }]],
   slash: [
     ["circle", { cx: "8", cy: "8", r: "5.75" }],
     ["path", { d: "M3.9 12.1l8.2-8.2" }],
