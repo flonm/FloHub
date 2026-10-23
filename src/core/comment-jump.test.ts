@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type CommentPlace, commentJump, parseCommentLink, storedVersionsWillDo, threadElsewhere, threadNumber } from "./comment-jump";
+import { commentIsCurrent, type CommentPlace, commentJump, currentLines, githubFileAnchor, githubLineSelector, parseCommentLink, storedVersionsWillDo, threadElsewhere, threadNumber } from "./comment-jump";
 import type { ReviewThread } from "./threads";
 import type { Version } from "./versions";
 
@@ -44,14 +44,12 @@ describe("commentJump", () => {
       range: { from: "base", to: "v1", toCurrent: false, at: NOW },
       line: { path: "src/a.ts", line: 8, side: "RIGHT" },
     });
-    expect(jump?.current).toBeNull();
   });
 
   test("a comment on the current head has nothing since, and its lines in the current diff", () => {
     const jump = commentJump(VERSIONS, comment({ originalCommit: "v3", originalLine: 107, line: 107 }), NOW);
     expect(jump?.since).toBeNull();
     expect(jump?.at.range).toEqual({ from: "base", to: "v3", toCurrent: true, at: NOW });
-    expect(jump?.current).toEqual({ path: "src/a.ts", line: 107, side: "RIGHT" });
   });
 
   test("a comment on several lines covers them all, on the side it was written on", () => {
@@ -67,6 +65,58 @@ describe("commentJump", () => {
 
   test("a pull request without versions has nothing to show", () => {
     expect(commentJump([], comment(), NOW)).toBeNull();
+  });
+});
+
+describe("currentLines", () => {
+  test("a current comment's lines are its lines in the current diff, not the ones it was written on", () => {
+    expect(currentLines(comment({ originalLine: 8, line: 107, startLine: 105, side: "LEFT" }))).toEqual({
+      path: "src/a.ts",
+      line: 107,
+      startLine: 105,
+      side: "LEFT",
+    });
+  });
+
+  test("an outdated comment has no lines in the current diff", () => {
+    expect(currentLines(comment())).toBeNull();
+  });
+});
+
+describe("commentIsCurrent", () => {
+  test.each([
+    ["a link to the current diff says the comment is in it", { kind: "comment", id: 1 }, null, true],
+    ["a link to its thread in the single-commit view says it is outdated", { kind: "thread", id: 1 }, null, false],
+    ["the fetched comment wins over a link a push has since made stale", { kind: "comment", id: 1 }, comment(), false],
+    ["the fetched comment wins the other way too", { kind: "thread", id: 1 }, comment({ line: 8 }), true],
+  ] as const)("%s", (_rule, link, place, expected) => {
+    expect(commentIsCurrent(link, place)).toBe(expected);
+  });
+});
+
+describe("githubLineSelector", () => {
+  test("finds the line's code cell on its side, in its file's table", () => {
+    expect(githubLineSelector({ path: "e2e/smoke.ts", line: 809, side: "RIGHT" })).toBe(
+      'table[aria-label="Diff for: e2e/smoke.ts"] td.diff-text-cell[data-diff-side="right"][data-line-number="809"]',
+    );
+  });
+
+  test("picks another of a comment's lines when asked", () => {
+    expect(githubLineSelector({ path: "a.ts", line: 9, startLine: 7, side: "LEFT" }, 7)).toBe(
+      'table[aria-label="Diff for: a.ts"] td.diff-text-cell[data-diff-side="left"][data-line-number="7"]',
+    );
+  });
+
+  test("a quote or backslash in the path can't end the attribute early", () => {
+    expect(githubLineSelector({ path: String.raw`we"ird\name.ts`, line: 1, side: "RIGHT" })).toStartWith(
+      String.raw`table[aria-label="Diff for: we\"ird\\name.ts"]`,
+    );
+  });
+});
+
+describe("githubFileAnchor", () => {
+  test("is the SHA-256 of the path, as GitHub's diff ids its files", async () => {
+    expect(await githubFileAnchor("e2e/smoke.ts")).toBe("diff-682f6e808601d513437467d8be5e832167c903e94d562dcd37f30f6391c3eade");
   });
 });
 

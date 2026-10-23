@@ -16,11 +16,65 @@ export interface CommentPlace {
 }
 
 /** A line to scroll to, in the numbers of the version it is looked up in. */
-interface TargetLine {
+export interface TargetLine {
   path: string;
   line: number;
   startLine?: number;
   side: "LEFT" | "RIGHT";
+}
+
+/**
+ * @param comment Where the comment sits.
+ * @param line The last commented line, in some version's numbers; null when that version has none.
+ * @param startLine The first, when the comment covers several.
+ * @returns The lines to scroll to, or undefined when there are none.
+ */
+function targetLine(comment: CommentPlace, line: number | null, startLine: number | null): TargetLine | undefined {
+  if (line === null) return undefined;
+  return { path: comment.path, line, ...(startLine !== null && startLine !== line && { startLine }), side: comment.side };
+}
+
+/**
+ * @param comment Where the comment sits.
+ * @returns The commented lines in the current diff, or null when the comment is outdated.
+ */
+export function currentLines(comment: CommentPlace): TargetLine | null {
+  return targetLine(comment, comment.line, comment.startLine) ?? null;
+}
+
+/**
+ * Whether a comment's lines are in the current diff. Its link tells at once, before the comment is fetched: GitHub
+ * links only an outdated comment to the single-commit view, under its thread (see docs/github-quirks.md). The fetched
+ * comment wins once it is there, since the panel may not have redrawn a comment a push has just made outdated.
+ * @param link What the comment's link names.
+ * @param place Where the comment sits, once fetched.
+ * @returns Whether "In the current diff" has lines to show.
+ */
+export function commentIsCurrent(link: CommentLink, place: CommentPlace | null): boolean {
+  return place ? currentLines(place) !== null : link.kind === "comment";
+}
+
+/**
+ * The cell of a commented line in GitHub's own diff. GitHub draws a thread there, as `#r<comment id>`, only while it
+ * is expanded: a collapsed one, a resolved one for instance, is just avatars on its line (see docs/github-quirks.md).
+ * The line is there either way, while its file is.
+ * @param target The line, in the current diff's numbers.
+ * @param line Which of its lines, when the comment covers several.
+ * @returns A selector for the line's code cell.
+ */
+export function githubLineSelector(target: TargetLine, line = target.line): string {
+  const path = target.path.replaceAll(/["\\]/gu, String.raw`\$&`);
+  return `table[aria-label="Diff for: ${path}"] td.diff-text-cell[data-diff-side="${target.side.toLowerCase()}"][data-line-number="${line}"]`;
+}
+
+/**
+ * @param path A file's path.
+ * @returns The id GitHub gives the file in its diff, `diff-` and the SHA-256 of the path, which stays on a file it
+ *   has collapsed or not loaded.
+ */
+export async function githubFileAnchor(path: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(path));
+  return `diff-${[...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 /** A range for the versions view, and the commented line in it. */
@@ -38,8 +92,6 @@ export interface CommentJump {
   since: JumpTarget | null;
   /** The code as the comment saw it: its version against the base branch. */
   at: JumpTarget;
-  /** The commented lines in the current diff; null when the comment is outdated. */
-  current: TargetLine | null;
 }
 
 /**
@@ -54,24 +106,14 @@ export function commentJump(versions: Version[], comment: CommentPlace, now: num
   const found = commentVersion(versions, comment.originalCommit, comment.createdAt);
   if (!found) return null;
   const { version, exact } = found;
-  const lines = (line: number | null, startLine: number | null): TargetLine | undefined =>
-    line === null
-      ? undefined
-      : {
-          path: comment.path,
-          line,
-          ...(startLine !== null && startLine !== line && { startLine }),
-          side: comment.side,
-        };
   // The nearest version may number the lines differently, so only the comment's own version gets them.
-  const original = exact ? lines(comment.originalLine, comment.originalStartLine) : undefined;
+  const original = exact ? targetLine(comment, comment.originalLine, comment.originalStartLine) : undefined;
   const target = (range: SavedRange): JumpTarget => ({ range, ...(original && { line: original }) });
   return {
     version,
     exact,
     since: version.current ? null : target({ from: version.oid, to: "", toCurrent: true, at: now }),
     at: target({ from: BASE, to: version.oid, toCurrent: version.current, at: now }),
-    current: lines(comment.line, comment.startLine) ?? null,
   };
 }
 

@@ -3,7 +3,7 @@ import { findInlineAnchor } from "./ui/anchor";
 import { DiffHighlights, type HighlightStatus } from "./ui/diff-highlights";
 import { Favicon, faviconUrl } from "./ui/favicon";
 import { ViewedTree } from "./ui/file-tree";
-import { send } from "./api/messages";
+import { type Reply, send } from "./api/messages";
 import { isWholeFilesTab, type PullRef, parsePullRef, pullKey, pullTab } from "./core/pull-ref";
 import { ReviewDialog } from "./ui/review-dialog";
 import { deriveDiscussion, lastReviewBy } from "./core/discussion";
@@ -23,8 +23,8 @@ import {
   type SavedRange,
   type VersionHistory,
 } from "./core/versions";
-import { commentJump, type CommentJump, type CommentLink, type JumpTarget, parseCommentLink, storedVersionsWillDo } from "./core/comment-jump";
-import { JumpMenu } from "./ui/jump-menu";
+import { commentIsCurrent, commentJump, type CommentLink, type CommentPlace, currentLines, githubFileAnchor, githubLineSelector, type JumpTarget, parseCommentLink, storedVersionsWillDo } from "./core/comment-jump";
+import { type JumpChoice, JumpMenu } from "./ui/jump-menu";
 import { readCachedHistory } from "./api/version-cache";
 import { VersionsView } from "./ui/versions-view";
 
@@ -604,24 +604,39 @@ async function openJumpMenu(ref: PullRef, link: HTMLAnchorElement, named: Commen
     jumpMenu.close();
     return;
   }
-  jumpMenu.open(link, { kind: "loading" });
   const fallback = () => location.assign(link.href);
-  const [place, stored] = await Promise.all([send({ type: "review-comment", ref, link: named }), readCachedHistory(ref)]);
+  const fetched = send({ type: "review-comment", ref, link: named });
+  // The link says whether the comment is in the current diff, so that choice needn't wait for the comment.
+  const inCurrentDiff = (place: CommentPlace | null): JumpChoice => {
+    const isCurrent = commentIsCurrent(named, place);
+    return {
+      label: "In the current diff",
+      detail: isCurrent ? "Where the comment sits in the pull request's current changes" : "The comment is outdated: its lines are gone from the current diff",
+      disabled: !isCurrent,
+      run: () => void showCurrent(ref, named, fetched),
+    };
+  };
+  jumpMenu.open(link, {
+    kind: "ready",
+    pending: { count: 2, status: "Finding the version the comment was written on…" },
+    choices: [inCurrentDiff(null)],
+  });
+  const [place, stored] = await Promise.all([fetched, readCachedHistory(ref)]);
   if (jumpMenu.openedFrom !== link) return;
   if (!place.ok) {
-    jumpMenu.open(link, { kind: "failed", message: place.message, fallback });
+    jumpMenu.open(link, { kind: "failed", message: place.message, fallback, choices: [inCurrentDiff(null)] });
     return;
   }
   const comment = place.value;
   const history = storedVersionsWillDo(stored, comment.originalCommit) ? stored : await freshVersions(ref);
   if (jumpMenu.openedFrom !== link) return;
   if (typeof history === "string") {
-    jumpMenu.open(link, { kind: "failed", message: history, fallback });
+    jumpMenu.open(link, { kind: "failed", message: history, fallback, choices: [inCurrentDiff(comment)] });
     return;
   }
   const jump = commentJump(history.versions, comment, Date.now());
   if (!jump) {
-    jumpMenu.open(link, { kind: "failed", message: "FloHub knows no versions of this pull request.", fallback });
+    jumpMenu.open(link, { kind: "failed", message: "FloHub knows no versions of this pull request.", fallback, choices: [inCurrentDiff(comment)] });
     return;
   }
   const name = `v${jump.version.number}`;
@@ -643,12 +658,7 @@ async function openJumpMenu(ref: PullRef, link: HTMLAnchorElement, named: Commen
         run: choose(() => since && showInVersions(ref, since)),
       },
       { label: `Code at ${name}`, detail: `The pull request's changes as ${name} made them, as the comment saw them`, run: choose(() => showInVersions(ref, jump.at)) },
-      {
-        label: "In the current diff",
-        detail: jump.current ? "Where the comment sits in the pull request's current changes" : "The comment is outdated: its lines are gone from the current diff",
-        disabled: !jump.current,
-        run: () => showCurrent(ref, named.kind === "comment" ? named.id : null, jump),
-      },
+      inCurrentDiff(comment),
     ],
     ...(nearest && { note: nearest }),
   });
@@ -674,17 +684,62 @@ function showInVersions(ref: PullRef, target: JumpTarget): void {
   versionsView.goTo(target.range, target.line);
 }
 
-/** Scrolls to the comment in the current diff: the versions view's, while it's open, or else GitHub's own. */
-function showCurrent(ref: PullRef, id: number | null, jump: CommentJump): void {
-  if (!jump.current) return;
-  if (versionsView.isOpen) {
-    showInVersions(ref, { range: { from: BASE, to: "", toCurrent: true, at: Date.now() }, line: jump.current });
+/**
+ * Scrolls to the comment in the current diff: the versions view's, while it's open, or else GitHub's own. GitHub
+ * draws an expanded thread under its comment's number, so that needs no wait for the comment; a collapsed one is only
+ * avatars on its line, so that takes the comment's line (see docs/github-quirks.md).
+ * @param ref The pull request.
+ * @param named What the comment's link names.
+ * @param fetched The comment, as it is being fetched.
+ */
+async function showCurrent(ref: PullRef, named: CommentLink, fetched: Promise<Reply<CommentPlace>>): Promise<void> {
+  const drawn = !versionsView.isOpen && named.kind === "comment" ? document.getElementById(`r${named.id}`) : null;
+  if (drawn) {
+    drawn.scrollIntoView({ block: "center" });
     return;
   }
-  // GitHub draws the thread in its diff too, under the comment's number.
-  const thread = id === null ? null : document.getElementById(`r${id}`);
-  if (thread) thread.scrollIntoView({ block: "center" });
-  else toast.show(`GitHub hasn't drawn the comment in its diff yet. Scroll to ${jump.current.path} and it will.`, "info");
+  const place = await fetched;
+  if (!place.ok) {
+    toast.show(`Could not read the comment: ${place.message}`, "danger");
+    return;
+  }
+  const lines = currentLines(place.value);
+  if (!lines) {
+    toast.show("The comment is outdated: its lines are gone from the current diff.", "info");
+    return;
+  }
+  if (versionsView.isOpen) {
+    showInVersions(ref, { range: { from: BASE, to: "", toCurrent: true, at: Date.now() }, line: lines });
+    return;
+  }
+  const last = document.querySelector(githubLineSelector(lines))?.closest("tr");
+  if (last) {
+    const first = lines.startLine === undefined ? last : (document.querySelector(githubLineSelector(lines, lines.startLine))?.closest("tr") ?? last);
+    showRows(first, last);
+    return;
+  }
+  // A file GitHub has collapsed, or not loaded yet, keeps its header.
+  const file = document.getElementById(await githubFileAnchor(lines.path));
+  if (file) {
+    file.scrollIntoView({ block: "start" });
+    toast.show(`GitHub's diff of ${lines.path} doesn't show the comment's line yet. If the file is collapsed, expand it.`, "info");
+  } else toast.show(`GitHub hasn't drawn ${lines.path} yet. Scroll to it and it will.`, "info");
+}
+
+/** Scrolls GitHub's diff to a comment's rows and flashes them, so the eye finds them. */
+function showRows(first: Element, last: Element): void {
+  const rows: Element[] = [];
+  for (let row: Element | null = first; row; row = row === last ? null : row.nextElementSibling) rows.push(row);
+  rows[Math.floor(rows.length / 2)]?.scrollIntoView({ block: "center" });
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  for (const row of rows) {
+    for (const cell of row.querySelectorAll("td")) {
+      cell.animate(
+        [{ boxShadow: "inset 0 0 0 999px var(--bgColor-attention-muted, #fff8c5)" }, { boxShadow: "inset 0 0 0 999px transparent" }],
+        { duration: 1600, easing: "ease-out" },
+      );
+    }
+  }
 }
 
 function closeVersions(): void {
