@@ -280,7 +280,9 @@
 }
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(200px, 248px);
+  /* The stack stops at a readable width, and the reviewers stay beside it rather than at the far edge. */
+  grid-template-columns: minmax(0, 880px) minmax(200px, 248px);
+  justify-content: start;
   grid-template-rows: auto auto 1fr;
   grid-template-areas:
     "stack reviewers"
