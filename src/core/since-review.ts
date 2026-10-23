@@ -98,7 +98,8 @@ export function rangeFileStats(diff: FileInterdiff[]): RangeFileStat[] {
 export function pokeMessage(login: string, standing: StandingVerdict, files: RangeFileStat[] | null, url: string): string | null {
   if (standing.behind <= 0) return null;
   const since = standing.verdict === "approved" ? "Since your approval on" : "Since you requested changes on";
-  const opening = `@${login} ${since} v${standing.version.number}`;
+  // FloHub numbers the versions itself, which nobody reading the comment on GitHub can look up: the commit says it.
+  const opening = `@${login} ${since} v${standing.version.number} (\`${standing.version.oid.slice(0, 7)}\`)`;
   const link = `[See what changed](${url})`;
   if (!files) return `${opening}, ${plural(standing.behind, "version")} ${standing.behind === 1 ? "was" : "were"} pushed. ${link}`;
   if (files.length === 0) return `${opening}: ${plural(standing.behind, "version")} pushed, with no file changes. ${link}`;

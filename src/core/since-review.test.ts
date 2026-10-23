@@ -151,26 +151,26 @@ describe("the poke message", () => {
   test("names the files changed since the approval, with their lines, and links to the range", () => {
     const files = [stat("a.ts", 10, 2), stat("b.ts", 1, 2), stat("c.ts", 1, 0)];
     expect(pokeMessage("alice", approval, files, url)).toBe(
-      `@alice Since your approval on v26: 3 files changed (+12 \u{2212}4): \`a.ts\`, \`b.ts\`, \`c.ts\`. [See what changed](${url})`,
+      `@alice Since your approval on v26 (\`aaaaa26\`): 3 files changed (+12 \u{2212}4): \`a.ts\`, \`b.ts\`, \`c.ts\`. [See what changed](${url})`,
     );
   });
 
   test("names a few files, then sums up the rest", () => {
     const files = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts"].map((path) => stat(path, 1, 0));
     expect(pokeMessage("alice", approval, files, url)).toBe(
-      `@alice Since your approval on v26: 5 files changed (+5): \`a.ts\`, \`b.ts\`, \`c.ts\` and 2 more. [See what changed](${url})`,
+      `@alice Since your approval on v26 (\`aaaaa26\`): 5 files changed (+5): \`a.ts\`, \`b.ts\`, \`c.ts\` and 2 more. [See what changed](${url})`,
     );
   });
 
   test("says so for a change request, and counts one file and large numbers as GitHub does", () => {
     expect(pokeMessage("bob", changeRequest, [stat("src/app.ts", 1200, 0)], url)).toBe(
-      `@bob Since you requested changes on v27: 1 file changed (+1,200): \`src/app.ts\`. [See what changed](${url})`,
+      `@bob Since you requested changes on v27 (\`aaaaa27\`): 1 file changed (+1,200): \`src/app.ts\`. [See what changed](${url})`,
     );
   });
 
   test("leaves the lines out when the files change none, as binaries and pure renames don't", () => {
     expect(pokeMessage("alice", approval, [stat("logo.png", 0, 0)], url)).toBe(
-      `@alice Since your approval on v26: 1 file changed: \`logo.png\`. [See what changed](${url})`,
+      `@alice Since your approval on v26 (\`aaaaa26\`): 1 file changed: \`logo.png\`. [See what changed](${url})`,
     );
   });
 
@@ -179,12 +179,12 @@ describe("the poke message", () => {
   });
 
   test("counts the versions when the files aren't known", () => {
-    expect(pokeMessage("alice", approval, null, url)).toBe(`@alice Since your approval on v26, 2 versions were pushed. [See what changed](${url})`);
-    expect(pokeMessage("bob", changeRequest, null, url)).toBe(`@bob Since you requested changes on v27, 1 version was pushed. [See what changed](${url})`);
+    expect(pokeMessage("alice", approval, null, url)).toBe(`@alice Since your approval on v26 (\`aaaaa26\`), 2 versions were pushed. [See what changed](${url})`);
+    expect(pokeMessage("bob", changeRequest, null, url)).toBe(`@bob Since you requested changes on v27 (\`aaaaa27\`), 1 version was pushed. [See what changed](${url})`);
   });
 
   test("says when the versions since change no files, as after a plain rebase", () => {
-    expect(pokeMessage("alice", approval, [], url)).toBe(`@alice Since your approval on v26: 2 versions pushed, with no file changes. [See what changed](${url})`);
+    expect(pokeMessage("alice", approval, [], url)).toBe(`@alice Since your approval on v26 (\`aaaaa26\`): 2 versions pushed, with no file changes. [See what changed](${url})`);
   });
 
   test("is nothing when the verdict is on the current version", () => {

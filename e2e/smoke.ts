@@ -849,7 +849,7 @@ const nudgeDialog = page.getByRole("dialog", { name: "Ask defunkt to look again"
 await nudgeDialog.waitFor();
 const composed = await nudgeDialog.getByRole("textbox").inputValue();
 check(
-  composed.startsWith("@defunkt Since you requested changes on v1: ") && composed.includes("flohub-versions="),
+  composed.startsWith("@defunkt Since you requested changes on v1 (`aaaaaaa`): ") && composed.includes("flohub-versions="),
   `asking a reviewer to look again composes what changed since their verdict, with a link to that range: ${composed}`,
 );
 await nudgeDialog.getByRole("button", { name: "Post and ask" }).click();

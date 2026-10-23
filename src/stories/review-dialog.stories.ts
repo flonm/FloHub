@@ -106,7 +106,7 @@ export const AskToLookAgain: Story = {
       reviewer: "mona",
       rerequest: true,
       body:
-        "@mona Since your approval on v2: 3 files changed (+12 −4): `src/api.ts`, `src/ui/bar.ts`, `README.md`. " +
+        "@mona Since your approval on v2 (`1a2b3c4`): 3 files changed (+12 −4): `src/api.ts`, `src/ui/bar.ts`, `README.md`. " +
         "[See what changed](https://github.com/octo-org/api/pull/7/changes?flohub-versions=aaaaaaa..)",
       submit: async () => {
         await settle();
