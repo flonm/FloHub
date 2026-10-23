@@ -1,0 +1,60 @@
+/*
+ * A reviewer's face with their verdict on its corner, as ui/verdict-face.ts draws it: in the versions view's timeline
+ * and lists, and in the inbox. The page or shadow root that shows one loads this file after tokens.css.
+ */
+.verdict-face {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+.verdict-face + .verdict-face {
+  margin-left: -6px;
+}
+.verdict-face img,
+.verdict-face .initial {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: var(--flo-bg-muted);
+  box-shadow: 0 0 0 1.5px var(--flo-bg);
+  color: var(--flo-muted);
+  font: 600 10px var(--flo-font);
+}
+/* A dismissed review keeps its verdict's icon and colour; its face greys out, as the reviewer rows grey their border. */
+.verdict-face.dismissed img,
+.verdict-face.dismissed .initial {
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+.verdict-mark {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--flo-bg);
+  box-shadow: 0 0 0 1px var(--flo-border);
+}
+.verdict-mark svg {
+  width: 9px;
+  height: 9px;
+  stroke-width: 2.25;
+}
+.verdict-mark[data-tone="success"] {
+  color: var(--flo-success);
+}
+.verdict-mark[data-tone="attention"] {
+  color: var(--flo-attention);
+}
+.verdict-mark[data-tone="muted"] {
+  color: var(--flo-muted);
+}
