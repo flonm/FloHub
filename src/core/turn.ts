@@ -4,7 +4,7 @@ import { deriveStatus, type RawStackPull } from "./stack";
 /** Whose move a pull request waits for, from the viewer's side: theirs, someone else's, or nobody's yet (a draft). */
 export type Whose = "you" | "them" | "none";
 
-/** Why a pull request waits for someone, as a stable code that the inbox notifications compare between refreshes. */
+/** Why a pull request waits for someone, as a stable code the views word themselves. */
 export type TurnCode =
   /** You are asked to review it. */
   | "requested"

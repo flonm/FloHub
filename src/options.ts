@@ -4,7 +4,6 @@ import type { Inbox } from "./core/inbox";
 import { parseRepo, readDirectRepos, REVIEW_SCOPES_KEY, type ReviewScope, writeReviewScope } from "./core/review-scope";
 import { isMac, shortcutHelp } from "./core/shortcuts";
 import { renderShortcutList } from "./ui/shortcut-list";
-import { NOTIFY_KEY } from "./api/inbox-sync";
 
 const form = document.querySelector<HTMLFormElement>("#token-form");
 const input = document.querySelector<HTMLInputElement>("#token");
@@ -20,18 +19,6 @@ const origins = requiredOrigins();
 
 const shortcuts = shortcutHelp(isMac(navigator.platform));
 document.querySelector("#keys")?.replaceWith(Object.assign(renderShortcutList(shortcuts), { id: "keys" }));
-const notify = document.querySelector<HTMLInputElement>("#notify");
-if (notify) {
-  void showNotify(notify);
-  notify.addEventListener("change", () => void chrome.storage.local.set({ [NOTIFY_KEY]: notify.checked }));
-}
-
-/** @param box The checkbox, ticked unless the viewer turned notifications off. */
-async function showNotify(box: HTMLInputElement): Promise<void> {
-  const stored = await chrome.storage.local.get(NOTIFY_KEY);
-  box.checked = stored[NOTIFY_KEY] !== false;
-}
-
 /** Repositories added on this page, kept in the list after they go back to the default. */
 const added = new Map<string, string>();
 

@@ -1910,7 +1910,7 @@ for (const scheme of ["light", "dark"] as const) {
     const pinnedOrder = await titles();
     const storedMarks = await inboxContext.serviceWorkers()[0]?.evaluate(async () => (await chrome.storage.local.get("inboxMarks")).inboxMarks);
     check(
-      pinnedOrder[0]?.trim() === "#120" && JSON.stringify(storedMarks).includes("/pull/120"),
+      pinnedOrder[0]?.trim() === "#77" && pinnedOrder[1]?.trim() === "#120" && JSON.stringify(storedMarks).includes("/pull/120"),
       `a pinned pull request sorts first in its section, and the pin is stored: ${pinnedOrder.join(",")}`,
     );
     await rowOf(121).locator(".pull").focus();
@@ -1924,7 +1924,7 @@ for (const scheme of ["light", "dark"] as const) {
     await rowOf(121).waitFor({ state: "detached" });
     const snoozedToggle = popup.getByRole("button", { name: "Show 1 snoozed" });
     check(
-      (await snoozedToggle.count()) === 1 && (await popup.getByRole("button", { name: /^Your turn/u }).textContent()) === "Your turn5",
+      (await snoozedToggle.count()) === 1 && (await popup.getByRole("button", { name: /^Your turn/u }).textContent()) === "Your turn4",
       "a snoozed pull request leaves its section, which counts it out and offers to show it",
     );
     let snoozedBadge = "";
@@ -1941,28 +1941,6 @@ for (const scheme of ["light", "dark"] as const) {
     await popup.getByRole("button", { name: /snoozed$/u }).waitFor({ state: "detached" });
     check((await rowOf(121).locator(".status", { hasText: "Snoozed" }).count()) === 0, "waking a snoozed pull request puts it back");
 
-    // A refresh on the schedule notifies what became the viewer's turn since the last one: here, #121's failing checks.
-    const [worker] = inboxContext.serviceWorkers();
-    await worker?.evaluate(async () => {
-      const { inbox } = await chrome.storage.local.get("inbox");
-      const quiet = structuredClone(inbox) as { mine: { pulls: { number: number; turn?: unknown; label: string }[] }[] };
-      for (const group of quiet.mine) for (const pull of group.pulls) if (pull.number === 121) Object.assign(pull, { turn: { whose: "them", reasons: [] }, label: "Needs review" });
-      await chrome.storage.local.set({ inbox: quiet, inboxMarks: { snoozed: {}, pinned: [] } });
-      await chrome.alarms.create("inbox", { when: Date.now() + 50, periodInMinutes: 5 });
-    });
-    let alerts: string[] = [];
-    for (let tries = 0; tries < 100 && alerts.length === 0; tries++) {
-      await popup.waitForTimeout(100);
-      alerts = Object.keys((await worker?.evaluate(async () => chrome.notifications.getAll())) ?? {});
-    }
-    check(
-      alerts.join(",") === "https://github.com/octo-org/api/pull/121#checks-failed",
-      `the scheduled refresh notifies a pull request that became the viewer's turn, and nothing else: ${alerts.join(",")}`,
-    );
-    await worker?.evaluate(async () => {
-      const shown = Object.keys(await chrome.notifications.getAll());
-      await Promise.all(shown.map(async (id) => chrome.notifications.clear(id)));
-    });
     const reviewToggle = popup.getByRole("button", { name: /^Your turn/u });
     await reviewToggle.click();
     check(

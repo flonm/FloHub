@@ -17,7 +17,7 @@ import {
   submitReview,
   type VersionPatch,
 } from "./api/github";
-import { alertUrl, clearInbox, ensureInboxAlarm, INBOX_ALARM, refreshBadge, refreshInbox, refreshInboxAgain } from "./api/inbox-sync";
+import { clearInbox, ensureInboxAlarm, INBOX_ALARM, refreshBadge, refreshInbox, refreshInboxAgain } from "./api/inbox-sync";
 import { MARKS_KEY } from "./core/inbox-marks";
 import type { Message, Reply, ReplyByType } from "./api/messages";
 import { clearOverviewCache, queueCacheWrite, writeCachedOverview } from "./api/overview-cache";
@@ -39,11 +39,7 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
 
 void ensureInboxAlarm();
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === INBOX_ALARM) void refreshInbox(undefined, true).catch(() => undefined);
-});
-chrome.notifications.onClicked.addListener((id) => {
-  void chrome.tabs.create({ url: alertUrl(id) });
-  void chrome.notifications.clear(id);
+  if (alarm.name === INBOX_ALARM) void refreshInbox().catch(() => undefined);
 });
 chrome.runtime.onStartup.addListener(() => void refreshInbox().catch(() => undefined));
 chrome.runtime.onInstalled.addListener(() => void refreshInbox().catch(() => undefined));
