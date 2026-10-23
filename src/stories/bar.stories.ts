@@ -232,6 +232,7 @@ export const InlineYourTurn: Story = {
       ready({
         turn: { whose: "you", reasons: [{ code: "checks-failed" }, { code: "replies", count: 2 }, { code: "ask-again", who: ["ada"] }] },
         repliesFor: new Map([["mona", 2]]),
+        progress: { changed: 3, replied: 1, untouched: 2 },
       }),
     ),
 };

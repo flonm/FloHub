@@ -483,7 +483,7 @@ function rebuiltStretch(stretch: number[], older: PatchView, newer: PatchView): 
     const line = newerLine ?? olderLine;
     if (!line) continue;
     flush(line.at);
-    rows.push(codeRow(line, mark, olderLine !== undefined));
+    rows.push(codeRow(line, mark, olderLine));
   }
   flush(Infinity);
   return [stretchHeader(stretch, older, newer, rows), ...rows];
@@ -509,25 +509,26 @@ function stretchHeader(stretch: number[], older: PatchView, newer: PatchView, ro
 /**
  * @param line A line of either version's code.
  * @param mark Whether it is in the older version's code only, the newer one's only, or both.
- * @param inOlder Whether the older version's code has it.
+ * @param olderLine The older version's code line it pairs with, if the older code has it. A line both patches add
+ * is two lines, one from each patch, and only the older one knows its number in the older version.
  * @returns Its row, shown as the newer patch shows it where it can, else as the older patch does: a line the newer
  * code lacks shows as the newer patch removing it, or as the older patch adding it.
  */
-function codeRow(line: CodeLine, mark: Mark, inOlder: boolean): InterdiffLine {
+function codeRow(line: CodeLine, mark: Mark, olderLine: CodeLine | undefined): InterdiffLine {
   const removedByNewer = line.newer !== undefined && "removed" in line.newer && line.newer.removed;
   const kind = line.base === null ? "+" : (removedByNewer ? "-" : " ");
   const display = `${kind}${line.code}`;
   const right = mark === "-" ? (line.base === null ? line.olderRight : null) : line.newerRight;
   return {
     // Which patches show the line, for what is placed on it: both, the newer one's only, or the older one's only.
-    mark: line.older && line.newer ? " " : (line.newer ? "+" : "-"),
+    mark: (line.older ?? olderLine?.older) && line.newer ? " " : (line.newer ? "+" : "-"),
     effect: mark,
     text: clean(display),
     display,
     left: line.base,
     right,
     newerIndex: line.newer?.index ?? null,
-    origin: { left: line.base, right: inOlder ? line.olderRight : null },
+    origin: { left: line.base, right: olderLine ? olderLine.olderRight : null },
   };
 }
 

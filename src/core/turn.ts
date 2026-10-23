@@ -44,13 +44,19 @@ export interface Turn {
 /** A review thread as the turn needs it: who started it and which person spoke last, bots left out. */
 export interface TurnThread {
   resolved: boolean;
+  /** Whether GitHub marks the thread's line as changed since; missing from overviews cached before it was fetched. */
+  outdated?: boolean;
   starter: string | null;
   lastSpeaker: string | null;
+  /** The people among the thread's last few comments; missing from overviews cached before they were kept. */
+  recentSpeakers?: string[];
 }
 
 /** A review thread as GitHub returns it for the turn: its first comment and its last few. */
 export interface RawTurnThread {
   isResolved: boolean;
+  /** Missing from caches made before it was fetched. */
+  isOutdated?: boolean;
   first: { nodes: RawTurnComment[] };
   recent: { nodes: RawTurnComment[] };
 }
@@ -97,8 +103,14 @@ export function isBot(login: string, typename?: string): boolean {
  * @returns Who started it and which person spoke last; an AI reviewer's comments don't count as anyone's word.
  */
 export function toTurnThread(thread: RawTurnThread): TurnThread {
-  const last = thread.recent.nodes.findLast((comment) => person(comment) !== null);
-  return { resolved: thread.isResolved, starter: person(thread.first.nodes[0]), lastSpeaker: person(last) };
+  const recentSpeakers = thread.recent.nodes.flatMap((comment) => person(comment) ?? []);
+  return {
+    resolved: thread.isResolved,
+    outdated: thread.isOutdated ?? false,
+    starter: person(thread.first.nodes[0]),
+    lastSpeaker: recentSpeakers.at(-1) ?? null,
+    recentSpeakers,
+  };
 }
 
 /** @returns The comment's author, unless it is a bot or a deleted user. */

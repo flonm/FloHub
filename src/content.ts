@@ -12,6 +12,7 @@ import { type CopyTarget, createShortcutMatcher, type ReviewEvent } from "./core
 import type { Overview } from "./api/github";
 import { readCachedOverview } from "./api/overview-cache";
 import { overviewTurnInput, repliesAwaiting, type Turn, whoseTurn } from "./core/turn";
+import { type ProgressCounts, roughProgress } from "./core/addressed";
 import { deriveStack } from "./core/stack";
 import { Toast } from "./ui/toast";
 import {
@@ -370,16 +371,22 @@ function readyState(overview: Overview, ref: PullRef, exact: boolean): Extract<B
  * @param pullRequest The overview's pull request.
  * @param viewer The viewer's login.
  * @param exact Whether the overview is the pull request's own.
- * @returns Whose move it waits for, and which reviewers have answers to read; nothing from another layer's overview.
+ * @returns Whose move it waits for, which reviewers have answers to read, and how the open threads stand; nothing
+ *   from another layer's overview.
  */
 function turnOf(
   pullRequest: NonNullable<NonNullable<Overview["repository"]>["pullRequest"]>,
   viewer: string,
   exact: boolean,
-): { turn: Turn | null; repliesFor: ReadonlyMap<string, number> } {
-  if (!exact) return { turn: null, repliesFor: new Map() };
+): { turn: Turn | null; repliesFor: ReadonlyMap<string, number>; progress: ProgressCounts | null } {
+  if (!exact) return { turn: null, repliesFor: new Map(), progress: null };
   const input = overviewTurnInput(pullRequest, viewer);
-  return { turn: whoseTurn(input), repliesFor: repliesAwaiting(input.threads, input.author) };
+  const progress: ProgressCounts = { changed: 0, untouched: 0, replied: 0 };
+  for (const thread of input.threads) {
+    const each = roughProgress(thread, input.author);
+    if (each) progress[each]++;
+  }
+  return { turn: whoseTurn(input), repliesFor: repliesAwaiting(input.threads, input.author), progress };
 }
 
 /** The visit's previous look, or the viewer's last review on a first visit; null until storage has answered. */
@@ -827,6 +834,7 @@ function openVersions(ref: PullRef): void {
       if (!reply.ok) throw new Error(reply.message);
       return reply.value;
     },
+    viewer: () => (state.kind === "ready" ? state.viewer : null),
     post: async (action) => {
       const reply = await send({ type: "review-action", ref, action });
       if (!reply.ok) throw new Error(reply.message);

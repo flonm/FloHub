@@ -47,6 +47,7 @@ fragment TurnThreads on PullRequest {
   turnThreads: reviewThreads(last: 50) {
     nodes {
       isResolved
+      isOutdated
       first: comments(first: 1) { nodes { author { __typename login } } }
       recent: comments(last: 3) { nodes { author { __typename login } } }
     }

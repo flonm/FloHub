@@ -248,8 +248,8 @@ const REVIEW_TEXTS: Record<string, { bodyText: string; bodyHTML?: string; hoursA
 };
 
 /** A review thread as the turn reads it: who started it, and who spoke last. */
-function turnThread(starter: string, last: string) {
-  return { isResolved: false, first: { nodes: [{ author: { __typename: "User", login: starter } }] }, recent: { nodes: [{ author: { __typename: "User", login: last } }] } };
+function turnThread(starter: string, last: string, isOutdated = false) {
+  return { isResolved: false, isOutdated, first: { nodes: [{ author: { __typename: "User", login: starter } }] }, recent: { nodes: [{ author: { __typename: "User", login: last } }] } };
 }
 
 function withDiscussionText<T extends { author: { login: string } }>(node: T) {
@@ -537,7 +537,7 @@ function createFixture(
                     ].map((node) => (options.discussion ? withDiscussionText(node) : node)),
                   },
                   ...(options.discussion && { comments: { nodes: DISCUSSION_COMMENTS } }),
-                  turnThreads: { nodes: [turnThread("octocat", "hubot"), turnThread("defunkt", "hubot"), turnThread("mojombo", "mojombo")] },
+                  turnThreads: { nodes: [turnThread("octocat", "hubot"), turnThread("defunkt", "hubot"), turnThread("mojombo", "mojombo", true), turnThread("wycats", "wycats")] },
                 },
               },
             },
@@ -749,6 +749,10 @@ check(
     (await defunktRow.getAttribute("data-waiting")) === "" &&
     (await defunktRow.locator(".turn-mark").textContent()) === "1",
   `the toolbar says it is the viewer's turn, and a reviewer the author answered last waits with a mark: ${turnText}`,
+);
+check(
+  (await inlineBar(page).locator(".tool.progress").textContent())?.startsWith("Threads: 1 changed · 2 replied · 1 untouched") === true,
+  `the toolbar counts the open threads by whether their code changed or the author answered: ${await inlineBar(page).locator(".tool.progress").textContent()}`,
 );
 const reviewers = await reviewerRows(page);
 check(
@@ -1121,6 +1125,14 @@ check(
   JSON.stringify(placedThreads.toSorted((a, b) => a.localeCompare(b))) === JSON.stringify(["Diverged stacks → v1 thread", "log(branch) → v3 thread"]) &&
     (await docked.locator("nav.files button.file", { hasText: "README.md" }).locator(".comment-count").innerText()) === "0/1",
   `review threads sit under their lines, by the numbers of the version each was written on, and the file tree counts the resolved ones of them: ${JSON.stringify(placedThreads)}`,
+);
+await threadRows.locator(".label.progress").nth(1).waitFor();
+const progressLabels = await threadRows.evaluateAll((blocks) =>
+  blocks.map((block) => `${block.textContent.includes("Is this still true") ? "v1" : "v3"}: ${block.querySelector(".label.progress")?.textContent ?? "none"}`),
+);
+check(
+  progressLabels.includes("v3: Untouched since your comment") && progressLabels.some((label) => /^v1: (Code changed|Untouched) since your comment$/u.test(label)),
+  `each open thread says whether its code changed since the viewer's comment, a comment on the head never: ${JSON.stringify(progressLabels)}`,
 );
 // A comment of several blocks reads top to bottom, as on GitHub, and its blocks aren't laid out as the view's own.
 const commentBlocks = await threadRows.filter({ hasText: "Is this still true" }).locator(".comment-body > *").evaluateAll((blocks) =>
