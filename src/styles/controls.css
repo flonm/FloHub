@@ -110,7 +110,8 @@ a.tool {
 
 .tooltip {
   position: fixed;
-  z-index: 100;
+  /* Above GitHub's sticky headers, which sit between the bar and the top of the window. */
+  z-index: 2147483000;
   top: 0;
   left: 0;
   max-width: 280px;

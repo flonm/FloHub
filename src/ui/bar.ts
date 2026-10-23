@@ -81,6 +81,7 @@ export class ReviewBar {
   private readonly tooltip = new Tooltip();
   /** Whether the toolbar's list of shortcuts is open, kept across re-renders. */
   private shortcutsOpen = false;
+  private releaseShortcuts: (() => void) | null = null;
 
   constructor(
     private readonly mode: "inline" | "floating",
@@ -121,6 +122,7 @@ export class ReviewBar {
     const focusKey = (this.shadow.activeElement as HTMLElement | null)?.dataset.focusKey;
     this.tooltip.hide();
     this.root.replaceChildren(this.mode === "inline" ? this.renderFull() : this.renderFloating());
+    this.placeShortcuts();
     this.entering = false;
     if (focusKey) this.shadow.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus();
   }
@@ -290,9 +292,39 @@ export class ReviewBar {
   }
 
   private showShortcuts(open: boolean): void {
+    if (open === this.shortcutsOpen) return;
     this.shortcutsOpen = open;
     this.render(this.state);
-    if (!open) this.shadow.querySelector<HTMLElement>('[data-focus-key="shortcuts"]')?.focus();
+    if (open) {
+      // The panel is fixed under its button, so anything that moves the button closes it.
+      const away = (event: Event) => {
+        const panel = this.shadow.querySelector(".shortcuts-panel");
+        if (!panel || !event.composedPath().includes(panel)) this.showShortcuts(false);
+      };
+      addEventListener("scroll", away, true);
+      addEventListener("resize", away);
+      this.releaseShortcuts = () => {
+        removeEventListener("scroll", away, true);
+        removeEventListener("resize", away);
+      };
+    } else {
+      this.releaseShortcuts?.();
+      this.releaseShortcuts = null;
+      this.shadow.querySelector<HTMLElement>('[data-focus-key="shortcuts"]')?.focus();
+    }
+  }
+
+  /** Puts the open list of shortcuts under its button, right-aligned with it, or above it near the window's bottom. */
+  private placeShortcuts(): void {
+    const panel = this.shadow.querySelector<HTMLElement>(".shortcuts-panel");
+    const toggle = this.shadow.querySelector<HTMLElement>('[data-focus-key="shortcuts"]');
+    if (!panel || !toggle) return;
+    const box = toggle.getBoundingClientRect();
+    const left = Math.max(8, Math.min(box.right - panel.offsetWidth, innerWidth - panel.offsetWidth - 8));
+    const below = box.bottom + 6;
+    const top = below + panel.offsetHeight > innerHeight - 8 ? Math.max(8, box.top - 6 - panel.offsetHeight) : below;
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
   }
 
   private renderReviewers(compact: boolean): HTMLElement {

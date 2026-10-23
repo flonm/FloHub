@@ -884,16 +884,17 @@
   }
 }
 
-/* The toolbar's list of shortcuts: a panel under its keyboard button, at the toolbar's right end. */
-.shortcuts {
-  position: relative;
-}
+/*
+ * The toolbar's list of shortcuts: a panel under its keyboard button. It is fixed in the window and above GitHub's
+ * sticky headers, which an absolute panel inside the bar slid under.
+ */
 .shortcuts-panel {
-  position: absolute;
-  z-index: 3;
-  top: calc(100% + 6px);
-  right: 0;
+  position: fixed;
+  z-index: 2147482000;
   width: 380px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
   padding: 12px 14px;
   border: 1px solid var(--flo-border);
   border-radius: var(--flo-radius-md);
