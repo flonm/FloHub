@@ -411,7 +411,7 @@ function createFixture(
             setTimeout(resolve, created.threadsDelay);
           });
         }
-        const reviewThread = (id: string, path: string, line: number, on: string, body: string) => ({
+        const reviewThread = (id: string, path: string, line: number, on: string, body: string, more = "") => ({
           id,
           isResolved: false,
           isOutdated: on !== "ccccccc3",
@@ -424,7 +424,7 @@ function createFixture(
           resolvedBy: null,
           comments: {
             nodes: [
-              { databaseId: 1, author: { login: "octocat", avatarUrl: "" }, authorAssociation: "MEMBER", bodyHTML: `<p>${body}</p>`, createdAt: ago(30), url: "", state: "SUBMITTED", originalCommit: { oid: on } },
+              { databaseId: 1, author: { login: "octocat", avatarUrl: "" }, authorAssociation: "MEMBER", bodyHTML: `<p>${body}</p>${more}`, createdAt: ago(30), url: "", state: "SUBMITTED", originalCommit: { oid: on } },
             ],
           },
         });
@@ -439,7 +439,14 @@ function createFixture(
                   reviews: { nodes: created.pendingReview ? [{ id: "PRR_pending", commit: { oid: created.pendingReview.commit } }] : [] },
                   reviewThreads: {
                     nodes: [
-                      reviewThread("PRRT_1", "README.md", 305, "aaaaaaa1", "Is this still true?"),
+                      reviewThread(
+                        "PRRT_1",
+                        "README.md",
+                        305,
+                        "aaaaaaa1",
+                        "Is this still true?",
+                        "<details><summary>Why I ask</summary><p>The planner changed.</p></details><p><strong>Check the docs.</strong></p><p><em>Source: review notes</em></p>",
+                      ),
                       reviewThread("PRRT_2", "cmd/rebase.go", 44, "ccccccc3", "Log at debug level?"),
                       reviewThread("PRRT_3", "cmd/rebase.go", 44, "bbbbbbb2", "Was logging here before?"),
                       reviewThread("PRRT_4", "docs/same.md", 2, "aaaaaaa1", "Say which rebases."),
@@ -992,6 +999,14 @@ check(
   JSON.stringify(placedThreads.toSorted((a, b) => a.localeCompare(b))) === JSON.stringify(["Diverged stacks → v1 thread", "log(branch) → v3 thread"]) &&
     (await docked.locator("nav.files button.file", { hasText: "README.md" }).locator(".comment-count").innerText()) === "0/1",
   `review threads sit under their lines, by the numbers of the version each was written on, and the file tree counts the resolved ones of them: ${JSON.stringify(placedThreads)}`,
+);
+// A comment of several blocks reads top to bottom, as on GitHub, and its blocks aren't laid out as the view's own.
+const commentBlocks = await threadRows.filter({ hasText: "Is this still true" }).locator(".comment-body > *").evaluateAll((blocks) =>
+  blocks.map((block) => Math.round(block.getBoundingClientRect().top)),
+);
+check(
+  commentBlocks.length === 4 && commentBlocks.every((top, index) => index === 0 || top > commentBlocks[index - 1]!),
+  `a comment's paragraphs and folded sections stack, one under the other: ${JSON.stringify(commentBlocks)}`,
 );
 const otherRow = docked.locator("details.file", { hasText: "cmd/rebase.go" }).locator(".other-threads button", { hasText: "Was logging here before?" });
 check(

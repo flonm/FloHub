@@ -168,7 +168,7 @@ const VIEW_STYLES = `
 }
 header { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-bottom: 1px solid var(--vd-border); }
 .title-row { display: flex; align-items: center; gap: 8px; }
-h2 { margin: 0; font-size: 16px; }
+.title-row h2 { margin: 0; font-size: 16px; }
 .close { margin-left: auto; }
 .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .controls label { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }

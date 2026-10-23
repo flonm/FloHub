@@ -136,6 +136,31 @@ export const Conversation: Story = {
     ),
 };
 
+/** A bot's review comment with headings, a folded section, code and a closing note, each block under the last as on GitHub. */
+export const Formatted: Story = {
+  render: () =>
+    render(
+      thread({
+        comments: [
+          comment({
+            author: "review-bot",
+            association: "NONE",
+            html: [
+              "<p>🎯 <strong>Correctness</strong> | 🟡 Minor | ⚡ Quick win</p>",
+              "<details><summary>🔎 Supported by static analysis</summary><p>The retry loop is reached from two call sites.</p></details>",
+              "<p><strong>Back off between retries.</strong></p>",
+              "<p><code>retry</code> calls the API again at once. Three failures in a row then reach <code>fetchPage</code>, which gives up.</p>",
+              "<h2>Suggested fix</h2>",
+              "<pre><code>await sleep(DELAY_MS * 2 ** attempt);</code></pre>",
+              "<details><summary>🤖 Prompt for AI agents</summary><p>Add an exponential back-off to the retry loop.</p></details>",
+              "<p><em>Source: coding guidelines</em></p>",
+            ].join(""),
+          }),
+        ],
+      }),
+    ),
+};
+
 /** A resolved thread folds to its summary line; a click opens it. */
 export const Resolved: Story = { render: () => render(thread({ resolved: true, resolvedBy: "mona" })) };
 
