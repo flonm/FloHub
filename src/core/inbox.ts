@@ -158,9 +158,12 @@ export function buildInbox(raw: RawInbox, fetchedAt: number, directRepos: Readon
     viewer,
     "review",
   );
-  const mine = group(pullsOf(raw.mine.nodes), viewer, "mine");
+  const mine = group(pullsOf(raw.mine.nodes), viewer, "mine").map((entry) => waitOnDownstack(entry));
+  // After an approval nothing waits for the author, unless they answered in a thread the viewer started.
   const waiting = group(
-    pullsOf(raw.waiting?.nodes ?? []).filter((pull) => waitingVerdict(pull, viewer) !== null),
+    pullsOf(raw.waiting?.nodes ?? []).filter(
+      (pull) => waitingVerdict(pull, viewer) !== null || (isReviewedOnly(pull, viewer) && turnOf(pull, viewer, "waiting").whose === "you"),
+    ),
     viewer,
     "waiting",
   );
@@ -179,6 +182,33 @@ export function buildInbox(raw: RawInbox, fetchedAt: number, directRepos: Readon
     waiting,
     reviewCount: review.reduce((sum, entry) => sum + entry.pulls.length, 0),
     turnCount: yours.length,
+  };
+}
+
+/** @returns Whether the viewer reviewed someone else's pull request and isn't asked to review it again. */
+function isReviewedOnly(pull: RawInboxPull, viewer: string): boolean {
+  return pull.author?.login !== viewer && requestedVia(pull, viewer) === null;
+}
+
+/**
+ * A layer can only merge after the layers below it, as the bar's stack says: an own layer ready to merge above
+ * another open one of the viewer's waits on its downstack, so only the lowest is the viewer's turn to merge.
+ * @param entry A group of the viewer's own pull requests, top first.
+ * @returns The group, its upper ready layers waiting on their downstack.
+ */
+function waitOnDownstack(entry: InboxGroup): InboxGroup {
+  const lowest = Math.min(...entry.pulls.map((pull) => pull.position ?? Infinity));
+  return {
+    ...entry,
+    pulls: entry.pulls.map((pull) => {
+      if (pull.position === null || pull.position === lowest || !pull.turn?.reasons.some((reason) => reason.code === "ready-to-merge")) return pull;
+      const reasons = pull.turn.reasons.filter((reason) => reason.code !== "ready-to-merge");
+      return {
+        ...pull,
+        label: pull.label === "Ready to merge" ? "Waiting on downstack" : pull.label,
+        turn: reasons.length > 0 ? { whose: "you", reasons } : { whose: "them", reasons: [] },
+      };
+    }),
   };
 }
 

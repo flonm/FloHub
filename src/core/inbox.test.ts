@@ -372,6 +372,28 @@ describe("buildInbox turns", () => {
     expect(inbox.waiting?.[0]?.pulls[0]?.turn).toEqual({ whose: "you", reasons: [{ code: "replies", count: 1 }, { code: "pushed-since-review" }] });
   });
 
+  test("keeps a pull request the viewer approved once the author answered in the viewer's thread", () => {
+    const turnThreads = {
+      nodes: [{ isResolved: false, first: { nodes: [{ author: { login: "octocat" } }] }, recent: { nodes: [{ author: { login: "hubot" } }] } }],
+    };
+    const approved = reviewedBy("octocat", "APPROVED", "APPROVED");
+    const inbox = buildInbox(buildRaw([], [], [buildPull(5, { ...approved, turnThreads }), buildPull(6, approved)]), 0);
+    expect(inbox.waiting?.flatMap((entry) => entry.pulls.map((pull) => [pull.number, pull.turn]))).toEqual([
+      [5, { whose: "you", reasons: [{ code: "replies", count: 1 }] }],
+    ]);
+  });
+
+  test("leaves merging to the lowest of the viewer's own ready layers; the ones above wait on their downstack", () => {
+    const stack = stackOf(7, [1, 2]);
+    const ready = { author: { login: "octocat", avatarUrl: "" }, reviewRequests: { nodes: [] }, reviewDecision: "APPROVED" as const, stack };
+    const inbox = buildInbox(buildRaw([], [buildPull(1, ready), buildPull(2, ready)]), 0);
+    expect(inbox.mine[0]?.pulls.map((pull) => [pull.number, pull.label, pull.turn])).toEqual([
+      [2, "Waiting on downstack", { whose: "them", reasons: [] }],
+      [1, "Ready to merge", { whose: "you", reasons: [{ code: "ready-to-merge" }] }],
+    ]);
+    expect(inbox.turnCount).toBe(1);
+  });
+
   test("says a review request was asked again", () => {
     const inbox = buildInbox(buildRaw([buildPull(1, { latestReviews: { nodes: [{ state: "COMMENTED", author: { login: "octocat" }, submittedAt: "2026-10-11T09:00:00Z" }] } })]), 0);
     expect(inbox.review[0]?.pulls[0]?.turn?.reasons).toEqual([{ code: "rerequested" }]);
