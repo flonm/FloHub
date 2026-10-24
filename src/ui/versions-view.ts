@@ -34,6 +34,7 @@ import {
 } from "../core/threads";
 import { renderComposer, renderThread, THREAD_STYLES, type ThreadActions, threadPlace } from "./review-thread";
 import { renderRichText } from "../core/rich-text";
+import { type ProgressBasis, type ThreadProgress, threadProgress } from "../core/addressed";
 import { type JumpTarget, threadElsewhere } from "../core/comment-jump";
 import { type SplitSide, splitRows } from "../core/split";
 import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
@@ -78,6 +79,8 @@ interface ReviewHooks {
   threadActions: (thread: ReviewThread) => ThreadActions | undefined;
   /** The pull request's author, whose comments are labelled Author, once known. */
   pullAuthor: () => string | null;
+  /** Whether the code a thread comments on changed since, with whether the viewer started it; null for none to tell. */
+  progress: (thread: ReviewThread) => { progress: ThreadProgress; yours: boolean } | null;
   /** Shows a range and scrolls to a thread's lines in it, for a thread the diff on screen has no line for. */
   show: (target: JumpTarget) => void;
   /** New comments on the head's lines, or null when this diff doesn't show GitHub's lines of the head. */
@@ -101,6 +104,8 @@ export interface VersionsViewRequest {
   versions: () => Promise<VersionHistory>;
   /** Resolves to the pull request's review threads, shown at their lines; rejects with a message to show. */
   threads?: () => Promise<ReviewDiscussion>;
+  /** The viewer's login, once known, for the threads they started. */
+  viewer?: () => string | null;
   /** Posts a comment or reply, or resolves a thread; rejects with a message to show. Without it, threads are read-only. */
   post?: (action: ReviewAction) => Promise<void>;
   /** Resolves to what a version changes; rejects with a message to show. */
@@ -742,9 +747,45 @@ export class VersionsView {
         if (!live()) return;
         discussion = fresh;
         placeAll();
+        void loadProgress();
       } catch (failure) {
         if (live()) notice.textContent = `Could not load the comments: ${failure instanceof Error ? failure.message : "GitHub didn't answer."}`;
       }
+    };
+    /** What tells whether each thread's code changed since: the head, and each commented version's diff to it. */
+    let basis: ProgressBasis | null = null;
+    /**
+     * Diffs every version an open thread was started on with the head, so each thread can say whether its lines
+     * changed since. Until a diff arrives, or where one fails, GitHub's outdated flag says it.
+     */
+    const loadProgress = async () => {
+      const known = history;
+      const threads = discussion;
+      const head = known?.versions.find((version) => version.oid === threads?.head);
+      if (!known || !threads || !head) return;
+      const sinceVersion = new Map<string, readonly FileInterdiff[]>();
+      basis = { head: head.oid, sinceVersion };
+      const started = new Set(threads.threads.filter((thread) => !thread.resolved).flatMap((thread) => thread.comments[0]?.originalCommit ?? []));
+      const commented = known.versions.filter((version) => version !== head && started.has(version.oid));
+      if (commented.length === 0) return;
+      try {
+        const after = await request.patch(known, head);
+        await Promise.all(
+          commented.map(async (version) => {
+            const before = await request.patch(known, version);
+            sinceVersion.set(version.oid, interdiff(before.files, after.files, { sameBase: before.mergeBase === after.mergeBase }));
+          }),
+        );
+      } catch {
+        // A version whose patch can't be had keeps the outdated flag's word.
+      }
+      if (live() && discussion === threads) placeAll();
+    };
+    const progressOf = (thread: ReviewThread) => {
+      const progress = basis ? threadProgress(thread, discussion?.author ?? null, basis) : null;
+      if (!progress) return null;
+      const viewer = request.viewer?.() ?? null;
+      return { progress, yours: viewer !== null && thread.comments[0]?.author === viewer };
     };
     /** Whether a comment or reply box holds text, which a redraw of the diff would throw away. */
     const drafting = () => [...main.querySelectorAll("textarea")].some((box) => box.value.trim() !== "");
@@ -841,6 +882,7 @@ export class VersionsView {
           const review: ReviewHooks = {
             threadActions,
             pullAuthor: () => discussion?.author ?? null,
+            progress: progressOf,
             show: (target) => this.goTo(target.range, target.line),
             comment: commentable ? { mode: () => postingMode(discussion?.pending ?? null, newer.oid), post, released: release } : null,
           };
@@ -913,6 +955,8 @@ export class VersionsView {
     const present = (next: VersionHistory, saved: SavedRange | null) => {
       const previous = history;
       history = next;
+      // The threads may have come first; their progress needs the versions.
+      if (discussion && previous?.versions.at(-1)?.oid !== next.versions.at(-1)?.oid) void loadProgress();
       const range =
         (previous && picker && carryRange(previous.versions, next.versions, Number(picker.from.value), Number(picker.to.value))) ??
         restoreRange(next.versions, pending?.range ?? saved);
@@ -1456,6 +1500,7 @@ function renderResult(
           actions: review.threadActions(thread),
           pullAuthor: review.pullAuthor(),
           version: started ? `v${started.number}` : null,
+          progress: review.progress(thread),
         });
         const open = block?.querySelector("details")?.open;
         if (open !== undefined) drawn.open = open;

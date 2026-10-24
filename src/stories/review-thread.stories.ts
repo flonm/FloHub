@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
 import type { ReviewThread, ThreadComment } from "../core/threads";
+import type { ThreadProgress } from "../core/addressed";
 import { renderComposer, renderThread, THREAD_STYLES, type ThreadActions } from "../ui/review-thread";
 import { NOW } from "./shadow";
 
@@ -86,8 +87,8 @@ function inRow(content: HTMLElement, className = "thread-row"): HTMLElement {
  * @param actions What the viewer can do to it; read-only without.
  * @returns The thread under its line.
  */
-function render(shown: ReviewThread, actions?: ThreadActions): HTMLElement {
-  return inRow(renderThread(shown, { now: NOW, actions, pullAuthor: "mona" }));
+function render(shown: ReviewThread, actions?: ThreadActions, progress?: { progress: ThreadProgress; yours: boolean }): HTMLElement {
+  return inRow(renderThread(shown, { now: NOW, actions, pullAuthor: "mona", progress }));
 }
 
 /**
@@ -163,6 +164,15 @@ export const Formatted: Story = {
 
 /** A resolved thread folds to its summary line; a click opens it. */
 export const Resolved: Story = { render: () => render(thread({ resolved: true, resolvedBy: "mona" })) };
+
+/** The code the viewer commented on changed since: the author addressed it. */
+export const CodeChanged: Story = { render: () => render(thread({ outdated: true }), undefined, { progress: "changed", yours: true }) };
+
+/** The author answered someone else's comment without touching the code. */
+export const RepliedUntouched: Story = { render: () => render(thread(), undefined, { progress: "replied", yours: false }) };
+
+/** Nothing happened to the code since the viewer's comment, and nobody answered. */
+export const Untouched: Story = { render: () => render(thread(), undefined, { progress: "untouched", yours: true }) };
 
 /** An outdated thread: its lines are gone from the current diff, but the view shows it where it was written. */
 export const Outdated: Story = { render: () => render(thread({ outdated: true, line: null })) };

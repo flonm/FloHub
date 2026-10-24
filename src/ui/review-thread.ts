@@ -1,6 +1,7 @@
 import { formatAge } from "../core/age";
 import { renderRichText } from "../core/rich-text";
 import type { PostingMode, ReviewThread, ThreadComment } from "../core/threads";
+import { progressLabel, type ThreadProgress } from "../core/addressed";
 import { el, icon } from "./dom";
 
 /**
@@ -46,6 +47,8 @@ export const THREAD_STYLES = `
   white-space: nowrap;
 }
 .thread .label[data-tone="attention"] { border-color: var(--vd-attention); color: var(--vd-attention); }
+.thread .label[data-tone="success"] { border-color: var(--vd-success); color: var(--vd-success); }
+.thread .label[data-tone="accent"] { border-color: var(--vd-accent); color: var(--vd-accent); }
 .comment { padding: 12px; }
 .comment + .comment { border-top: 1px solid var(--vd-border); }
 .comment-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -157,6 +160,9 @@ export function threadPlace(thread: ReviewThread): string {
   return start === null || start === line ? `Comment on line ${side}${line}` : `Comment on lines ${side}${start} to ${side}${line}`;
 }
 
+/** Code that changed reads as done, an answer as in progress, and nothing yet as still open. */
+const PROGRESS_TONE: Record<ThreadProgress, string> = { changed: "success", replied: "accent", untouched: "attention" };
+
 /**
  * A review thread as the versions view shows it under its line, laid out like GitHub's own: open while it's
  * unresolved, folded to its header once resolved, with the comments' authors, ages and bodies as GitHub renders them.
@@ -167,7 +173,14 @@ export function threadPlace(thread: ReviewThread): string {
  */
 export function renderThread(
   thread: ReviewThread,
-  options: { now: number; actions?: ThreadActions | undefined; pullAuthor?: string | null; version?: string | null },
+  options: {
+    now: number;
+    actions?: ThreadActions | undefined;
+    pullAuthor?: string | null;
+    version?: string | null;
+    /** Whether the code changed since the thread's first comment, and whether the viewer wrote it. */
+    progress?: { progress: ThreadProgress; yours: boolean } | null;
+  },
 ): HTMLDetailsElement {
   const details = el("details", { class: "thread", "data-thread": thread.id });
   details.open = !thread.resolved;
@@ -175,7 +188,12 @@ export function renderThread(
   // R43 is a side of that version's diff, not a column of the view: naming the version keeps the two apart.
   summary.append(icon("chevron", "twist"), el("span", {}, `${threadPlace(thread)}${options.version ? ` on ${options.version}` : ""}`));
   const labels = el("span", { class: "labels" });
-  if (thread.outdated) labels.append(el("span", { class: "label", "data-tone": "attention" }, "Outdated"));
+  if (options.progress) {
+    const { progress, yours } = options.progress;
+    labels.append(el("span", { class: "label progress", "data-progress": progress, "data-tone": PROGRESS_TONE[progress] }, progressLabel(progress, yours)));
+  } else if (thread.outdated) {
+    labels.append(el("span", { class: "label", "data-tone": "attention" }, "Outdated"));
+  }
   if (thread.comments.some((comment) => comment.pending)) labels.append(el("span", { class: "label" }, "Pending"));
   if (thread.resolved) labels.append(el("span", { class: "label" }, "Resolved"));
   summary.append(labels);

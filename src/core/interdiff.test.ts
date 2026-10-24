@@ -450,6 +450,12 @@ describe("both versions on the same base: their code rebuilt and diffed", () => 
     expect(changes(sameBase(patch, patch))).toEqual([]);
   });
 
+  test("a line both patches add keeps the older version's number, for a comment written on that version", () => {
+    const compared = sameBase("@@ -1,2 +1,3 @@\n a\n+x\n b", "@@ -1,2 +1,4 @@\n a\n+y\n+x\n b");
+    const added = compared.lines.find((line) => line.text === "+x");
+    expect(added).toMatchObject({ mark: " ", effect: " ", right: 3, origin: { right: 2 } });
+  });
+
   test("a file new in both versions compares their lines", () => {
     const compared = sameBase("@@ -0,0 +1,2 @@\n+a\n+b", "@@ -0,0 +1,3 @@\n+a\n+c\n+b");
     expect(changes(compared)).toEqual(["++c"]);

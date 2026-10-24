@@ -127,12 +127,12 @@ describe("toTurnThread", () => {
         ],
       },
     };
-    expect(toTurnThread(raw)).toEqual({ resolved: false, starter: "alice", lastSpeaker: "hubot" });
+    expect(toTurnThread(raw)).toEqual({ resolved: false, outdated: false, starter: "alice", lastSpeaker: "hubot", recentSpeakers: ["hubot"] });
   });
 
   test("leaves a bot's thread, or a deleted user's, to nobody", () => {
-    const raw = { isResolved: true, first: { nodes: [{ author: null }] }, recent: { nodes: [{ author: { __typename: "Bot", login: "ai" } }] } };
-    expect(toTurnThread(raw)).toEqual({ resolved: true, starter: null, lastSpeaker: null });
+    const raw = { isResolved: true, isOutdated: true, first: { nodes: [{ author: null }] }, recent: { nodes: [{ author: { __typename: "Bot", login: "ai" } }] } };
+    expect(toTurnThread(raw)).toEqual({ resolved: true, outdated: true, starter: null, lastSpeaker: null, recentSpeakers: [] });
   });
 });
 
@@ -181,7 +181,7 @@ describe("overviewTurnInput", () => {
       requested: ["carol", "octo-org/core"],
       pushes: [AFTER, BEFORE],
       changeRequests: [{ login: "alice", at: REVIEWED, requested: false }],
-      threads: [{ resolved: false, starter: "alice", lastSpeaker: "octocat" }],
+      threads: [{ resolved: false, outdated: false, starter: "alice", lastSpeaker: "octocat", recentSpeakers: ["octocat"] }],
     });
     expect(overviewTurnInput(pull, "carol")).toMatchObject({ asked: "requested", viewerVerdict: null });
     expect(overviewTurnInput(pull, "alice")).toMatchObject({ viewerVerdict: "changes_requested", viewerReviewedAt: REVIEWED });

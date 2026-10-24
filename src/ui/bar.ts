@@ -12,6 +12,7 @@ import { Tooltip } from "./tooltip";
 import { isMac, shortcutHelp } from "../core/shortcuts";
 import { renderShortcutList } from "./shortcut-list";
 import type { Turn } from "../core/turn";
+import type { ProgressCounts } from "../core/addressed";
 import { reasonWords } from "./turn-words";
 
 export type BarState =
@@ -50,6 +51,8 @@ export type BarState =
       turn?: Turn | null;
       /** For each reviewer by login, the unresolved threads they started that the author answered last. */
       repliesFor?: ReadonlyMap<string, number>;
+      /** How the open threads stand since their comments, by GitHub's outdated marks; null while unknown. */
+      progress?: ProgressCounts | null;
     };
 
 /** What Files changed shows: GitHub's diff, the same with what changed since the viewer's review highlighted, or the versions view. */
@@ -194,6 +197,8 @@ export class ReviewBar {
     const toolbar = el("div", { class: "toolbar area-tools", role: "toolbar", "aria-label": "Pull request" });
     const turn = state.turn ? renderTurn(state.turn) : null;
     if (turn) toolbar.append(turn);
+    const progress = state.progress ? renderProgress(state.progress) : null;
+    if (progress) toolbar.append(progress);
     if (state.forcePushes.count > 0 || state.highlight) toolbar.append(...this.renderDiff(state));
     const talk = discussion ? renderDiscussionControls(discussion) : [];
     const group = el("div", { class: "tool-group end" });
@@ -526,6 +531,27 @@ function renderTurn(turn: Turn): HTMLElement | null {
   if (words.length > 3) box.append(el("span", { class: "reason" }, `+${words.length - 3}`));
   box.append(el("span", { class: "visually-hidden" }, `. ${detail}`));
   return box;
+}
+
+/**
+ * @param counts How the open threads stand since their comments.
+ * @returns A static tool that counts them, the threads whose code changed first; nothing without open threads.
+ */
+function renderProgress(counts: ProgressCounts): HTMLElement | null {
+  const total = counts.changed + counts.untouched + counts.replied;
+  if (total === 0) return null;
+  const parts = [
+    counts.changed > 0 ? `${counts.changed} changed` : null,
+    counts.replied > 0 ? `${counts.replied} replied` : null,
+    counts.untouched > 0 ? `${counts.untouched} untouched` : null,
+  ].filter((part) => part !== null);
+  const detail =
+    `Open threads since their first comment: ${counts.changed} with the code changed, ${counts.replied} answered without a code change, ` +
+    `${counts.untouched} untouched. From GitHub's outdated marks; the versions view checks the commented lines exactly.`;
+  const tool = el("span", { class: "tool static progress", "data-tip": detail, tabindex: "0" });
+  tool.dataset.addressed = counts.untouched === 0 ? "all" : "some";
+  tool.append(icon("comment"), el("span", { "aria-hidden": "true" }, `Threads: ${parts.join(" · ")}`), el("span", { class: "visually-hidden" }, detail));
+  return tool;
 }
 
 /**
