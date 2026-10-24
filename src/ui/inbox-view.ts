@@ -1,13 +1,14 @@
 import { formatAge } from "../core/age";
 import { INBOX_PERIOD_MINUTES } from "../api/inbox-sync";
 import type { FailureCode } from "../api/github";
-import { type Inbox, type InboxGroup, type InboxPull, isStale } from "../core/inbox";
+import { type Inbox, type InboxPull, type InboxRole, type InboxSection, isStale, type TurnGroup, turnSections } from "../core/inbox";
 import { formatDiffStat } from "../core/viewed";
 import { el, icon } from "./dom";
 import { VERDICT_LOOK, verdictFace } from "./verdict-face";
+import { reasonWords, type ReasonTone } from "./turn-words";
 
-/** The three sections the popup draws. */
-export type SectionKind = "review" | "waiting" | "mine";
+/** The sections the popup draws: review requests asked again, then whose move each pull request waits for. */
+export type SectionKind = InboxSection;
 
 /** What the popup shows instead of the inbox, or over it. */
 export interface Problem {
@@ -136,10 +137,12 @@ export function renderInbox(state: InboxViewState, actions: InboxViewActions): H
       ),
     ];
   }
+  const sections = turnSections(inbox);
   return [
-    renderSection("Waiting for your review", inbox.review, "No review requests.", "review", state, actions),
-    renderSection("Waiting for author", inbox.waiting ?? [], "No reviews waiting for an answer.", "waiting", state, actions),
-    renderSection("Your pull requests", inbox.mine, "No open pull requests.", "mine", state, actions),
+    ...(sections.again.length > 0 ? [renderSection("Re-requested", sections.again, "", "again", state, actions)] : []),
+    renderSection("Your turn", sections.you, "Nothing waits for you.", "you", state, actions),
+    renderSection("Their turn", sections.them, "Nobody else has a move to make.", "them", state, actions),
+    ...(sections.none.length > 0 ? [renderSection("Drafts", sections.none, "", "none", state, actions)] : []),
   ];
 }
 
@@ -201,7 +204,7 @@ function renderSkeleton(): HTMLElement {
 
 function renderSection(
   title: string,
-  groups: InboxGroup[],
+  groups: TurnGroup[],
   empty: string,
   kind: SectionKind,
   state: InboxViewState,
@@ -238,7 +241,7 @@ function renderSection(
   return section;
 }
 
-function renderGroup(entry: InboxGroup, kind: SectionKind, actions: InboxViewActions): HTMLElement {
+function renderGroup(entry: TurnGroup, kind: SectionKind, actions: InboxViewActions): HTMLElement {
   // Layers of one stack stay adjacent; a rail joins them only when the inbox holds more than one.
   const joined = entry.stackNumber !== null && entry.pulls.length > 1;
   const item = el("li", { class: joined ? "group joined" : "group" });
@@ -249,8 +252,9 @@ function renderGroup(entry: InboxGroup, kind: SectionKind, actions: InboxViewAct
   return item;
 }
 
-function renderPull(pull: InboxPull, entry: InboxGroup, kind: SectionKind, actions: InboxViewActions): HTMLElement {
+function renderPull(pull: InboxPull, entry: TurnGroup, kind: SectionKind, actions: InboxViewActions): HTMLElement {
   const item = el("li", { class: "layer" });
+  const { role } = entry;
   const key = `${kind}:${pull.url}`;
   const ids = { title: `title-${kind}-${pull.number}-${entry.repo}`, meta: `meta-${kind}-${pull.number}-${entry.repo}` };
   const link = el("a", {
@@ -279,22 +283,12 @@ function renderPull(pull: InboxPull, entry: InboxGroup, kind: SectionKind, actio
   title.append(el("span", { class: "number" }, `#${pull.number} `), pull.title);
 
   const time = el("time", { class: "age", datetime: pull.lastActivity, "aria-hidden": "true" });
-  if (kind === "review") time.dataset.flagStale = "";
+  if (role === "review") time.dataset.flagStale = "";
   const spoken = el("span", { class: "visually-hidden spoken-age" });
 
   const meta = el("span", { class: "meta", id: ids.meta });
-  if (kind === "waiting") {
-    if (pull.yourVerdict === "changes_requested") meta.append(flag("You requested changes", "attention"));
-    else if (pull.yourVerdict === "commented") meta.append(flag("You commented", "neutral"));
-    if (pull.pushedSinceReview) meta.append(flag("New commits", "accent"));
-    if (pull.author) meta.append(el("span", { class: "item author" }, pull.author));
-  } else if (kind === "review") {
-    if (pull.tone !== "accent") meta.append(renderStatus(pull));
-    if (pull.rerequested) meta.append(flag("Re-requested", "attention"));
-    if (pull.author) meta.append(el("span", { class: "item author" }, pull.author));
-  } else {
-    meta.append(renderStatus(pull));
-  }
+  meta.append(...renderReasons(pull, role, kind));
+  if (role !== "mine" && pull.author) meta.append(el("span", { class: "item author" }, pull.author));
   meta.append(el("span", { class: "item repo" }, entry.repo));
   if (entry.stackNumber !== null && pull.position !== null) {
     const position = `Layer ${pull.position} of ${entry.stackSize} in its stack, counted from the base`;
@@ -309,7 +303,7 @@ function renderPull(pull: InboxPull, entry: InboxGroup, kind: SectionKind, actio
   updateAge(time, spoken, Date.now());
 
   const lead = el("span", { class: "lead" });
-  lead.append(kind === "mine" ? el("span", { class: "node", "data-tone": pull.tone }) : renderAvatar(pull));
+  lead.append(role === "mine" ? el("span", { class: "node", "data-tone": pull.tone }) : renderAvatar(pull));
 
   link.append(lead, title, time, meta);
   const faces = renderFaces(pull);
@@ -318,13 +312,46 @@ function renderPull(pull: InboxPull, entry: InboxGroup, kind: SectionKind, actio
     meta.append(el("span", { class: "visually-hidden" }, `. Reviews: ${faces.title}`));
   }
   item.append(link);
-  if (kind === "review" && pull.viaTeam) item.append(renderHideTeams(entry.repo, pull, actions));
+  if (role === "review" && pull.viaTeam) item.append(renderHideTeams(entry.repo, pull, actions));
   return item;
 }
 
+/**
+ * @param pull The pull request.
+ * @param role The search that found it.
+ * @returns The chips that say why it waits for whom, with its status when no chip says it already.
+ */
+function renderReasons(pull: InboxPull, role: InboxRole, kind: SectionKind): HTMLElement[] {
+  // A review request is what the "Your turn" section means by default, being asked again what "Re-requested" means,
+  // and the viewer's verdict says more than "waiting for author".
+  const said = new Set(["requested", "waiting-on-author", ...(kind === "again" ? ["rerequested"] : [])]);
+  const reasons = (pull.turn?.reasons ?? []).filter((reason) => !said.has(reason.code));
+  const chips = reasons.map((reason) => {
+    const words = reasonWords(reason);
+    return flag(words.text, words.tone, words.detail);
+  });
+  if (role === "waiting") {
+    const verdict = pull.yourVerdict ? flag(...YOUR_VERDICT[pull.yourVerdict]) : null;
+    const pushed = pull.pushedSinceReview && reasons.every((reason) => reason.code !== "pushed-since-review") ? [flag("New commits", "accent")] : [];
+    return [...(verdict ? [verdict] : []), ...chips, ...pushed];
+  }
+  if (!pull.turn && role === "review" && pull.rerequested && kind !== "again") chips.push(flag("Re-requested", "attention"));
+  const shown = new Set(chips.map((chip) => chip.textContent));
+  const quiet = role === "review" && pull.tone === "accent";
+  return quiet || shown.has(pull.label) || (pull.label === "Draft" && reasons.length > 0) ? chips : [renderStatus(pull), ...chips];
+}
+
+/** The viewer's verdict its author has to answer, as a waiting row says it. */
+const YOUR_VERDICT: Record<"changes_requested" | "commented", [string, ReasonTone]> = {
+  changes_requested: ["You requested changes", "attention"],
+  commented: ["You commented", "neutral"],
+};
+
 /** A tone-coloured note in a row's meta line, like a verdict or a fresh push. */
-function flag(text: string, tone: "attention" | "accent" | "neutral"): HTMLElement {
-  return el("span", { class: "item status", "data-tone": tone }, text);
+function flag(text: string, tone: ReasonTone, detail?: string): HTMLElement {
+  const chip = el("span", { class: "item status", "data-tone": tone }, text);
+  if (detail) chip.title = detail;
+  return chip;
 }
 
 /** Sets the repository to count only direct requests, for a row that reached the viewer through a team. */

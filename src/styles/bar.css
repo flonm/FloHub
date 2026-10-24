@@ -473,6 +473,57 @@
   align-items: center;
   gap: 6px 8px;
 }
+/* Whose move the pull request waits for: a filled pill when it is the viewer's, an outlined one when it is someone else's. */
+.turn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--flo-border);
+  border-radius: 999px;
+  color: var(--flo-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.turn[data-whose="you"] {
+  border-color: var(--flo-accent-border, var(--flo-border));
+  background: var(--flo-accent-bg, transparent);
+  color: var(--flo-fg);
+}
+.turn strong {
+  font-weight: 600;
+}
+.turn[data-whose="you"] strong {
+  color: var(--flo-accent, var(--flo-fg));
+}
+.turn .reason {
+  color: var(--tone, var(--flo-muted));
+  font-weight: 500;
+}
+.turn .reason + .reason::before,
+.turn strong + .reason::before {
+  content: "·";
+  margin-right: 6px;
+  color: var(--flo-muted);
+  font-weight: 400;
+}
+.turn:focus-visible {
+  outline: 2px solid var(--flo-focus, var(--flo-accent));
+  outline-offset: 1px;
+}
+.reviewer-state .turn-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--flo-attention, var(--flo-muted));
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.reviewer-state .turn-mark svg {
+  width: 12px;
+  height: 12px;
+}
 .tool-group {
   display: inline-flex;
   align-items: center;

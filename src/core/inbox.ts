@@ -1,5 +1,6 @@
 import type { Verdict } from "./reviewers";
 import { deriveStatus, lastActivity, type RawStackPull, type StackTone } from "./stack";
+import { isBot, pushTimes, type RawTurnThread, toTurnThread, type Turn, VIEWER_VERDICTS, type Whose, whoseTurn } from "./turn";
 
 /** A pull request as the inbox search returns it. */
 export type RawInboxPull = RawStackPull & {
@@ -17,6 +18,8 @@ export type RawInboxPull = RawStackPull & {
     size: number;
     entries: { nodes: { position: number; pullRequest: { number: number } | null }[] };
   } | null;
+  /** Who started each thread and spoke last in it; missing from fixtures and caches made before turns. */
+  turnThreads?: { nodes: RawTurnThread[] };
 };
 
 export interface RawInbox {
@@ -101,6 +104,8 @@ export interface InboxPull {
   viaTeam?: boolean;
   /** Everyone else's latest verdict, change requests first; missing from an inbox stored before verdicts. */
   reviews?: InboxReview[];
+  /** Whose move it waits for; missing from an inbox stored before turns. */
+  turn?: Turn;
 }
 
 export interface InboxGroup {
@@ -120,8 +125,10 @@ export interface Inbox {
   mine: InboxGroup[];
   /** Pull requests the viewer reviewed that wait for their author; missing from an inbox cached before it existed. */
   waiting?: InboxGroup[];
-  /** Pull requests waiting for the viewer's review, for the toolbar badge. */
+  /** Pull requests waiting for the viewer's review. */
   reviewCount: number;
+  /** Pull requests waiting for the viewer's move, for the toolbar badge; missing from an inbox stored before turns. */
+  turnCount?: number;
 }
 
 /** How urgently a status asks the author to act, most urgent first. */
@@ -151,9 +158,12 @@ export function buildInbox(raw: RawInbox, fetchedAt: number, directRepos: Readon
     viewer,
     "review",
   );
-  const mine = group(pullsOf(raw.mine.nodes), viewer, "mine");
+  const mine = group(pullsOf(raw.mine.nodes), viewer, "mine").map((entry) => waitOnDownstack(entry));
+  // After an approval nothing waits for the author, unless they answered in a thread the viewer started.
   const waiting = group(
-    pullsOf(raw.waiting?.nodes ?? []).filter((pull) => waitingVerdict(pull, viewer) !== null),
+    pullsOf(raw.waiting?.nodes ?? []).filter(
+      (pull) => waitingVerdict(pull, viewer) !== null || (isReviewedOnly(pull, viewer) && turnOf(pull, viewer, "waiting").whose === "you"),
+    ),
     viewer,
     "waiting",
   );
@@ -163,6 +173,7 @@ export function buildInbox(raw: RawInbox, fetchedAt: number, directRepos: Readon
     const byUrgency = urgency(a) - urgency(b);
     return byUrgency === 0 ? newest(b) - newest(a) : byUrgency;
   });
+  const yours = [...review, ...mine, ...waiting].flatMap((entry) => entry.pulls).filter((pull) => pull.turn?.whose === "you");
   return {
     viewer,
     fetchedAt,
@@ -170,6 +181,34 @@ export function buildInbox(raw: RawInbox, fetchedAt: number, directRepos: Readon
     mine,
     waiting,
     reviewCount: review.reduce((sum, entry) => sum + entry.pulls.length, 0),
+    turnCount: yours.length,
+  };
+}
+
+/** @returns Whether the viewer reviewed someone else's pull request and isn't asked to review it again. */
+function isReviewedOnly(pull: RawInboxPull, viewer: string): boolean {
+  return pull.author?.login !== viewer && requestedVia(pull, viewer) === null;
+}
+
+/**
+ * A layer can only merge after the layers below it, as the bar's stack says: an own layer ready to merge above
+ * another open one of the viewer's waits on its downstack, so only the lowest is the viewer's turn to merge.
+ * @param entry A group of the viewer's own pull requests, top first.
+ * @returns The group, its upper ready layers waiting on their downstack.
+ */
+function waitOnDownstack(entry: InboxGroup): InboxGroup {
+  const lowest = Math.min(...entry.pulls.map((pull) => pull.position ?? Infinity));
+  return {
+    ...entry,
+    pulls: entry.pulls.map((pull) => {
+      if (pull.position === null || pull.position === lowest || !pull.turn?.reasons.some((reason) => reason.code === "ready-to-merge")) return pull;
+      const reasons = pull.turn.reasons.filter((reason) => reason.code !== "ready-to-merge");
+      return {
+        ...pull,
+        label: pull.label === "Ready to merge" ? "Waiting on downstack" : pull.label,
+        turn: reasons.length > 0 ? { whose: "you", reasons } : { whose: "them", reasons: [] },
+      };
+    }),
   };
 }
 
@@ -222,10 +261,7 @@ function waitingVerdict(pull: RawInboxPull, viewer: string): "changes_requested"
 function pushedSinceReview(pull: RawInboxPull, viewer: string): boolean {
   const reviewedAt = pull.latestReviews.nodes.find((review) => review.author?.login === viewer)?.submittedAt;
   if (!reviewedAt) return false;
-  return pull.timelineItems.nodes.some((item) => {
-    const pushedAt = item.__typename === "HeadRefForcePushedEvent" ? item.createdAt : item.commit?.committedDate;
-    return pushedAt !== undefined && Date.parse(pushedAt) > Date.parse(reviewedAt);
-  });
+  return pushTimes(pull).some((pushedAt) => Date.parse(pushedAt) > Date.parse(reviewedAt));
 }
 
 function group(pulls: RawInboxPull[], viewer: string, kind: "review" | "waiting" | "mine"): InboxGroup[] {
@@ -268,8 +304,46 @@ function toInboxPull(pull: RawInboxPull, viewer: string, kind: "review" | "waiti
     reviews: othersReviews(pull, viewer),
     viaTeam: kind === "review" && pull.reviewRequests.nodes.every((request) => request.requestedReviewer?.login !== viewer),
     ...(kind === "waiting" && { yourVerdict: waitingVerdict(pull, viewer), pushedSinceReview: pushedSinceReview(pull, viewer) }),
+    turn: turnOf(pull, viewer, kind),
   };
 }
+
+/**
+ * @param pull The pull request.
+ * @param viewer The viewer's login.
+ * @param kind The search that found it; a review request in it already passed the team filter.
+ * @returns Whose move it waits for, see {@link whoseTurn}.
+ */
+function turnOf(pull: RawInboxPull, viewer: string, kind: "review" | "waiting" | "mine"): Turn {
+  const { label } = deriveStatus(pull);
+  const latest = new Map(pull.latestReviews.nodes.flatMap((review) => (review.author ? [[review.author.login, review] as const] : [])));
+  const requested = pull.reviewRequests.nodes.flatMap((request) => request.requestedReviewer?.login ?? request.requestedReviewer?.combinedSlug ?? []);
+  const standing = new Map(pull.latestOpinionatedReviews.nodes.flatMap((review) => (review.author ? [[review.author.login, review] as const] : [])));
+  const viewerState = standing.get(viewer)?.state ?? latest.get(viewer)?.state;
+  const changeRequests = [...standing.values()].flatMap((review) => {
+    const login = review.author?.login;
+    if (!login || review.state !== "CHANGES_REQUESTED" || login === viewer || isBot(login, review.author?.__typename)) return [];
+    return { login, at: latest.get(login)?.submittedAt ?? null, requested: requested.includes(login) };
+  });
+  return whoseTurn({
+    viewer,
+    author: pull.author?.login ?? null,
+    draft: pull.isDraft,
+    conflict: pull.mergeable === "CONFLICTING",
+    checksFailed: pull.statusCheckRollup?.state === "FAILURE" || pull.statusCheckRollup?.state === "ERROR",
+    readyToMerge: label === "Ready to merge",
+    needsReview: label === "Needs review",
+    asked: kind === "review" ? (latest.has(viewer) ? "rerequested" : "requested") : null,
+    viewerVerdict: VIEWER_VERDICTS[viewerState ?? ""] ?? null,
+    viewerReviewedAt: latest.get(viewer)?.submittedAt ?? null,
+    pushes: pushTimes(pull),
+    changeRequests,
+    requested,
+    threads: (pull.turnThreads?.nodes ?? []).map((thread) => toTurnThread(thread)),
+  });
+}
+
+
 
 const VERDICTS: Record<string, Verdict | undefined> = {
   APPROVED: "approved",
@@ -317,3 +391,54 @@ export function isStale(pull: Pick<InboxPull, "lastActivity">, now: number): boo
   return now - Date.parse(pull.lastActivity) >= STALE_AFTER_MS;
 }
 
+
+/** Which search a row came from, which decides what its meta line says. */
+export type InboxRole = "review" | "waiting" | "mine";
+
+/** A group in one of the turn sections, with the search its pull requests came from. */
+export type TurnGroup = InboxGroup & { role: InboxRole };
+
+/**
+ * The popup's sections: review requests the viewer is asked again on, apart from the rest of their turn, since an
+ * author who applied the viewer's review waits on a quick second look; then everything else by whose move it is.
+ */
+export type InboxSection = "again" | Whose;
+
+/**
+ * Sorts the inbox by whose move each pull request waits for. A stack whose layers wait for different people is
+ * split between the sections. An inbox stored before turns falls back to the search that found each pull request.
+ * @param inbox The inbox.
+ * @returns The groups the viewer is asked to review again, longest waiting first; then those waiting for the viewer,
+ *   for someone else and for nobody, each newest first.
+ */
+export function turnSections(inbox: Inbox): Record<InboxSection, TurnGroup[]> {
+  const sections: Record<InboxSection, TurnGroup[]> = { again: [], you: [], them: [], none: [] };
+  const roles: [InboxRole, InboxGroup[]][] = [
+    ["review", inbox.review],
+    ["mine", inbox.mine],
+    ["waiting", inbox.waiting ?? []],
+  ];
+  for (const [role, groups] of roles) {
+    for (const entry of groups) {
+      for (const section of ["again", "you", "them", "none"] as const) {
+        const pulls = entry.pulls.filter((pull) => sectionOf(pull, role) === section);
+        if (pulls.length > 0) sections[section].push({ ...entry, pulls, role });
+      }
+    }
+  }
+  for (const groups of [sections.you, sections.them, sections.none]) groups.sort((a, b) => newest(b) - newest(a));
+  // The longer someone has waited on a second look, the more it blocks them.
+  sections.again.sort((a, b) => newest(a) - newest(b));
+  return sections;
+}
+
+function sectionOf(pull: InboxPull, role: InboxRole): InboxSection {
+  const again = pull.turn ? pull.turn.reasons.some((reason) => reason.code === "rerequested") : role === "review" && pull.rerequested;
+  return again ? "again" : whoseOf(pull, role);
+}
+
+function whoseOf(pull: InboxPull, role: InboxRole): Whose {
+  if (pull.turn) return pull.turn.whose;
+  if (role === "review") return "you";
+  return role === "mine" && pull.label === "Draft" ? "none" : "them";
+}

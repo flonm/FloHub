@@ -10,6 +10,7 @@ import {
   type RawInboxIds,
   type RawInboxPull,
   STALE_AFTER_MS,
+  turnSections,
 } from "./inbox";
 
 function buildPull(number: number, overrides: Partial<RawInboxPull> = {}): RawInboxPull {
@@ -337,5 +338,116 @@ describe("othersReviews", () => {
       { login: "mona", avatarUrl: "https://avatars/mona", verdict: "approved" },
       { login: "octocat", avatarUrl: null, verdict: "commented" },
     ]);
+  });
+});
+
+describe("buildInbox turns", () => {
+  test("gives each pull request whose move it waits for, and counts the viewer's for the badge", () => {
+    const own = { author: { login: "octocat", avatarUrl: "" }, reviewRequests: { nodes: [{ requestedReviewer: { login: "alice" } }] } };
+    const inbox = buildInbox(
+      buildRaw(
+        [buildPull(1)],
+        [buildPull(2, own), buildPull(3, { ...own, statusCheckRollup: { state: "FAILURE" } }), buildPull(4, { ...own, isDraft: true })],
+        [buildPull(5, reviewedBy("octocat", "CHANGES_REQUESTED", "CHANGES_REQUESTED"))],
+      ),
+      0,
+    );
+    const turns = [...inbox.review, ...inbox.mine, ...inbox.waiting!].flatMap((entry) => entry.pulls.map((pull) => [pull.number, pull.turn]));
+    expect(Object.fromEntries(turns)).toEqual({
+      1: { whose: "you", reasons: [{ code: "requested" }] },
+      2: { whose: "them", reasons: [{ code: "waiting-on-reviewers", who: ["alice"] }] },
+      3: { whose: "you", reasons: [{ code: "checks-failed" }] },
+      4: { whose: "none", reasons: [{ code: "draft" }] },
+      5: { whose: "them", reasons: [{ code: "waiting-on-author" }] },
+    });
+    expect(inbox.turnCount).toBe(2);
+  });
+
+  test("counts replies in the viewer's threads and a push after their change request", () => {
+    const pushed = { timelineItems: { nodes: [{ __typename: "HeadRefForcePushedEvent", createdAt: "2026-10-12T09:00:00Z" }] } };
+    const turnThreads = {
+      nodes: [{ isResolved: false, first: { nodes: [{ author: { login: "octocat" } }] }, recent: { nodes: [{ author: { login: "hubot" } }] } }],
+    };
+    const inbox = buildInbox(buildRaw([], [], [buildPull(5, { ...reviewedBy("octocat", "CHANGES_REQUESTED", "CHANGES_REQUESTED"), ...pushed, turnThreads })]), 0);
+    expect(inbox.waiting?.[0]?.pulls[0]?.turn).toEqual({ whose: "you", reasons: [{ code: "replies", count: 1 }, { code: "pushed-since-review" }] });
+  });
+
+  test("keeps a pull request the viewer approved once the author answered in the viewer's thread", () => {
+    const turnThreads = {
+      nodes: [{ isResolved: false, first: { nodes: [{ author: { login: "octocat" } }] }, recent: { nodes: [{ author: { login: "hubot" } }] } }],
+    };
+    const approved = reviewedBy("octocat", "APPROVED", "APPROVED");
+    const inbox = buildInbox(buildRaw([], [], [buildPull(5, { ...approved, turnThreads }), buildPull(6, approved)]), 0);
+    expect(inbox.waiting?.flatMap((entry) => entry.pulls.map((pull) => [pull.number, pull.turn]))).toEqual([
+      [5, { whose: "you", reasons: [{ code: "replies", count: 1 }] }],
+    ]);
+  });
+
+  test("leaves merging to the lowest of the viewer's own ready layers; the ones above wait on their downstack", () => {
+    const stack = stackOf(7, [1, 2]);
+    const ready = { author: { login: "octocat", avatarUrl: "" }, reviewRequests: { nodes: [] }, reviewDecision: "APPROVED" as const, stack };
+    const inbox = buildInbox(buildRaw([], [buildPull(1, ready), buildPull(2, ready)]), 0);
+    expect(inbox.mine[0]?.pulls.map((pull) => [pull.number, pull.label, pull.turn])).toEqual([
+      [2, "Waiting on downstack", { whose: "them", reasons: [] }],
+      [1, "Ready to merge", { whose: "you", reasons: [{ code: "ready-to-merge" }] }],
+    ]);
+    expect(inbox.turnCount).toBe(1);
+  });
+
+  test("says a review request was asked again", () => {
+    const inbox = buildInbox(buildRaw([buildPull(1, { latestReviews: { nodes: [{ state: "COMMENTED", author: { login: "octocat" }, submittedAt: "2026-10-11T09:00:00Z" }] } })]), 0);
+    expect(inbox.review[0]?.pulls[0]?.turn?.reasons).toEqual([{ code: "rerequested" }]);
+  });
+});
+
+/** @returns A pull request the viewer requested changes on, before being asked again. */
+function before(submittedAt: string): Partial<RawInboxPull> {
+  return { latestReviews: { nodes: [{ state: "CHANGES_REQUESTED", author: { login: "octocat" }, submittedAt }] } };
+}
+
+describe("turnSections", () => {
+  test("splits the searches by whose move each pull request waits for, newest first", () => {
+    const own = { author: { login: "octocat", avatarUrl: "" }, reviewRequests: { nodes: [{ requestedReviewer: { login: "alice" } }] } };
+    const stack = stackOf(7, [2, 3]);
+    const inbox = buildInbox(
+      buildRaw(
+        [buildPull(1, { createdAt: "2026-10-12T09:00:00Z" })],
+        [buildPull(2, { ...own, stack }), buildPull(3, { ...own, stack, statusCheckRollup: { state: "ERROR" } }), buildPull(4, { ...own, isDraft: true })],
+      ),
+      0,
+    );
+    const sections = turnSections(inbox);
+    const shape = (whose: "you" | "them" | "none") => sections[whose].map((entry) => [entry.role, entry.pulls.map((pull) => pull.number)]);
+    expect(shape("you")).toEqual([
+      ["review", [1]],
+      ["mine", [3]],
+    ]);
+    expect(shape("them")).toEqual([["mine", [2]]]);
+    expect(shape("none")).toEqual([["mine", [4]]]);
+  });
+
+  test("puts the review requests asked again first, the longest waiting first", () => {
+    const inbox = buildInbox(
+      buildRaw([
+        buildPull(1, { createdAt: "2026-10-12T09:00:00Z" }),
+        buildPull(2, { ...before("2026-10-10T09:00:00Z"), createdAt: "2026-10-13T09:00:00Z" }),
+        buildPull(3, { ...before("2026-10-10T09:00:00Z"), createdAt: "2026-10-11T09:00:00Z" }),
+      ]),
+      0,
+    );
+    const sections = turnSections(inbox);
+    expect(sections.again.map((entry) => entry.pulls[0]?.number)).toEqual([3, 2]);
+    expect(sections.you.map((entry) => entry.pulls[0]?.number)).toEqual([1]);
+    expect(inbox.turnCount).toBe(3);
+  });
+
+  test("falls back to the searches for an inbox stored before turns", () => {
+    const inbox = buildInbox(buildRaw([buildPull(1)], [buildPull(2, { isDraft: true })], [buildPull(3, reviewedBy("octocat", "COMMENTED", null))]), 0);
+    for (const entry of [...inbox.review, ...inbox.mine, ...inbox.waiting!]) for (const pull of entry.pulls) delete pull.turn;
+    inbox.review[0]!.pulls[0]!.rerequested = true;
+    expect(turnSections(inbox).again.map((entry) => entry.pulls[0]?.number)).toEqual([1]);
+    inbox.review[0]!.pulls[0]!.rerequested = false;
+    const sections = turnSections(inbox);
+    expect([sections.you, sections.them, sections.none].map((groups) => groups.map((entry) => entry.pulls[0]?.number))).toEqual([[1], [3], [2]]);
   });
 });

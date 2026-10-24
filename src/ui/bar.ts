@@ -11,6 +11,8 @@ import { dismissedName, POKE_COOLDOWN_MS, reviewerLook, standingVerdict } from "
 import { Tooltip } from "./tooltip";
 import { isMac, shortcutHelp } from "../core/shortcuts";
 import { renderShortcutList } from "./shortcut-list";
+import type { Turn } from "../core/turn";
+import { reasonWords } from "./turn-words";
 
 export type BarState =
   | { kind: "loading" }
@@ -44,6 +46,10 @@ export type BarState =
       viewer: string;
       /** Whether the versions view stands in for GitHub's diff in Files changed. */
       versionsOpen: boolean;
+      /** Whose move the pull request waits for; null while only a cached stack from another layer is shown. */
+      turn?: Turn | null;
+      /** For each reviewer by login, the unresolved threads they started that the author answered last. */
+      repliesFor?: ReadonlyMap<string, number>;
     };
 
 /** What Files changed shows: GitHub's diff, the same with what changed since the viewer's review highlighted, or the versions view. */
@@ -186,6 +192,8 @@ export class ReviewBar {
         }
       : null;
     const toolbar = el("div", { class: "toolbar area-tools", role: "toolbar", "aria-label": "Pull request" });
+    const turn = state.turn ? renderTurn(state.turn) : null;
+    if (turn) toolbar.append(turn);
     if (state.forcePushes.count > 0 || state.highlight) toolbar.append(...this.renderDiff(state));
     const talk = discussion ? renderDiscussionControls(discussion) : [];
     const group = el("div", { class: "tool-group end" });
@@ -364,7 +372,7 @@ export class ReviewBar {
     } else if (compact) {
       const faces = el("ul", { class: "faces" });
       for (const reviewer of reviewers) {
-        const look = reviewerLook(reviewer, state.now, state.pokedAt.get(reviewer.key));
+        const look = reviewerLook(reviewer, state.now, state.pokedAt.get(reviewer.key), state.repliesFor?.get(reviewer.name));
         const item = el("li", { "data-tip": `${reviewer.name}: ${look.detail}` });
         item.append(face(reviewer, look), el("span", { class: "visually-hidden" }, `${reviewer.name}: ${look.label}. ${look.detail}`));
         faces.append(item);
@@ -373,7 +381,7 @@ export class ReviewBar {
     } else {
       const list = el("ul", { class: "reviewer-list" });
       for (const reviewer of reviewers) {
-        list.append(this.renderReviewer(reviewer, state.busy.has(reviewer.key), state.pokedAt.get(reviewer.key), state.now));
+        list.append(this.renderReviewer(reviewer, state.busy.has(reviewer.key), state.pokedAt.get(reviewer.key), state.now, state.repliesFor?.get(reviewer.name)));
       }
       section.append(list);
     }
@@ -382,8 +390,8 @@ export class ReviewBar {
     return section;
   }
 
-  private renderReviewer(reviewer: Reviewer, busy: boolean, pokedAt: number | undefined, now: number): HTMLElement {
-    const look = reviewerLook(reviewer, now, pokedAt);
+  private renderReviewer(reviewer: Reviewer, busy: boolean, pokedAt: number | undefined, now: number, replies?: number): HTMLElement {
+    const look = reviewerLook(reviewer, now, pokedAt, replies);
     const row = el("li", {
       class: busy ? "reviewer busy" : "reviewer",
       "data-ring": look.ring,
@@ -430,6 +438,11 @@ export class ReviewBar {
 
     const state = el("span", { class: "reviewer-state", "aria-hidden": "true" });
     if (recentlyPoked) state.append(icon("pointer", "poked"));
+    if (replies !== undefined && replies > 0) {
+      const mark = el("span", { class: "turn-mark" });
+      mark.append(icon("comment"), String(replies));
+      state.append(mark);
+    }
     const glyph = icon(look.glyph, "glyph");
     glyph.dataset.tone = look.tone;
     state.append(glyph);
@@ -478,7 +491,10 @@ export class ReviewBar {
     }
 
     const faces = el("span", { class: "faces", "aria-hidden": "true" });
-    const looked = state.reviewers.map((reviewer) => ({ reviewer, look: reviewerLook(reviewer, state.now, state.pokedAt.get(reviewer.key)) }));
+    const looked = state.reviewers.map((reviewer) => ({
+      reviewer,
+      look: reviewerLook(reviewer, state.now, state.pokedAt.get(reviewer.key), state.repliesFor?.get(reviewer.name)),
+    }));
     for (const { reviewer, look } of looked.slice(0, MAX_FACES)) faces.append(face(reviewer, look));
     const hidden = state.reviewers.length - MAX_FACES;
     if (hidden > 0) faces.append(el("span", { class: "more" }, `+${hidden}`));
@@ -491,6 +507,25 @@ export class ReviewBar {
       el("span", { class: "visually-hidden" }, `. ${description}`),
     ];
   }
+}
+
+/**
+ * @param turn Whose move the pull request waits for.
+ * @returns The toolbar's first item: "Your turn" or "Their turn" and why, each reason explained in its tooltip;
+ *   nothing for a draft or for someone else's turn without a reason.
+ */
+function renderTurn(turn: Turn): HTMLElement | null {
+  // Someone else's turn with nothing to say, like after the viewer approved, isn't worth the room.
+  if (turn.whose === "none" || (turn.whose === "them" && turn.reasons.length === 0)) return null;
+  const words = turn.reasons.map((reason) => reasonWords(reason));
+  const owner = turn.whose === "you" ? "Your turn" : "Their turn";
+  const detail = words.length > 0 ? words.map((word) => word.detail).join(" ") : "Nothing waits for you.";
+  const box = el("span", { class: "turn", "data-whose": turn.whose, "data-tip": `${owner}. ${detail}`.trim(), tabindex: "0" });
+  box.append(el("strong", {}, owner));
+  for (const word of words.slice(0, 3)) box.append(el("span", { class: "reason", "data-tone": word.tone }, word.text));
+  if (words.length > 3) box.append(el("span", { class: "reason" }, `+${words.length - 3}`));
+  box.append(el("span", { class: "visually-hidden" }, `. ${detail}`));
+  return box;
 }
 
 /**
