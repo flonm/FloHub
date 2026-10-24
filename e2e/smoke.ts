@@ -310,6 +310,8 @@ function createFixture(
   if (options.partial) requested.push(null);
   const rerequests: string[] = [];
   const requestLog: string[] = [];
+  /** Comments posted on the pull request's conversation. */
+  const comments: string[] = [];
   const viewedMarks: string[] = [];
   const viewed = { ...CHANGED_FILES };
   const submissions: { path: string; body: unknown }[] = [];
@@ -319,6 +321,8 @@ function createFixture(
     compareLog,
     rerequests,
     requestLog,
+    comments,
+    requested,
     viewedMarks,
     submissions,
     reviewState,
@@ -416,6 +420,7 @@ function createFixture(
                   reviews: {
                     nodes: [
                       { state: "COMMENTED", author: { login: "octocat" }, submittedAt: ago(40), commit: commit("aaaaaaa1", 48) },
+                      { state: "CHANGES_REQUESTED", author: { login: "defunkt" }, submittedAt: ago(44), commit: commit("aaaaaaa1", 48) },
                       { state: "CHANGES_REQUESTED", author: { login: "mojombo" }, submittedAt: ago(18), commit: commit("bbbbbbb2", 20) },
                       { state: "APPROVED", author: { login: "mojombo" }, submittedAt: ago(2), commit: commit("ccccccc3", 3) },
                     ],
@@ -549,6 +554,11 @@ function createFixture(
                 }),
           },
         });
+        return;
+      }
+      if (request.method() === "POST" && /\/issues\/\d+\/comments$/u.test(request.url())) {
+        comments.push((request.postDataJSON() as { body: string }).body);
+        await route.fulfill({ status: 201, json: {} });
         return;
       }
       if (request.url().endsWith("/requested_reviewers")) {
@@ -824,6 +834,34 @@ check(
     'dismissPullRequestReview {"id":"PRR_defunkt","message":"Addressed in the latest push."}',
   `the X dismisses the review with its reason: ${fixture.reviewActions.slice(dismissalsBefore).join(" | ")}`,
 );
+const defunktStale = inlineBar(page).locator(".reviewer", { hasText: "defunkt" });
+await defunktStale.locator(".behind").waitFor();
+check(
+  (await defunktStale.locator(".behind").textContent()) === "v1" &&
+    (await defunktStale.getAttribute("data-tip"))?.includes("Requested changes on v1 · 2 versions ago.") === true &&
+    (await inlineBar(page).locator(".reviewer", { hasText: "mojombo" }).locator(".behind").count()) === 0 &&
+    (await inlineBar(page).getByRole("button", { name: /^Ask octocat/u }).count()) === 0,
+  `a reviewer whose standing verdict is on an older version says which, one whose versions disagree says nothing, and the viewer isn't offered to nudge themselves: ${await defunktStale.getAttribute("data-tip")}`,
+);
+const rerequestsBeforeNudge = fixture.rerequests.length;
+await defunktStale.getByRole("button", { name: /^Ask defunkt to look again/u }).click();
+const nudgeDialog = page.getByRole("dialog", { name: "Ask defunkt to look again" });
+await nudgeDialog.waitFor();
+const composed = await nudgeDialog.getByRole("textbox").inputValue();
+check(
+  composed.startsWith("@defunkt Since you requested changes on v1 (`aaaaaaa`): ") && composed.includes("flohub-versions="),
+  `asking a reviewer to look again composes what changed since their verdict, with a link to that range: ${composed}`,
+);
+await nudgeDialog.getByRole("button", { name: "Post and ask" }).click();
+await nudgeDialog.waitFor({ state: "hidden" });
+check(
+  fixture.comments.at(-1) === composed && fixture.rerequests.slice(rerequestsBeforeNudge).join(",") === "defunkt",
+  `the comment is posted as composed, and the reviewer is asked to review again: ${fixture.rerequests.slice(rerequestsBeforeNudge).join(",")}`,
+);
+// The checks below expect defunkt not to be asked.
+fixture.requested.splice(fixture.requested.findIndex((entry) => entry !== null && "login" in entry && entry.login === "defunkt"), 1);
+await inlineBar(page).getByRole("button", { name: "Refresh reviewers" }).click();
+await inlineBar(page).getByRole("button", { name: "Re-request review from defunkt" }).waitFor();
 const rows = await inlineBar(page).locator(".stack-list > li").allInnerTexts();
 check(
   JSON.stringify(rows.map((row) => visibleText(row))) ===
@@ -1199,13 +1237,25 @@ const reviewedSlots = async () =>
     items.map((item) => [...item.querySelectorAll(".verdict-mark")].map((badge) => (badge as HTMLElement).dataset.tone).join("+")),
   );
 check(
-  JSON.stringify(await reviewedSlots()) === JSON.stringify(["muted", "attention", "success"]),
+  JSON.stringify(await reviewedSlots()) === JSON.stringify(["muted+attention", "attention", "success"]),
   `the timeline draws each reviewed version's reviewers with their verdicts: ${JSON.stringify(await reviewedSlots())}`,
 );
 await pickIn(docked, "Reviews", "mojombo");
 check(
   JSON.stringify(await reviewedSlots()) === JSON.stringify(["attention", "success"]),
   `following one reviewer leaves only their reviews on the timeline, so their verdict's path shows: ${JSON.stringify(await reviewedSlots())}`,
+);
+const unseenButton = docked.locator(".tool.unseen");
+check(await unseenButton.isHidden(), "a reviewer whose verdict is on the head has nothing they haven't seen");
+await pickIn(docked, "From", "2");
+await pickIn(docked, "Reviews", "defunkt");
+await unseenButton.waitFor();
+const unseenText = await unseenButton.textContent();
+await unseenButton.click();
+await docked.locator('[data-picker="From"] > button[data-value="1"]').waitFor();
+check(
+  unseenText === "What defunkt hasn't seen" && (await pickerValue(docked, "To")) === "3" && (await unseenButton.isHidden()),
+  `following a reviewer offers what they haven't seen since their verdict, and picks it: ${unseenText}`,
 );
 await pickIn(docked, "Reviews", "");
 await docked.locator(".thread-row").nth(1).waitFor();

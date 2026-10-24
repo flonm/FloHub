@@ -11,6 +11,7 @@ export type Message =
   | { type: "overview"; ref: PullRef }
   | { type: "rerequest"; ref: PullRef; login: string }
   | { type: "dismiss-review"; reviewId: string; message: string }
+  | { type: "post-comment"; ref: PullRef; body: string }
   | { type: "poke"; ref: PullRef; reviewer: { kind: "user" | "team"; name: string } }
   | { type: "viewed-files"; ref: PullRef }
   | { type: "set-viewed"; pullRequestId: string; path: string; viewed: boolean }
@@ -31,6 +32,7 @@ export interface ReplyByType {
   overview: Overview;
   rerequest: null;
   "dismiss-review": null;
+  "post-comment": null;
   poke: null;
   "viewed-files": ViewedFiles;
   "set-viewed": null;

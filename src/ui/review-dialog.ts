@@ -2,7 +2,7 @@ import { el, icon } from "./dom";
 import type { DismissedVerdict } from "../core/reviewers";
 import type { ReviewEvent } from "../core/shortcuts";
 
-export type ReviewDialogRequest = SubmitRequest | DismissRequest;
+export type ReviewDialogRequest = SubmitRequest | DismissRequest | NudgeRequest;
 
 interface SubmitRequest {
   event: ReviewEvent;
@@ -27,13 +27,35 @@ interface DismissRequest {
   submit: (reason: string) => Promise<string | null>;
 }
 
-const COPY: Record<ReviewEvent | "DISMISS", { title: string; action: string; busy: string }> = {
+interface NudgeRequest {
+  event: "NUDGE";
+  reviewer: string;
+  /** The comment as composed, which the viewer may edit. */
+  body: string;
+  /** Whether posting it also asks the reviewer to review again. */
+  rerequest: boolean;
+  /**
+   * Posts the comment.
+   * @returns An error message to show, or null on success.
+   */
+  submit: (body: string) => Promise<string | null>;
+}
+
+type DialogEvent = ReviewDialogRequest["event"];
+
+const COPY: Record<DialogEvent, { title: string; action: string; busy: string }> = {
   APPROVE: { title: "Approve", action: "Approve", busy: "Approving…" },
   REQUEST_CHANGES: { title: "Request changes on", action: "Request changes", busy: "Requesting changes…" },
   DISMISS: { title: "Dismiss", action: "Dismiss review", busy: "Dismissing…" },
+  NUDGE: { title: "Ask", action: "Post and ask", busy: "Posting…" },
 };
 
-const GLYPH: Record<ReviewEvent | "DISMISS", "check" | "changes" | "slash"> = { APPROVE: "check", REQUEST_CHANGES: "changes", DISMISS: "slash" };
+const GLYPH: Record<DialogEvent, "check" | "changes" | "slash" | "comment"> = {
+  APPROVE: "check",
+  REQUEST_CHANGES: "changes",
+  DISMISS: "slash",
+  NUDGE: "comment",
+};
 
 const DISMISSED_NAME: Record<DismissedVerdict, string> = { approved: "approval", changes_requested: "change request" };
 
@@ -50,6 +72,8 @@ const DIALOG_STYLES = `
   --rd-approve-fg: var(--button-primary-fgColor-rest, #ffffff);
   --rd-changes-bg: var(--button-danger-bgColor-hover, #cf222e);
   --rd-changes-fg: var(--button-danger-fgColor-hover, #ffffff);
+  --rd-nudge-bg: var(--bgColor-accent-emphasis, #0969da);
+  --rd-nudge-fg: var(--fgColor-onEmphasis, #ffffff);
   font: 14px/1.5 var(--fontStack-sansSerif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif);
   color: var(--rd-fg);
 }
@@ -74,6 +98,7 @@ h2 { margin: 0; font-size: 16px; }
 .glyph svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 .glyph[data-event="APPROVE"] { background: var(--bgColor-success-muted, #dafbe1); color: var(--fgColor-success, #1a7f37); }
 .glyph[data-event="REQUEST_CHANGES"] { background: var(--bgColor-attention-muted, #fff8c5); color: var(--fgColor-attention, #9a6700); }
+.glyph[data-event="NUDGE"] { background: var(--bgColor-accent-muted, #ddf4ff); color: var(--fgColor-accent, #0969da); }
 .glyph[data-event="DISMISS"] { background: var(--bgColor-neutral-muted, #818b981f); color: var(--rd-muted); }
 kbd { padding: 0 5px; border: 1px solid var(--rd-border); border-bottom-width: 2px; border-radius: 4px; font: 11px/16px var(--fontStack-monospace, ui-monospace, monospace); }
 label { font-weight: 600; }
@@ -106,11 +131,50 @@ button {
   cursor: pointer;
 }
 button.submit[data-event="APPROVE"] { border-color: transparent; background: var(--rd-approve-bg); color: var(--rd-approve-fg); }
+button.submit[data-event="NUDGE"] { border-color: transparent; background: var(--rd-nudge-bg); color: var(--rd-nudge-fg); }
 button.submit:is([data-event="REQUEST_CHANGES"], [data-event="DISMISS"]) { border-color: transparent; background: var(--rd-changes-bg); color: var(--rd-changes-fg); }
 button:disabled { cursor: not-allowed; opacity: 0.6; }
 :focus-visible { outline: 2px solid var(--rd-focus); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { dialog[open] { animation: none; } }
 `;
+
+/**
+ * @param request What the dialog submits.
+ * @returns Its title.
+ */
+function titleFor(request: ReviewDialogRequest): string {
+  switch (request.event) {
+    case "DISMISS": {
+      return `${COPY.DISMISS.title} ${request.reviewer}'s ${DISMISSED_NAME[request.verdict]}`;
+    }
+    case "NUDGE": {
+      return `Ask ${request.reviewer} to look again`;
+    }
+    case "APPROVE":
+    case "REQUEST_CHANGES": {
+      return `${COPY[request.event].title} #${request.number}`;
+    }
+  }
+}
+
+/**
+ * @param request What the dialog submits.
+ * @returns The line under the text box, until a review's pending comments are counted.
+ */
+function hintFor(request: ReviewDialogRequest): string {
+  switch (request.event) {
+    case "DISMISS": {
+      return `GitHub posts the reason on the pull request and notifies ${request.reviewer}.`;
+    }
+    case "NUDGE": {
+      return `Posts this comment on the pull request, which notifies ${request.reviewer}${request.rerequest ? ", and asks them to review again" : ""}.`;
+    }
+    case "APPROVE":
+    case "REQUEST_CHANGES": {
+      return "Checking for pending comments…";
+    }
+  }
+}
 
 /**
  * A modal for approving or requesting changes with a comment, submitting any pending review, or for dismissing
@@ -146,33 +210,29 @@ export class ReviewDialog {
     const copy = COPY[request.event];
     const form = el("form", { method: "dialog" });
     const dismissing = request.event === "DISMISS";
+    const nudging = request.event === "NUDGE";
+    // A dismissal needs its reason and a nudge its comment; a review's comment is optional.
+    const required = dismissing || nudging;
     const label = el("label", { for: "review-body" }, dismissing ? "Reason" : "Comment ");
-    if (!dismissing) label.append(el("span", { class: "optional" }, "(optional)"));
+    if (!required) label.append(el("span", { class: "optional" }, "(optional)"));
     const body = el("textarea", {
       id: "review-body",
-      rows: "6",
+      rows: nudging ? "8" : "6",
       placeholder: dismissing ? "Why the review no longer applies" : "Leave a comment",
-      ...(dismissing && { required: "" }),
+      ...(required && { required: "" }),
     });
-    const hint = el(
-      "p",
-      { class: "hint", "aria-live": "polite" },
-      dismissing
-        ? `GitHub posts the reason on the pull request and notifies ${request.reviewer}.`
-        : "Checking for pending comments…",
-    );
+    if (nudging) body.value = request.body;
+    const hint = el("p", { class: "hint", "aria-live": "polite" }, hintFor(request));
     const error = el("p", { class: "error", role: "alert" });
     const cancel = el("button", { type: "button" }, "Cancel");
     const submit = el("button", { type: "submit", class: "submit", "data-event": request.event }, copy.action);
-    const blank = () => dismissing && body.value.trim() === "";
+    const blank = () => required && body.value.trim() === "";
     submit.disabled = blank();
     const actions = el("div", { class: "actions" });
     const keys = el("span", { class: "keys" });
     keys.append(el("kbd", {}, "⌘↵"), " to submit · ", el("kbd", {}, "Esc"), " to cancel");
     actions.append(keys, cancel, submit);
-    const title = dismissing
-      ? `${copy.title} ${request.reviewer}'s ${DISMISSED_NAME[request.verdict]}`
-      : `${copy.title} #${request.number}`;
+    const title = titleFor(request);
     const titleRow = el("div", { class: "title-row" });
     const glyph = el("span", { class: "glyph", "data-event": request.event, "aria-hidden": "true" });
     glyph.append(icon(GLYPH[request.event]));
@@ -214,9 +274,10 @@ export class ReviewDialog {
       if (form.getAttribute("aria-busy") !== "true") submit.disabled = blank();
     });
 
-    if (request.event !== "DISMISS") void this.showPending(request, hint, run);
+    if (request.event !== "DISMISS" && request.event !== "NUDGE") void this.showPending(request, hint, run);
     if (!this.dialog.open) this.dialog.showModal();
     body.focus();
+    if (nudging) body.setSelectionRange(0, 0);
   }
 
   private async showPending(request: SubmitRequest, hint: HTMLElement, run: number): Promise<void> {

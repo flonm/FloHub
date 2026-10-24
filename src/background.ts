@@ -9,6 +9,7 @@ import {
   fetchViewedFiles,
   GitHubError,
   pokeReviewer,
+  postComment,
   readToken,
   rerequestReview,
   runReviewAction,
@@ -69,6 +70,10 @@ async function handle(message: Message): Promise<Reply<ReplyByType[Message["type
       }
       case "dismiss-review": {
         await dismissReview(message.reviewId, message.message);
+        return { ok: true, value: null };
+      }
+      case "post-comment": {
+        await postComment(message.ref, message.body);
         return { ok: true, value: null };
       }
       case "rerequest": {

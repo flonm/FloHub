@@ -8,11 +8,26 @@ import { NOW, pull, stack } from "./shadow";
 
 const HOUR = 3_600_000;
 
+/** @returns The pull request's version of that number, the fourth one current. */
+function version(number: number): Version {
+  return {
+    oid: String(number).repeat(7),
+    number,
+    at: new Date(NOW - (5 - number) * HOUR).toISOString(),
+    pushedBy: null,
+    reviewedBy: [],
+    viewerLatestReview: false,
+    current: number === 4,
+  };
+}
+
 const NOOP: BarActions = {
   refresh: () => undefined,
   rerequest: () => undefined,
   poke: () => undefined,
   dismiss: () => undefined,
+  showUnseen: () => undefined,
+  nudge: () => undefined,
   openOptions: () => undefined,
   toggleStack: () => undefined,
   toggleMerged: () => undefined,
@@ -233,6 +248,19 @@ export const InlineYourTurn: Story = {
         turn: { whose: "you", reasons: [{ code: "checks-failed" }, { code: "replies", count: 2 }, { code: "ask-again", who: ["ada"] }] },
         repliesFor: new Map([["mona", 2]]),
         progress: { changed: 3, replied: 1, untouched: 2 },
+      }),
+    ),
+};
+
+/** tizian approved v2 and mona requested changes on v1; the pull request is at v4 now. */
+export const InlineStaleVerdicts: Story = {
+  render: () =>
+    interactive(
+      ready({
+        standings: new Map([
+          ["tizian", { verdict: "approved", version: version(2), current: version(4), behind: 2 }],
+          ["mona", { verdict: "changes_requested", version: version(1), current: version(4), behind: 3 }],
+        ]),
       }),
     ),
 };
