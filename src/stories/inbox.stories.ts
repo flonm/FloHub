@@ -3,6 +3,7 @@ import type { Inbox, InboxGroup, InboxPull } from "../core/inbox";
 import { el } from "../ui/dom";
 import { type InboxViewActions, type InboxViewState, renderInbox, type SectionKind } from "../ui/inbox-view";
 import { inPopup, NOW } from "./shadow";
+import { NO_MARKS, setSnooze, snoozeFor, togglePin } from "../core/inbox-marks";
 
 const MINUTE = 60_000;
 const HOUR = 3_600_000;
@@ -167,8 +168,10 @@ function ready(overrides: Partial<Inbox> = {}): Inbox {
  */
 function mount(state: Omit<InboxViewState, "collapsed">, initial: SectionKind[] = []): HTMLElement {
   const collapsed = new Set<SectionKind>(initial);
+  const showSnoozed = new Set<SectionKind>();
+  let marks = state.marks ?? NO_MARKS;
   const box = el("div");
-  const draw = () => box.replaceChildren(...renderInbox({ ...state, collapsed }, actions));
+  const draw = () => box.replaceChildren(...renderInbox({ ...state, collapsed, marks, showSnoozed, now: NOW }, actions));
   const actions: InboxViewActions = {
     openPull: () => undefined,
     focusRow: () => undefined,
@@ -178,6 +181,19 @@ function mount(state: Omit<InboxViewState, "collapsed">, initial: SectionKind[] 
       draw();
     },
     hideTeamRequests: () => undefined,
+    togglePin: (url) => {
+      marks = togglePin(marks, url);
+      draw();
+    },
+    snooze: (snoozed, preset) => {
+      marks = setSnooze(marks, snoozed.url, preset ? snoozeFor(preset, new Date(NOW), snoozed) : null);
+      draw();
+    },
+    toggleSnoozed: (kind) => {
+      if (showSnoozed.has(kind)) showSnoozed.delete(kind);
+      else showSnoozed.add(kind);
+      draw();
+    },
     retryRefresh: () => undefined,
     openSettings: () => undefined,
   };
@@ -259,6 +275,22 @@ export const EveryStatus: Story = {
         mine: [],
       }),
       problem: null,
+    }),
+};
+
+/** A pinned stack sorts first in its section; two snoozed pull requests hide behind "Show 2 snoozed". Hover a row for its pin and snooze buttons. */
+export const PinnedAndSnoozed: Story = {
+  render: () =>
+    mount({
+      inbox: ready(),
+      problem: null,
+      marks: {
+        pinned: [MINE[0]?.pulls[1]?.url ?? ""],
+        snoozed: {
+          [REVIEW.pulls[2]?.url ?? ""]: { until: NOW + HOUR },
+          [WAITING[0]?.pulls[0]?.url ?? ""]: { afterActivity: WAITING[0]?.pulls[0]?.lastActivity ?? "" },
+        },
+      },
     }),
 };
 

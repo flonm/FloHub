@@ -73,3 +73,4 @@ describe("isFresh", () => {
     expect(isFresh(inbox, inbox.fetchedAt)).toBe(false);
   });
 });
+

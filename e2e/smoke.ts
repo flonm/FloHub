@@ -1625,9 +1625,10 @@ await floatingBar(page).locator(".pill").waitFor({ state: "visible" });
 check(await restoreTab.isHidden(), "the edge tab restores the floating pill");
 
 await page.mouse.wheel(0, -5000);
+const rerequestsBefore = fixture.rerequests.length;
 await inlineBar(page).getByRole("button", { name: "Re-request review from defunkt" }).click();
 await inlineBar(page).locator(".reviewer[data-waiting]", { hasText: "defunkt" }).waitFor();
-check(fixture.rerequests.join(",") === "defunkt", "re-request posts only defunkt to requested_reviewers");
+check(fixture.rerequests.slice(rerequestsBefore).join(",") === "defunkt", "re-request posts only defunkt to requested_reviewers");
 
 await page.getByRole("link", { name: /Conversation/u }).first().click();
 await page.waitForURL(/\/pull\/\d+$/u);
@@ -1900,6 +1901,45 @@ for (const scheme of ["light", "dark"] as const) {
       "Enter switches to a tab that already shows the pull request and closes the popup",
     );
     await existing.close();
+
+    const rowOf = (number: number) => popup.locator(".layer", { hasText: `#${number} ` });
+    const titles = async () => popup.locator(".pull .number").allTextContents();
+    await rowOf(120).hover();
+    await rowOf(120).getByRole("button", { name: "Pin to the top" }).click();
+    await rowOf(120).locator(".pin-mark").waitFor();
+    const pinnedOrder = await titles();
+    const storedMarks = await inboxContext.serviceWorkers()[0]?.evaluate(async () => (await chrome.storage.local.get("inboxMarks")).inboxMarks);
+    check(
+      pinnedOrder[0]?.trim() === "#77" && pinnedOrder[1]?.trim() === "#120" && JSON.stringify(storedMarks).includes("/pull/120"),
+      `a pinned pull request sorts first in its section, and the pin is stored: ${pinnedOrder.join(",")}`,
+    );
+    await rowOf(121).locator(".pull").focus();
+    await popup.keyboard.press("s");
+    await rowOf(121).getByRole("menuitem", { name: "For an hour" }).waitFor();
+    check(
+      (await popup.evaluate(() => document.activeElement?.textContent)) === "For an hour",
+      "s opens the focused row's snooze menu, on its first choice",
+    );
+    await popup.keyboard.press("Enter");
+    await rowOf(121).waitFor({ state: "detached" });
+    const snoozedToggle = popup.getByRole("button", { name: "Show 1 snoozed" });
+    check(
+      (await snoozedToggle.count()) === 1 && (await popup.getByRole("button", { name: /^Your turn/u }).textContent()) === "Your turn4",
+      "a snoozed pull request leaves its section, which counts it out and offers to show it",
+    );
+    let snoozedBadge = "";
+    for (let tries = 0; tries < 50 && snoozedBadge !== "5"; tries++) {
+      await popup.waitForTimeout(100);
+      snoozedBadge = (await badgeText(inboxContext)) ?? "";
+    }
+    check(snoozedBadge === "5", `the badge leaves a snoozed pull request out: "${snoozedBadge}"`);
+    await snoozedToggle.click();
+    await rowOf(121).getByText("Snoozed", { exact: true }).waitFor();
+    await rowOf(121).hover();
+    await popup.screenshot({ path: `${SCREENSHOTS}/popup-marks-${scheme}.png` });
+    await rowOf(121).getByRole("button", { name: "Wake: show it again" }).click();
+    await popup.getByRole("button", { name: /snoozed$/u }).waitFor({ state: "detached" });
+    check((await rowOf(121).locator(".status", { hasText: "Snoozed" }).count()) === 0, "waking a snoozed pull request puts it back");
 
     const reviewToggle = popup.getByRole("button", { name: /^Your turn/u });
     await reviewToggle.click();

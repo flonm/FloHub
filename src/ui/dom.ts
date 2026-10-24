@@ -24,7 +24,9 @@ export type IconName =
   | "columns"
   | "wrap"
   | "target"
-  | "keyboard";
+  | "keyboard"
+  | "pin"
+  | "clock";
 
 type Shape = ["path", { d: string; class?: string }] | ["circle", { cx: string; cy: string; r: string; class?: string }];
 
@@ -59,6 +61,11 @@ const ICONS: Record<IconName, Shape[]> = {
     ["circle", { cx: "8", cy: "8", r: "5.25" }],
     ["circle", { cx: "8", cy: "8", r: "1.75", class: "fill" }],
     ["path", { d: "M8 1v2.25M8 12.75V15M1 8h2.25M12.75 8H15" }],
+  ],
+  pin: [["path", { d: "M5.75 2.25h4.5M7 2.25v3.5L4.75 9.25h6.5L9 5.75v-3.5M8 9.25v4.5" }]],
+  clock: [
+    ["circle", { cx: "8", cy: "8", r: "6.25" }],
+    ["path", { d: "M8 4.5V8l2.5 1.75" }],
   ],
   wrap: [["path", { d: "M2.25 4h11.5M2.25 8h9.25a2.25 2.25 0 0 1 0 4.5H8.5M10 11 8.5 12.5 10 14M2.25 12.5H5.5" }]],
   slash: [
