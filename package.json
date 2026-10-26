@@ -15,6 +15,7 @@
     "lint:firefox": "bun run build:firefox && web-ext lint --self-hosted --source-dir dist-firefox",
     "sign:firefox": "bun run build:firefox && mkdir -p web-ext-artifacts && git archive --format zip --output web-ext-artifacts/source.zip HEAD && web-ext sign --source-dir dist-firefox --channel unlisted --upload-source-code web-ext-artifacts/source.zip",
     "e2e": "bun run build && bun e2e/smoke.ts",
+    "screenshots": "README_SHOTS=docs/screenshots bun run e2e",
     "storybook": "storybook dev -p 6008 --no-open",
     "build-storybook": "storybook build",
     "prepare": "husky",
