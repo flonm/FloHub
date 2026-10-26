@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type DockItem, magnify, quietRuns, runWidth } from "./timeline-dock";
+import { type DockItem, expand, quietRuns, runWidth } from "./timeline-dock";
 
 describe("quietRuns", () => {
   test("gives every version outside the notable ones the length of its run", () => {
@@ -15,36 +15,34 @@ describe("runWidth", () => {
   });
 });
 
-describe("magnify", () => {
-  // Ten tiny versions of 2px, then a reviewed one that never grows.
+describe("expand", () => {
+  // The base at 10px, then ten tiny versions of 2px, then a reviewed one of 30px.
   const items: DockItem[] = [
-    ...Array.from({ length: 10 }, (_, index) => ({ left: index * 2, width: 2, zoom: 12 })),
-    { left: 20, width: 30, zoom: 30 },
+    { left: 0, width: 10, fixed: false },
+    ...Array.from({ length: 10 }, (_, index) => ({ left: 10 + index * 2, width: 2, fixed: false })),
+    { left: 30, width: 30, fixed: true },
   ];
+  const plenty = { before: 500, after: 500 };
 
-  test("grows the versions under the pointer to their zoom, those further off less, and a reviewed one not at all", () => {
-    const { widths } = magnify(items, 9);
-    expect(widths[4]).toBeGreaterThan(11.9);
-    expect(widths[0]).toBeLessThan(widths[3]!);
-    expect(widths[0]).toBeGreaterThan(2);
-    expect(widths[10]).toBe(30);
+  test("gives every version a 14px target at once, and a reviewed slot keeps its width", () => {
+    const { widths } = expand(items, 15, plenty);
+    expect(widths).toEqual([14, ...Array.from({ length: 10 }, () => 14), 30]);
   });
 
-  test("moves the strip back by what grew left of the pointer, so the version under it stays there", () => {
-    const x = 9;
-    const { widths, shift } = magnify(items, x);
-    let left = -shift;
-    const under = widths.findIndex((width) => {
-      const hit = x >= left && x < left + width;
-      left += width;
-      return hit;
-    });
-    expect(under).toBe(4);
+  test("moves the strip so the version under the pointer, at the same point on it, stays under the pointer", () => {
+    // 15 is the middle of the third tiny version (index 3, 14 to 16 at rest).
+    const { widths, shift } = expand(items, 15, plenty);
+    const left = widths.slice(0, 3).reduce((sum, width) => sum + width, 0) - shift;
+    expect(15 - left).toBeCloseTo(7);
   });
 
-  test("leaves the strip as it is with the pointer far away", () => {
-    const { widths, shift } = magnify(items, 400);
-    expect(widths.map((width) => Math.round(width))).toEqual(items.map((item) => item.width));
-    expect(shift).toBeLessThan(0.001);
+  test("stays inside the view: no further left than its start allows, nor further right than its end does", () => {
+    expect(expand(items, 59, { before: 20, after: 500 }).shift).toBe(20);
+    // Open, the strip is 184px against 60px at rest; with no room after it, it moves left by all it grew.
+    expect(expand(items, 1, { before: 500, after: 0 }).shift).toBe(124);
+  });
+
+  test("holds still: the same pointer gives the same strip, so nothing moves while aiming", () => {
+    expect(expand(items, 15, plenty)).toEqual(expand(items, 15, plenty));
   });
 });

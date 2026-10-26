@@ -272,7 +272,8 @@ header .tool[aria-checked="true"] { font-weight: 600; }
 /*
  * The timeline: a slot with faces for each version someone reviewed, a tick for the base, the compared ends, the head
  * and the viewer's last review, and a small pill for each run of the other versions, saying how many it holds.
- * Hovering magnifies it like the macOS dock; it floats over the pickers beside it while it does.
+ * Hovering opens it: every version gets a target wide enough to hit, and the strip floats over the pickers beside it
+ * and holds still until the pointer leaves.
  */
 .timeline {
   position: relative;
@@ -285,13 +286,15 @@ header .tool[aria-checked="true"] { font-weight: 600; }
   padding: 0 2px;
   border-radius: 8px;
   list-style: none;
-  transition: background 120ms ease, box-shadow 120ms ease;
+  transition: background 120ms ease, box-shadow 120ms ease, transform 120ms ease;
 }
 .timeline.zoomed { z-index: 3; background: var(--vd-bg); box-shadow: 0 0 0 1px var(--vd-border), 0 6px 16px rgba(31, 35, 40, 0.16); }
-.timeline li { position: relative; display: flex; flex: none; align-items: center; justify-content: center; width: ${NOTABLE_WIDTH + 2}px; height: 100%; }
+.timeline li { position: relative; display: flex; flex: none; align-items: center; justify-content: center; width: ${NOTABLE_WIDTH + 2}px; height: 100%; transition: width 120ms ease; }
 .timeline li > button { width: calc(100% - 2px); }
 .timeline li.quiet { width: var(--rest); }
 .timeline li.quiet > button { width: max(1px, calc(100% - 1px)); }
+/* Open, a version's button fills its whole slot, the gap between them drawn but clickable, so no aim falls through. */
+.timeline.zoomed li:not(.reviewed) > button { width: 100%; padding: 0 1px; background-clip: content-box; }
 .run-count {
   position: absolute;
   top: 50%;
@@ -578,7 +581,7 @@ details.unchanged > summary { color: var(--vd-muted); cursor: pointer; }
 details.unchanged ul { margin: 6px 0 0; padding-left: 20px; font: 12px/20px var(--vd-mono); color: var(--vd-muted); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; user-select: none; }
 ${THREAD_STYLES}
-@media (prefers-reduced-motion: reduce) { .chevron, .files .folder svg { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .chevron, .files .folder svg, .timeline, .timeline li { transition: none; } }
 `;
 
 /** How long after docking the view keeps scrolling to its sticky place while the page above it grows. */
@@ -1181,7 +1184,7 @@ const MAX_FACES = 3;
 /**
  * Draws the timeline: a slot with faces for each version someone reviewed, a tick for the base, the compared ends, the
  * head and the viewer's last review, and a small pill for each run of the other versions, saying how many it holds.
- * Hovering magnifies it like the macOS dock, so any version of a long run can be picked.
+ * Hovering opens it, all at once and then still, so any version of a long run can be picked.
  * @param list The timeline.
  * @param versions Oldest first.
  * @param range The compared versions.
