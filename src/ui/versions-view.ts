@@ -36,7 +36,7 @@ import { renderComposer, renderThread, THREAD_STYLES, type ThreadActions, thread
 import { renderRichText } from "../core/rich-text";
 import { type ProgressBasis, type ThreadProgress, threadProgress } from "../core/addressed";
 import { standingVerdict, unseenRange } from "../core/since-review";
-import { magnifierOf, NOTABLE_WIDTH, quietRuns, runWidth } from "./timeline-dock";
+import { foldedRuns, runPitch, runWidth, TICK_WIDTH } from "./timeline-runs";
 import { type JumpTarget, threadElsewhere } from "../core/comment-jump";
 import { type SplitSide, splitRows } from "../core/split";
 import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
@@ -271,9 +271,7 @@ header .tool[aria-checked="true"] { font-weight: 600; }
 .verdict-inline[data-tone="muted"] { color: var(--vd-muted); }
 /*
  * The timeline: a slot with faces for each version someone reviewed, a tick for the base, the compared ends, the head
- * and the viewer's last review, and a small pill for each run of the other versions, saying how many it holds.
- * Hovering opens it: every version gets a target wide enough to hit, and the strip floats over the pickers beside it
- * and holds still until the pointer leaves.
+ * and the viewer's last review, and a folded block for each longer run of the other versions.
  */
 .timeline {
   position: relative;
@@ -286,38 +284,26 @@ header .tool[aria-checked="true"] { font-weight: 600; }
   padding: 0 2px;
   border-radius: 8px;
   list-style: none;
-  transition: background 120ms ease, box-shadow 120ms ease, transform 120ms ease;
 }
-.timeline.zoomed { z-index: 3; background: var(--vd-bg); box-shadow: 0 0 0 1px var(--vd-border), 0 6px 16px rgba(31, 35, 40, 0.16); }
-.timeline li { position: relative; display: flex; flex: none; align-items: center; justify-content: center; width: ${NOTABLE_WIDTH + 2}px; height: 100%; transition: width 120ms ease; }
+.timeline li { position: relative; display: flex; flex: none; align-items: center; justify-content: center; width: ${TICK_WIDTH}px; height: 100%; }
 .timeline li > button { width: calc(100% - 2px); }
-.timeline li.quiet { width: var(--rest); }
-.timeline li.quiet > button { width: max(1px, calc(100% - 1px)); }
-/* Open, a version's button fills its whole slot, the gap between them drawn but clickable, so no aim falls through. */
-.timeline.zoomed li:not(.reviewed) > button { width: 100%; padding: 0 1px; background-clip: content-box; }
-.run-count {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  z-index: 1;
-  height: 16px;
-  border-radius: 8px;
-  background: var(--vd-bg-muted);
-  box-shadow: inset 0 0 0 1px var(--vd-border);
-  color: var(--vd-muted);
-  font: 600 10px/16px var(--vd-sans, inherit);
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-  pointer-events: none;
-  transform: translateY(-50%);
-  transition: opacity 120ms ease;
+/*
+ * A run of versions nobody reviewed, folded: one hairline a version as far as they fit, so a short run can be counted
+ * and a long one turns dense. A click shows its versions.
+ */
+.timeline li.run { width: calc(var(--run) + 4px); }
+.timeline li.run > button {
+  width: var(--run);
+  height: 14px;
+  border-radius: 3px;
+  background: repeating-linear-gradient(90deg, var(--vd-muted) 0 1px, transparent 1px var(--pitch)) center / 100% 10px no-repeat;
+  opacity: 0.75;
+  cursor: zoom-in;
 }
-.timeline li.in .run-count {
-  background: color-mix(in srgb, var(--vd-accent) 18%, var(--vd-bg));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vd-accent) 45%, transparent);
-  color: var(--vd-accent);
-}
-.timeline.zoomed .run-count { opacity: 0; }
+.timeline li.run.in > button { background-image: repeating-linear-gradient(90deg, var(--vd-accent) 0 1px, transparent 1px var(--pitch)); }
+.timeline li.run > button:hover { background-color: var(--vd-bg-muted); opacity: 1; }
+/* Unfolded, its versions sit on a faint band that says they belong together. */
+.timeline li.unfolded { background: linear-gradient(var(--vd-bg-muted), var(--vd-bg-muted)) center / 100% 16px no-repeat; }
 .timeline li.reviewed { width: calc(24px + (var(--faces, 1) - 1) * 10px); }
 .timeline button {
   position: relative;
@@ -581,7 +567,7 @@ details.unchanged > summary { color: var(--vd-muted); cursor: pointer; }
 details.unchanged ul { margin: 6px 0 0; padding-left: 20px; font: 12px/20px var(--vd-mono); color: var(--vd-muted); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; user-select: none; }
 ${THREAD_STYLES}
-@media (prefers-reduced-motion: reduce) { .chevron, .files .folder svg, .timeline, .timeline li { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .chevron, .files .folder svg { transition: none; } }
 `;
 
 /** How long after docking the view keeps scrolling to its sticky place while the page above it grows. */
@@ -1030,6 +1016,8 @@ export class VersionsView {
         link.append(icon("external"));
         const timeline = el("ol", { class: "timeline", "aria-hidden": "true" });
         let focus: string | null = null;
+        /** The runs of versions nobody reviewed the viewer unfolded, by their first version, until the next pick. */
+        const unfolded = new Set<number>();
         const picked = () => {
           if (!history) return;
           const remembered = rangeToSave(history.versions, Number(from.value), Number(to.value), Date.now());
@@ -1044,9 +1032,18 @@ export class VersionsView {
           showUnseen(unseen, focus, history.versions, limits);
           from.disable((value) => outOfOrder("from", Number(value), limits));
           to.disable((value) => outOfOrder("to", Number(value), limits));
-          renderTimeline(timeline, history.versions, limits, focus, Date.now(), (version, newer) => {
+          const folds = {
+            open: unfolded,
+            unfold: (first: number) => {
+              unfolded.add(first);
+              refresh();
+            },
+          };
+          renderTimeline(timeline, history.versions, limits, focus, Date.now(), folds, (version, newer) => {
             const moved = pickOnTimeline({ from: Number(from.value), to: Number(to.value) }, version, newer);
             if (!moved) return;
+            // Picked, the runs fold up again around the new range.
+            unfolded.clear();
             from.value = String(moved.from);
             to.value = String(moved.to);
             changed();
@@ -1183,13 +1180,14 @@ const MAX_FACES = 3;
 
 /**
  * Draws the timeline: a slot with faces for each version someone reviewed, a tick for the base, the compared ends, the
- * head and the viewer's last review, and a small pill for each run of the other versions, saying how many it holds.
- * Hovering opens it, all at once and then still, so any version of a long run can be picked.
+ * head, the viewer's last review and each version of a short run, and one block of hairlines for each longer run of
+ * versions nobody reviewed, a hairline a version as far as they fit. A click on a block shows its versions.
  * @param list The timeline.
  * @param versions Oldest first.
  * @param range The compared versions.
  * @param focus The reviewer followed, or null for everyone.
  * @param now The current time.
+ * @param folds Which runs the viewer unfolded, by their first version, and how to unfold another.
  * @param pick Called with a clicked version, and whether to make it the newer side.
  */
 function renderTimeline(
@@ -1198,6 +1196,7 @@ function renderTimeline(
   range: { from: number; to: number },
   focus: string | null,
   now: number,
+  folds: { open: ReadonlySet<number>; unfold: (first: number) => void },
   pick: (version: number, newer: boolean) => void,
 ): void {
   const entries = [
@@ -1208,38 +1207,59 @@ function renderTimeline(
     ({ number, version, reviews }) =>
       number === 0 || reviews.length > 0 || number === range.from || number === range.to || version?.current === true || version?.viewerLatestReview === true,
   );
-  const runs = quietRuns(notable);
-  list.replaceChildren(
-    ...entries.map(({ number, tip, version, reviews }, index) => {
-      const classes = [number === 0 ? "base" : ""];
-      if (number === range.from || number === range.to) classes.push("end");
-      else if (number > range.from && number < range.to) classes.push("in");
-      if (version?.viewerLatestReview) classes.push("review");
-      if (reviews.length > 0) classes.push("reviewed");
-      const run = runs[index] ?? null;
-      if (run !== null) classes.push("quiet");
-      const item = el("li", { class: classes.filter(Boolean).join(" ") });
-      const said = reviews.map((review) => saidOf(review)).join(", ");
-      const button = el("button", { type: "button", tabindex: "-1", "data-tip": said ? `${tip}. ${said}` : tip });
-      if (reviews.length > 0) {
-        item.style.setProperty("--faces", String(Math.min(reviews.length, MAX_FACES)));
-        for (const review of reviews.slice(0, MAX_FACES)) button.append(verdictFace(review));
-      }
-      if (run !== null) {
-        item.style.setProperty("--rest", `${runWidth(run) / run}px`);
-        // The run's first version carries the pill that says how many versions it holds.
-        if (run >= 3 && runs[index - 1] === null) {
-          const count = el("span", { class: "run-count", "aria-hidden": "true" }, String(run));
-          count.style.width = `${runWidth(run)}px`;
-          item.append(count);
-        }
-      }
-      button.addEventListener("click", (event) => pick(number, event.shiftKey));
-      item.prepend(button);
-      return item;
-    }),
-  );
-  magnifierOf(list).refresh();
+  const runs = foldedRuns(notable);
+  const items: HTMLElement[] = [];
+  for (const [index, { number, tip, version, reviews }] of entries.entries()) {
+    const run = runs[index] ?? null;
+    const offset = run === null ? 0 : runStart(runs, index);
+    if (run !== null && !folds.open.has(entries[index - offset]?.number ?? number)) {
+      if (offset === 0) items.push(foldedRun(entries.slice(index, index + run).map((entry) => entry.number), range, folds.unfold));
+      continue;
+    }
+    const classes = [number === 0 ? "base" : ""];
+    if (number === range.from || number === range.to) classes.push("end");
+    else if (number > range.from && number < range.to) classes.push("in");
+    if (version?.viewerLatestReview) classes.push("review");
+    if (reviews.length > 0) classes.push("reviewed");
+    if (run !== null) classes.push("unfolded");
+    const item = el("li", { class: classes.filter(Boolean).join(" ") });
+    const said = reviews.map((review) => saidOf(review)).join(", ");
+    const button = el("button", { type: "button", tabindex: "-1", "data-tip": said ? `${tip}. ${said}` : tip });
+    if (reviews.length > 0) {
+      item.style.setProperty("--faces", String(Math.min(reviews.length, MAX_FACES)));
+      for (const review of reviews.slice(0, MAX_FACES)) button.append(verdictFace(review));
+    }
+    button.addEventListener("click", (event) => pick(number, event.shiftKey));
+    item.append(button);
+    items.push(item);
+  }
+  list.replaceChildren(...items);
+}
+
+/** @returns How many places back the folded run at the index starts. */
+function runStart(runs: readonly (number | null)[], index: number): number {
+  let start = index;
+  while (start > 0 && runs[start - 1] !== null) start--;
+  return index - start;
+}
+
+/**
+ * @param numbers The versions a run of versions nobody reviewed holds, oldest first.
+ * @param range The compared versions, which tint a run inside them.
+ * @param unfold Shows the run's versions, by its first one.
+ * @returns The run, folded into one block of hairlines.
+ */
+function foldedRun(numbers: number[], range: { from: number; to: number }, unfold: (first: number) => void): HTMLElement {
+  const first = numbers[0] ?? 0;
+  const last = numbers.at(-1) ?? first;
+  const item = el("li", { class: first > range.from && last < range.to ? "run in" : "run" });
+  item.style.setProperty("--run", `${runWidth(numbers.length)}px`);
+  item.style.setProperty("--pitch", `${runPitch(numbers.length)}px`);
+  const tip = `v${first} to v${last}: ${numbers.length} versions nobody reviewed. Click to show them.`;
+  const button = el("button", { type: "button", tabindex: "-1", "data-tip": tip });
+  button.addEventListener("click", () => unfold(first));
+  item.append(button);
+  return item;
 }
 
 /**

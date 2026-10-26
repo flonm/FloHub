@@ -382,7 +382,8 @@ export const Loading: Story = { render: () => view("loading") };
 
 /**
  * A long-lived layer of a busy stack: twenty-six versions, three of them reviewed. The reviewed ones keep their faces;
- * each run of the others is a small pill saying how many it holds. Hover the timeline to open it and pick any version.
+ * each run of the others folds into a block of hairlines, one a version as far as they fit. Click a block to show its
+ * versions.
  */
 export const LongHistory: Story = { render: () => view("long") };
 
