@@ -36,6 +36,7 @@ import { renderComposer, renderThread, THREAD_STYLES, type ThreadActions, thread
 import { renderRichText } from "../core/rich-text";
 import { type ProgressBasis, type ThreadProgress, threadProgress } from "../core/addressed";
 import { standingVerdict, unseenRange } from "../core/since-review";
+import { magnifierOf, NOTABLE_WIDTH, quietRuns, runWidth } from "./timeline-dock";
 import { type JumpTarget, threadElsewhere } from "../core/comment-jump";
 import { type SplitSide, splitRows } from "../core/split";
 import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
@@ -269,17 +270,57 @@ header .tool[aria-checked="true"] { font-weight: 600; }
 .verdict-inline[data-tone="attention"] { color: var(--vd-attention); }
 .verdict-inline[data-tone="muted"] { color: var(--vd-muted); }
 /*
- * The timeline: a tick for each version, and a wider slot for each version someone reviewed, with their faces and
- * each one's verdict. The ticks share what the faces leave of 200px, so a long history still fits.
+ * The timeline: a slot with faces for each version someone reviewed, a tick for the base, the compared ends, the head
+ * and the viewer's last review, and a small pill for each run of the other versions, saying how many it holds.
+ * Hovering magnifies it like the macOS dock; it floats over the pickers beside it while it does.
  */
-.timeline { display: flex; flex: none; align-items: center; gap: 2px; height: 26px; margin: 0; padding: 0 2px; list-style: none; }
-.timeline li { display: flex; align-items: center; width: var(--tick, 8px); height: 100%; }
-.timeline li.reviewed { width: calc(22px + (var(--faces, 1) - 1) * 10px); }
+.timeline {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: 26px;
+  margin: 0;
+  padding: 0 2px;
+  border-radius: 8px;
+  list-style: none;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.timeline.zoomed { z-index: 3; background: var(--vd-bg); box-shadow: 0 0 0 1px var(--vd-border), 0 6px 16px rgba(31, 35, 40, 0.16); }
+.timeline li { position: relative; display: flex; flex: none; align-items: center; justify-content: center; width: ${NOTABLE_WIDTH + 2}px; height: 100%; }
+.timeline li > button { width: calc(100% - 2px); }
+.timeline li.quiet { width: var(--rest); }
+.timeline li.quiet > button { width: max(1px, calc(100% - 1px)); }
+.run-count {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  z-index: 1;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--vd-bg-muted);
+  box-shadow: inset 0 0 0 1px var(--vd-border);
+  color: var(--vd-muted);
+  font: 600 10px/16px var(--vd-sans, inherit);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity 120ms ease;
+}
+.timeline li.in .run-count {
+  background: color-mix(in srgb, var(--vd-accent) 18%, var(--vd-bg));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vd-accent) 45%, transparent);
+  color: var(--vd-accent);
+}
+.timeline.zoomed .run-count { opacity: 0; }
+.timeline li.reviewed { width: calc(24px + (var(--faces, 1) - 1) * 10px); }
 .timeline button {
   position: relative;
   display: flex;
   align-items: center;
-  width: 100%;
+  flex: none;
   min-height: 0;
   height: 12px;
   padding: 0;
@@ -1136,19 +1177,17 @@ function comparedKey(history: VersionHistory, older: Version | null, newer: Vers
 
 /** The most faces a version's slot shows; its tooltip names the rest. */
 const MAX_FACES = 3;
-/** The width the timeline fits into. */
-const TIMELINE_WIDTH = 200;
 
 /**
- * Draws the versions as a strip from the base branch to the current head, the compared range filled in. A version
- * someone reviewed gets a wider slot with their faces, each with their verdict on it, so the versions worth
- * comparing stand out from the many nobody reviewed.
- * @param list The strip to fill.
+ * Draws the timeline: a slot with faces for each version someone reviewed, a tick for the base, the compared ends, the
+ * head and the viewer's last review, and a small pill for each run of the other versions, saying how many it holds.
+ * Hovering magnifies it like the macOS dock, so any version of a long run can be picked.
+ * @param list The timeline.
  * @param versions Oldest first.
- * @param range The compared range, 0 for the base branch.
- * @param focus The one reviewer to follow, or null for everyone.
+ * @param range The compared versions.
+ * @param focus The reviewer followed, or null for everyone.
  * @param now The current time.
- * @param pick Called with the version clicked, and whether Shift asked for the newer side.
+ * @param pick Called with a clicked version, and whether to make it the newer side.
  */
 function renderTimeline(
   list: HTMLElement,
@@ -1162,18 +1201,20 @@ function renderTimeline(
     { number: 0, tip: "Base: the newer version's own changes", version: null as Version | null, reviews: [] as ReturnType<typeof reviewsShown> },
     ...versions.map((version) => ({ number: version.number, tip: describeVersion(version, now), version, reviews: reviewsShown(version, focus) })),
   ];
-  const reviewed = entries.filter((entry) => entry.reviews.length > 0);
-  const room = TIMELINE_WIDTH - reviewed.reduce((width, entry) => width + slotWidth(entry.reviews.length) + 2, 0);
-  const plain = Math.max(entries.length - reviewed.length, 1);
-  const tick = Math.floor(room / plain) - 2;
-  list.style.setProperty("--tick", `${Math.max(2, Math.min(10, tick))}px`);
+  const notable = entries.map(
+    ({ number, version, reviews }) =>
+      number === 0 || reviews.length > 0 || number === range.from || number === range.to || version?.current === true || version?.viewerLatestReview === true,
+  );
+  const runs = quietRuns(notable);
   list.replaceChildren(
-    ...entries.map(({ number, tip, version, reviews }) => {
+    ...entries.map(({ number, tip, version, reviews }, index) => {
       const classes = [number === 0 ? "base" : ""];
       if (number === range.from || number === range.to) classes.push("end");
       else if (number > range.from && number < range.to) classes.push("in");
       if (version?.viewerLatestReview) classes.push("review");
       if (reviews.length > 0) classes.push("reviewed");
+      const run = runs[index] ?? null;
+      if (run !== null) classes.push("quiet");
       const item = el("li", { class: classes.filter(Boolean).join(" ") });
       const said = reviews.map((review) => saidOf(review)).join(", ");
       const button = el("button", { type: "button", tabindex: "-1", "data-tip": said ? `${tip}. ${said}` : tip });
@@ -1181,11 +1222,21 @@ function renderTimeline(
         item.style.setProperty("--faces", String(Math.min(reviews.length, MAX_FACES)));
         for (const review of reviews.slice(0, MAX_FACES)) button.append(verdictFace(review));
       }
+      if (run !== null) {
+        item.style.setProperty("--rest", `${runWidth(run) / run}px`);
+        // The run's first version carries the pill that says how many versions it holds.
+        if (run >= 3 && runs[index - 1] === null) {
+          const count = el("span", { class: "run-count", "aria-hidden": "true" }, String(run));
+          count.style.width = `${runWidth(run)}px`;
+          item.append(count);
+        }
+      }
       button.addEventListener("click", (event) => pick(number, event.shiftKey));
-      item.append(button);
+      item.prepend(button);
       return item;
     }),
   );
+  magnifierOf(list).refresh();
 }
 
 /**
@@ -1197,13 +1248,6 @@ function saidOf(review: VersionReview): string {
   return review.dismissed && review.verdict !== "dismissed" ? `${said}, since dismissed` : said;
 }
 
-/**
- * @param faces How many reviewers a version's slot shows.
- * @returns The slot's width in pixels, its faces overlapping.
- */
-function slotWidth(faces: number): number {
-  return 22 + (Math.min(faces, MAX_FACES) - 1) * 10;
-}
 
 /**
  * A toolbar switch, for a setting of the view.

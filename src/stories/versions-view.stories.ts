@@ -219,6 +219,33 @@ const MANY_PATCHES: Record<string, VersionPatch> = Object.fromEntries(
   ]),
 );
 
+/**
+ * @returns Twenty-six versions, most of them stack maintenance nobody reviewed, as a long-lived layer of a busy stack
+ * collects them; a change request on v4, the viewer's comment on v12, an approval on v19.
+ */
+function longHistory(): VersionHistory {
+  const reviews: Record<number, Version["reviews"]> = {
+    4: [{ login: "octocat", avatarUrl: OCTOCAT, verdict: "changes_requested" }],
+    12: [{ login: "tizian", avatarUrl: null, verdict: "commented" }],
+    19: [
+      { login: "octocat", avatarUrl: OCTOCAT, verdict: "approved" },
+      { login: "mona", avatarUrl: null, verdict: "approved" },
+    ],
+  };
+  const versions = Array.from({ length: 26 }, (_, index) =>
+    version({
+      oid: String(index + 1).padStart(7, "a"),
+      number: index + 1,
+      at: new Date(NOW - (27 - index) * HOUR).toISOString(),
+      reviewedBy: (reviews[index + 1] ?? []).map((review) => review.login),
+      reviews: reviews[index + 1] ?? [],
+      viewerLatestReview: index + 1 === 12,
+      current: index + 1 === 26,
+    }),
+  );
+  return { baseRefOid: "0000000", versions, baseHeads: [] };
+}
+
 /** @returns A history of the first count versions, oldest first. */
 function history(count: number): VersionHistory {
   return { baseRefOid: "0000000", versions: [V1, V2, V3].slice(0, count), baseHeads: [] };
@@ -258,7 +285,7 @@ function githubPage(): HTMLElement {
 /**
  * Opens the view the way the versions bar does: in place of GitHub's file tree and diff, or floating over a page
  * without them.
- * @param kind How many versions the pull request has, or "loading"/"failing" for those states.
+ * @param kind How many versions the pull request has, "long" for twenty-six, or "loading"/"failing" for those states.
  * @param patches What each version changes.
  * @param stored What the extension kept from an earlier visit: the versions fetched then, the range compared and
  * whether the viewer chose the side-by-side layout.
@@ -268,7 +295,7 @@ function githubPage(): HTMLElement {
  * @returns The page.
  */
 function view(
-  kind: number | "loading" | "failing",
+  kind: number | "loading" | "failing" | "long",
   patches = PATCHES,
   stored: { cached?: VersionHistory; saved?: SavedRange; split?: boolean } = {},
   docked = true,
@@ -318,11 +345,12 @@ function view(
 }
 
 /**
- * @param kind How many versions to answer with, or a state that never resolves or rejects.
+ * @param kind How many versions to answer with, a long history, or a state that never resolves or rejects.
  * @returns The version history, after a tick.
  */
-async function pendingHistory(kind: number | "loading" | "failing"): Promise<VersionHistory> {
+async function pendingHistory(kind: number | "loading" | "failing" | "long"): Promise<VersionHistory> {
   await settle();
+  if (kind === "long") return longHistory();
   if (kind === "failing") throw new Error("Resource not accessible by personal access token");
   if (kind === "loading") {
     // A timer a day out leaves the view on its loading state for the story.
@@ -351,6 +379,13 @@ type Story = StoryObj<typeof meta>;
 
 /** Loading the version history. */
 export const Loading: Story = { render: () => view("loading") };
+
+/**
+ * A long-lived layer of a busy stack: twenty-six versions, three of them reviewed. The reviewed ones keep their faces;
+ * each run of the others is a small pill saying how many it holds. Hover the timeline to magnify it like the macOS
+ * dock and pick any version.
+ */
+export const LongHistory: Story = { render: () => view("long") };
 
 /** A pull request with a single head: force pushes and reviews leave no second version to compare. */
 export const SingleVersion: Story = { render: () => view(1) };
