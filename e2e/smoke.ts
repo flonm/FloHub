@@ -8,6 +8,28 @@ process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS = "1";
 const EXTENSION = nodePath.resolve("dist");
 const PULL_URL = process.env.PULL_URL ?? "https://github.com/github/gh-stack/pull/344";
 const SCREENSHOTS = nodePath.resolve(process.env.SCREENSHOTS ?? "e2e/screenshots");
+/** Where `bun run screenshots` puts the README's pictures; without it, the run takes none. */
+const README_SHOTS = process.env.README_SHOTS ? nodePath.resolve(process.env.README_SHOTS) : null;
+
+/**
+ * Takes one of the README's pictures, when asked to: FloHub's own UI only, cut out of GitHub's page.
+ * @param target The element.
+ * @param name The picture's name, with its theme.
+ */
+async function readmeShot(target: Locator, name: string): Promise<void> {
+  if (!README_SHOTS) return;
+  const path = `${README_SHOTS}/${name}.png`;
+  // A toast left over from an earlier step would cover the picture.
+  const toasts = target.page().locator("flohub-toast");
+  await toasts.evaluateAll((hosts) => {
+    for (const host of hosts) (host as HTMLElement).style.visibility = "hidden";
+  });
+  // Menus and dialogs fade in; the picture shows them settled.
+  await target.screenshot({ path, animations: "disabled" });
+  await toasts.evaluateAll((hosts) => {
+    for (const host of hosts) (host as HTMLElement).style.visibility = "";
+  });
+}
 
 function actor(login: string, typename: "User" | "Bot" = "User") {
   return {
@@ -847,6 +869,7 @@ const rerequestsBeforeNudge = fixture.rerequests.length;
 await defunktStale.getByRole("button", { name: /^Ask defunkt to look again/u }).click();
 const nudgeDialog = page.getByRole("dialog", { name: "Ask defunkt to look again" });
 await nudgeDialog.waitFor();
+await readmeShot(nudgeDialog, "nudge-light");
 const composed = await nudgeDialog.getByRole("textbox").inputValue();
 check(
   composed.startsWith("@defunkt Since you requested changes on v1 (`aaaaaaa`): ") && composed.includes("flohub-versions="),
@@ -889,6 +912,7 @@ await inlineBar(page).getByRole("button", { name: "2 merged" }).click();
 await inlineBar(page).getByText("#338").waitFor();
 check((await inlineBar(page).getByText("Merged", { exact: true }).count()) === 2, "merged layers expand on demand");
 await inlineBar(page).screenshot({ path: `${SCREENSHOTS}/inline-light.png` });
+await readmeShot(inlineBar(page), "bar-light");
 
 check(
   (await inlineBar(page).getByRole("img", { name: /^Force-pushed/u }).getAttribute("aria-label")) === "Force-pushed 2 times, last 3 hours ago",
@@ -964,6 +988,7 @@ check(
 );
 await page.waitForTimeout(250);
 await page.screenshot({ path: `${SCREENSHOTS}/versions-light.png` });
+await readmeShot(versions, "versions-light");
 const readmeFile = versions.locator("details.file", { hasText: "README.md" });
 const readmeLines = await readmeFile.locator(".line").count();
 await readmeFile.locator(".expander").first().click();
@@ -1023,6 +1048,7 @@ check(
 await readmeDiff.locator(`#${readmeAnchor}R324`).scrollIntoViewIfNeeded();
 await page.waitForTimeout(150);
 await readmeDiff.screenshot({ path: `${SCREENSHOTS}/since-review-light.png` });
+await readmeShot(readmeDiff, "since-review-light");
 const sinceReview = diffSwitch.getByRole("button", { name: /^Since v1/u });
 check(
   (await sinceReview.getAttribute("aria-pressed")) === "true" &&
@@ -1373,6 +1399,7 @@ const jumpLink = splitPage.locator("#outdated-link");
 await jumpLink.click();
 const jumpMenu = splitPage.locator("flohub-jump-menu");
 await jumpMenu.getByRole("menuitem", { name: /^Changes since v1/u }).waitFor();
+await readmeShot(jumpMenu.getByRole("menu"), "jump-menu-light");
 check(
   !splitPage.url().includes("#r888") &&
     (await jumpMenu.getByRole("menuitem", { name: /^In the current diff/u }).isDisabled()),
@@ -1963,6 +1990,8 @@ for (const scheme of ["light", "dark"] as const) {
   }
   await popup.waitForFunction(() => [...document.images].every((image) => image.complete));
   await popup.screenshot({ path: `${SCREENSHOTS}/popup-${scheme}.png`, fullPage: true });
+  await popup.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await readmeShot(popup.locator("#app"), `inbox-${scheme}`);
   await inboxContext.serviceWorkers()[0]?.evaluate(async () => chrome.storage.local.remove("token"));
   await popup.reload();
   await popup.getByRole("button", { name: "Set up token" }).waitFor();
@@ -2005,10 +2034,12 @@ const darkPage = await dark.newPage();
 await darkPage.goto(`${PULL_URL}/files`);
 await inlineBar(darkPage).locator(".reviewer").first().waitFor();
 await inlineBar(darkPage).screenshot({ path: `${SCREENSHOTS}/inline-dark.png` });
+await readmeShot(inlineBar(darkPage), "bar-dark");
 await inlineBar(darkPage).getByRole("button", { name: "Versions", exact: true }).click();
 await darkPage.locator("flohub-versions details.file").first().waitFor();
 await darkPage.waitForTimeout(250);
 await darkPage.screenshot({ path: `${SCREENSHOTS}/versions-dark.png` });
+await readmeShot(darkPage.locator("flohub-versions .surface"), "versions-dark");
 await darkPage.locator("flohub-versions").getByRole("button", { name: "Close" }).click();
 await darkPage.mouse.wheel(0, 2400);
 await floatingBar(darkPage).locator(".pill").click();
