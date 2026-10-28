@@ -1,6 +1,7 @@
 import { type BarState, type DiffMode, PULL_STATE_BUSY, ReviewBar } from "./ui/bar";
 import { moveDone, moveFor, MOVE_WORDS, noMoveReason, type PullMove, pullStateOf, type StateIntent, stateAfter } from "./core/pull-state";
 import { findInlineAnchor } from "./ui/anchor";
+import { POKE_COOLDOWN_MS } from "./ui/reviewer-look";
 import { DiffHighlights, type HighlightStatus } from "./ui/diff-highlights";
 import { Favicon, faviconUrl } from "./ui/favicon";
 import { ViewedTree } from "./ui/file-tree";
@@ -9,15 +10,17 @@ import { isWholeFilesTab, type PullRef, parsePullRef, pullKey, pullTab } from ".
 import { ReviewDialog } from "./ui/review-dialog";
 import { deriveDiscussion, lastReviewBy } from "./core/discussion";
 import { deriveReviewers, type DismissedVerdict, type Reviewer } from "./core/reviewers";
-import { type CopyTarget, createShortcutMatcher, isMac, type ReviewEvent } from "./core/shortcuts";
+import { type AskTarget, type CopyTarget, createShortcutMatcher, isMac, type ReviewEvent } from "./core/shortcuts";
 import type { Overview, VersionPatch } from "./api/github";
 import { readCachedOverview } from "./api/overview-cache";
 import { overviewTurnInput, repliesAwaiting, type Turn, whoseTurn } from "./core/turn";
 import { type ProgressCounts, roughProgress } from "./core/addressed";
-import { pokeMessage, rangeFileStats, type StandingVerdict, standingVerdict, unseenRange, VERSIONS_PARAM, versionsRangeUrl } from "./core/since-review";
+import { nameList, pokeMessage, rangeFileStats, type StandingVerdict, staleReviewers, standingVerdict, unseenRange, VERSIONS_PARAM, versionsRangeUrl, waitingReviewers } from "./core/since-review";
 import { interdiff } from "./core/interdiff";
 import { deriveStack } from "./core/stack";
 import { Toast } from "./ui/toast";
+import { type Landed, nextStop, READING_LINE, type Stop, stopToast } from "./core/steps";
+import type { ReviewThread } from "./core/threads";
 import {
   BASE,
   baseCandidates,
@@ -67,6 +70,10 @@ let pendingNotice: string | null = null;
 let loadedFresh = false;
 let viewerIsAuthor = false;
 let claimedKey: string | null = null;
+/** The review threads ] and [ last fetched, and when. */
+let fetchedThreads: { key: string; at: number; threads: ReviewThread[] } | null = null;
+/** The head branch of the pull request on screen, for C then B, once an overview of its own named it. */
+let headBranch: { key: string; name: string } | null = null;
 let pokes: Record<string, number> = {};
 let highlight: HighlightStatus | null = null;
 let discussionExpanded = false;
@@ -317,6 +324,12 @@ async function showFirst(ref: PullRef): Promise<void> {
   if (state.kind === "loading" && current && pullKey(current) === pullKey(ref)) render();
 }
 
+/** Keeps the head branch an overview of the pull request's own names, for C then B. */
+function rememberBranch(ref: PullRef, overview: Overview): void {
+  const name = overview.repository?.pullRequest?.headRefName;
+  if (name) headBranch = { key: pullKey(ref), name };
+}
+
 /**
  * Shows the last overview fetched for this pull request, or the stack from another of its layers,
  * while the fresh one loads. It never replaces a state the fresh load already set.
@@ -326,7 +339,10 @@ async function showCached(ref: PullRef): Promise<void> {
   if (!cached || state.kind !== "loading" || !current || pullKey(current) !== pullKey(ref)) return;
   const ready = readyState(cached.overview, ref, cached.exact);
   if (!ready) return;
-  if (cached.exact) viewerIsAuthor = isAuthor(cached.overview);
+  if (cached.exact) {
+    viewerIsAuthor = isAuthor(cached.overview);
+    rememberBranch(ref, cached.overview);
+  }
   state = { ...ready, refreshing: true, notice: pendingNotice };
   render();
 }
@@ -534,6 +550,7 @@ async function load(force: boolean): Promise<void> {
 
   if (reply.ok) {
     viewerIsAuthor = isAuthor(reply.value);
+    rememberBranch(ref, reply.value);
     const pullRequest = reply.value.repository?.pullRequest;
     if (pullRequest?.headRefOid && pullRequest.baseRefOid) {
       const viewer = reply.value.viewer.login;
@@ -638,6 +655,22 @@ function onKeydown(event: KeyboardEvent): void {
       else void approveNow();
       break;
     }
+    case "thread": {
+      void stepThread(action.direction);
+      break;
+    }
+    case "file": {
+      void stepFile(action.markViewed);
+      break;
+    }
+    case "versions": {
+      compareVersions();
+      break;
+    }
+    case "ask": {
+      void askAll(action.who);
+      break;
+    }
   }
 }
 
@@ -676,8 +709,16 @@ async function movePull(move: PullMove): Promise<void> {
 async function copyForPull(what: CopyTarget): Promise<void> {
   const ref = current;
   if (!ref) return;
-  const text =
-    what === "checkout" ? `gh pr checkout ${ref.number}` : `https://github.com/${ref.owner}/${ref.repo}/pull/${ref.number}`;
+  let text: string;
+  if (what === "branch") {
+    if (headBranch?.key !== pullKey(ref)) {
+      toast.show("FloHub is still loading the pull request. Try again in a moment.", "info");
+      return;
+    }
+    text = headBranch.name;
+  } else {
+    text = what === "checkout" ? `gh pr checkout ${ref.number}` : `https://github.com/${ref.owner}/${ref.repo}/pull/${ref.number}`;
+  }
   if (await copyText(text)) toast.show(`Copied ${text}`, "success");
   else toast.show(`Could not copy to the clipboard: ${text}`, "danger");
 }
@@ -949,6 +990,183 @@ async function showCurrent(ref: PullRef, named: CommentLink, fetched: Promise<Re
   } else toast.show(`GitHub hasn't drawn ${lines.path} yet. Scroll to it and it will.`, "info");
 }
 
+/** How long fetched threads serve ] and [ before they are fetched again, in milliseconds. */
+const THREADS_FRESH_MS = 30_000;
+/** Where the page's sticky header ends, give or take: a file whose header is above it is the one being read. */
+const FILE_LINE_PX = 160;
+
+/**
+ * @param ref The pull request on screen.
+ * @returns Its review threads, fetched at most {@link THREADS_FRESH_MS} ago, or why they could not be.
+ */
+async function reviewThreads(ref: PullRef): Promise<ReviewThread[] | string> {
+  const key = pullKey(ref);
+  if (fetchedThreads?.key === key && Date.now() - fetchedThreads.at < THREADS_FRESH_MS) return fetchedThreads.threads;
+  const reply = await send({ type: "review-threads", ref });
+  if (!reply.ok) return reply.message;
+  fetchedThreads = { key, at: Date.now(), threads: reply.value.threads };
+  return reply.value.threads;
+}
+
+/**
+ * ] and [: goes to the next or previous unresolved thread, in the versions view while it's open and in GitHub's diff
+ * otherwise. From another tab, it opens Files changed on the first or last one.
+ * @param direction 1 for the next, -1 for the previous.
+ */
+async function stepThread(direction: 1 | -1): Promise<void> {
+  const ref = current;
+  if (!ref) return;
+  if (versionsView.isOpen) {
+    const view = versionsView.threadStops();
+    if (view === null) toast.show("The versions view is still loading.", "info");
+    else if (view === "hidden") toast.show("Comments are switched off in the versions view. Switch them on to step through the threads.", "info");
+    else land(view.stops, view.line, direction, view.go, "unresolved thread", "No unresolved threads in this diff.");
+    return;
+  }
+  const threads = await reviewThreads(ref);
+  if (!current || pullKey(current) !== pullKey(ref)) return;
+  if (typeof threads === "string") {
+    toast.show(`Could not read the threads: ${threads}`, "danger");
+    return;
+  }
+  const open = threads.filter((thread) => !thread.resolved);
+  const live = open.filter((thread) => thread.line !== null);
+  const outdated = open.length - live.length;
+  const elsewhere = outdated === 0 ? "" : ` ${outdated === 1 ? "1 outdated one isn't" : `${outdated} outdated ones aren't`} in the current diff; the versions view shows ${outdated === 1 ? "it" : "them"}.`;
+  if (live.length === 0) {
+    toast.show(`No unresolved threads in the current diff.${elsewhere}`, "info");
+    return;
+  }
+  if (!isWholeFilesTab(location.pathname)) {
+    const ordered = live.toSorted((a, b) => (a.path === b.path ? (a.line ?? 0) - (b.line ?? 0) : a.path.localeCompare(b.path)));
+    const target = direction === 1 ? ordered[0] : ordered.at(-1);
+    const comment = target?.comments[0]?.id;
+    if (comment !== undefined) location.assign(`https://github.com/${ref.owner}/${ref.repo}/pull/${ref.number}/changes#r${comment}`);
+    return;
+  }
+  const placed = await Promise.all(live.map(async (thread) => ({ thread, element: await threadOnPage(thread) })));
+  const line = innerHeight * READING_LINE;
+  const found = placed
+    .filter((each): each is { thread: ReviewThread; element: Element } => each.element !== null)
+    .map(({ thread, element }) => ({ id: thread.id, thread, element, top: element.getBoundingClientRect().top }))
+    .toSorted((a, b) => (a.top === b.top ? (a.thread.line ?? 0) - (b.thread.line ?? 0) : a.top - b.top));
+  const go = (id: string): number => {
+    const stop = found.find((each) => each.id === id);
+    if (!stop) return 0;
+    scrollToLine(stop.element, line);
+    if (!stop.element.matches("[id^='r']")) toast.show(`GitHub hasn't drawn this thread in ${stop.thread.path} yet. If the file is collapsed, expand it.`, "info");
+    return stop.element.getBoundingClientRect().top;
+  };
+  land(found, line, direction, go, "unresolved thread", "GitHub hasn't drawn the files with unresolved threads yet.", elsewhere);
+}
+
+/**
+ * Scrolls an element of GitHub's page to the reading line, at once. GitHub's diff may scroll in a pane of its own
+ * rather than the window, so the element is scrolled into view, with a margin as tall as the space above the line.
+ * @param element The element.
+ * @param line How far down the window its top should go, in pixels.
+ */
+function scrollToLine(element: Element, line: number): void {
+  if (!(element instanceof HTMLElement)) {
+    element.scrollIntoView({ block: "start", behavior: "instant" });
+    return;
+  }
+  const margin = element.style.scrollMarginTop;
+  // The page's scroll padding, which keeps its sticky header clear, adds to the margin.
+  const padding = Number(getComputedStyle(document.documentElement).scrollPaddingTop.replace(/px$/u, ""));
+  element.style.scrollMarginTop = `${Math.round(line - (Number.isNaN(padding) ? 0 : padding))}px`;
+  // GitHub scrolls smoothly, which would leave the stop short of where it lands when it's measured.
+  element.scrollIntoView({ block: "start", behavior: "instant" });
+  element.style.scrollMarginTop = margin;
+}
+
+/**
+ * Where GitHub's diff shows a thread: the thread itself while it's expanded, else its line, else its file's header.
+ * @param thread An unresolved thread with lines in the current diff.
+ * @returns The element, or null when GitHub hasn't drawn even the file.
+ */
+async function threadOnPage(thread: ReviewThread): Promise<Element | null> {
+  const first = thread.comments[0]?.id;
+  const drawn = first === undefined ? null : document.getElementById(`r${first}`);
+  if (drawn) return drawn;
+  if (thread.line !== null) {
+    const row = document.querySelector(githubLineSelector({ path: thread.path, line: thread.line, side: thread.side }))?.closest("tr");
+    if (row) return row;
+  }
+  return document.getElementById(await githubFileAnchor(thread.path));
+}
+
+/**
+ * U goes to the next file not marked Viewed; ⇧U marks the file being read as viewed first. Both work in GitHub's
+ * diff, which has the marks.
+ * @param markViewed Whether to mark the file being read first.
+ */
+async function stepFile(markViewed: boolean): Promise<void> {
+  const ref = current;
+  if (!ref) return;
+  if (versionsView.isOpen || !isWholeFilesTab(location.pathname)) {
+    toast.show(`${markViewed ? "⇧U" : "U"} works in GitHub's own Files changed diff, where the Viewed marks are.`, "info");
+    return;
+  }
+  const files = viewedTree.files(ref);
+  if (!files) {
+    toast.show("FloHub is still loading which files you viewed. Try again in a moment.", "info");
+    return;
+  }
+  const onPage = files
+    .map((file) => ({ path: file.path, state: file.state, id: file.path, element: document.getElementById(file.anchor), top: 0 }))
+    .filter((file): file is typeof file & { element: HTMLElement } => file.element !== null)
+    .map((file) => Object.assign(file, { top: file.element.getBoundingClientRect().top }))
+    .toSorted((a, b) => a.top - b.top);
+  if (onPage.length === 0) {
+    toast.show("GitHub hasn't drawn the files yet. Try again in a moment.", "info");
+    return;
+  }
+  const reading = markViewed ? (onPage.findLast((file) => file.top <= FILE_LINE_PX) ?? onPage[0]) : undefined;
+  if (reading) await viewedTree.markViewed(reading.path);
+  const left = onPage.filter((file) => file.state !== "VIEWED" && file !== reading);
+  const done = reading ? `Marked ${reading.path} as viewed. ` : "";
+  if (left.length === 0) {
+    toast.show(`${done}Every file is marked as viewed.`, "success");
+    return;
+  }
+  // Marking a file viewed folds it, which moves the files below: they are measured again.
+  for (const file of left) file.top = file.element.getBoundingClientRect().top;
+  const go = (id: string): number => {
+    const file = left.find((each) => each.id === id);
+    if (!file) return 0;
+    file.element.scrollIntoView({ block: "start", behavior: "instant" });
+    return file.element.getBoundingClientRect().top;
+  };
+  const line = reading ? reading.element.getBoundingClientRect().top : FILE_LINE_PX;
+  land(left, line, 1, go, "file not viewed yet", "", "", done);
+}
+
+/** The stop ] and [, or U, last went to, and where it landed. */
+let landed: Landed | null = null;
+
+/**
+ * Goes to the next stop, and says which one of how many it is.
+ * @param stops The stops, top to bottom.
+ * @param line The reading line, in the stops' pixels.
+ * @param direction 1 to go down, -1 to go up.
+ * @param go Scrolls to a stop by id, and returns where it landed.
+ * @param noun What a stop is, for the toast.
+ * @param none What the toast says when there are none.
+ * @param after What the toast adds at the end.
+ * @param before What the toast starts with.
+ */
+function land(stops: Stop[], line: number, direction: 1 | -1, go: (id: string) => number, noun: string, none: string, after = "", before = ""): void {
+  const next = nextStop(stops, line, direction, landed);
+  const stop = next ? stops[next.index] : undefined;
+  if (!next || !stop) {
+    toast.show(none, "info");
+    return;
+  }
+  landed = { id: stop.id, top: go(stop.id) };
+  toast.show(`${before}${stopToast(next.index, stops.length, next.wrapped, noun)}${after}`, "info");
+}
+
 /** Scrolls GitHub's diff to a comment's rows and flashes them, so the eye finds them. */
 function showRows(first: Element, last: Element): void {
   const rows: Element[] = [];
@@ -1066,15 +1284,72 @@ async function poke(reviewer: Reviewer): Promise<void> {
   const reply = await send({ type: "poke", ref, reviewer: { kind: reviewer.kind, name: reviewer.name } });
   busy.delete(reviewer.key);
   if (reply.ok) {
-    const now = Date.now();
-    pokes = Object.fromEntries([
-      ...Object.entries(pokes).filter(([, at]) => now - at < POKE_MEMORY_MS),
-      [`${pullKey(ref)}|${reviewer.key}`, now],
-    ]);
-    void chrome.storage.local.set({ pokes });
+    rememberPokes(ref, [reviewer]);
     toast.show(`Poked ${reviewer.name}. GitHub notifies them within a minute.`, "success");
   } else {
     toast.show(reply.message, "danger");
+  }
+  if (current && pullKey(current) === pullKey(ref)) update({ pokedAt: pokedAtFor(ref) });
+  await load(true);
+}
+
+/** Stores when the viewer poked these reviewers, for the cooldown, forgetting pokes older than the memory keeps. */
+function rememberPokes(ref: PullRef, reviewers: readonly Reviewer[]): void {
+  const now = Date.now();
+  pokes = Object.fromEntries([
+    ...Object.entries(pokes).filter(([, at]) => now - at < POKE_MEMORY_MS),
+    ...reviewers.map((reviewer) => [`${pullKey(ref)}|${reviewer.key}`, now] as const),
+  ]);
+  void chrome.storage.local.set({ pokes });
+}
+
+/**
+ * R then R re-requests everyone whose approval or change request is on an older version; P then P pokes every
+ * requested reviewer who hasn't answered. Both act at once, like each reviewer's own button, and say whom they asked.
+ * @param who Which of the two.
+ */
+async function askAll(who: AskTarget): Promise<void> {
+  const ref = current;
+  if (!ref || state.kind !== "ready" || !state.reviewers || (who === "stale" && !state.standings)) {
+    toast.show("FloHub is still loading the reviewers. Try again in a moment.", "info");
+    return;
+  }
+  const asked =
+    who === "stale"
+      ? staleReviewers(state.reviewers, state.standings ?? new Map())
+      : waitingReviewers(state.reviewers, state.pokedAt, Date.now(), POKE_COOLDOWN_MS);
+  if (asked.length === 0) {
+    toast.show(
+      who === "stale"
+        ? "Nobody's verdict is on an older version, or they're asked to review again already."
+        : "Nobody requested is waiting: everyone answered, or was poked within the hour.",
+      "info",
+    );
+    return;
+  }
+  if (asked.some((reviewer) => busy.has(reviewer.key))) return;
+  for (const reviewer of asked) busy.add(reviewer.key);
+  render();
+  const replies = await Promise.all(
+    asked.map(async (reviewer) =>
+      send(
+        who === "stale"
+          ? { type: "rerequest", ref, login: reviewer.name }
+          : { type: "poke", ref, reviewer: { kind: reviewer.kind === "team" ? "team" : "user", name: reviewer.name } },
+      ),
+    ),
+  );
+  for (const reviewer of asked) busy.delete(reviewer.key);
+  const done = asked.filter((_, index) => replies[index]?.ok);
+  const missed = asked.filter((_, index) => !replies[index]?.ok);
+  if (who === "waiting") rememberPokes(ref, done);
+  const names = nameList(done.map((reviewer) => reviewer.name));
+  const said = done.length === 0 ? "" : (who === "stale" ? `Re-requested review from ${names}.` : `Poked ${names}. GitHub notifies them within a minute.`);
+  const problem = replies.map((reply) => (reply.ok ? null : reply.message)).find((message) => message !== null) ?? null;
+  if (problem === null) toast.show(said, "success");
+  else {
+    const verb = who === "stale" ? "re-request" : "poke";
+    toast.show(`${said} Could not ${verb} ${nameList(missed.map((reviewer) => reviewer.name))}: ${problem}`.trim(), "danger");
   }
   if (current && pullKey(current) === pullKey(ref)) update({ pokedAt: pokedAtFor(ref) });
   await load(true);

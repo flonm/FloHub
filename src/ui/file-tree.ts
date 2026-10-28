@@ -263,6 +263,24 @@ export class ViewedTree {
     setAttribute(toggle, "title", `${STATE_LABEL[state]}. Click to mark as ${state === "VIEWED" ? "not viewed" : "viewed"}.`);
   }
 
+  /**
+   * The pull request's files with the viewer's Viewed marks, for U and ⇧U.
+   * @param ref The pull request on screen.
+   * @returns Each file's path, the id of its diff on the page and its mark; null until they are fetched.
+   */
+  files(ref: PullRef): { path: string; anchor: string; state: ViewedState }[] | null {
+    const { loaded } = this;
+    if (loaded?.key !== pullKey(ref)) return null;
+    return [...loaded.states]
+      .map(([path, state]) => ({ path, anchor: loaded.pathAnchors.get(path) ?? "", state }))
+      .filter((file) => file.anchor !== "");
+  }
+
+  /** @param path A file to mark as viewed, unless it is already. */
+  async markViewed(path: string): Promise<void> {
+    if (this.loaded?.states.get(path) !== "VIEWED") await this.toggle(path);
+  }
+
   private async toggle(path: string): Promise<void> {
     const { loaded } = this;
     if (!loaded || this.busy.has(path) || !loaded.states.has(path)) return;

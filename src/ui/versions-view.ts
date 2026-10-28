@@ -38,6 +38,7 @@ import { type ProgressBasis, type ThreadProgress, threadProgress } from "../core
 import { standingVerdict, unseenRange } from "../core/since-review";
 import { type JumpTarget, threadElsewhere } from "../core/comment-jump";
 import { type SplitSide, splitRows } from "../core/split";
+import { READING_LINE, type Stop } from "../core/steps";
 import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
 import {
   BASE,
@@ -673,6 +674,33 @@ export class VersionsView {
    */
   goTo(range: SavedRange, line?: CommentLine): void {
     this.target?.(range, line);
+  }
+
+  /**
+   * The unresolved threads the diff shows, top to bottom, for ] and [. A thread in a folded file stands where the
+   * file's header does.
+   * @returns The threads as stops, the reading line in the same pixels, and how to go to one, which returns where it
+   *   landed; "hidden" while the Comments switch hides them; null while no diff is drawn.
+   */
+  threadStops(): "hidden" | { stops: Stop[]; line: number; go: (id: string) => number } | null {
+    const main = this.isOpen ? this.surface.querySelector<HTMLElement>("main") : null;
+    if (!main) return null;
+    if (main.classList.contains("hide-threads")) return "hidden";
+    const rows = [...main.querySelectorAll<HTMLElement>(".thread-row[data-thread]:not([data-resolved])")];
+    const box = main.getBoundingClientRect();
+    const line = box.top + box.height * READING_LINE;
+    const go = (id: string): number => {
+      const row = rows.find((each) => each.dataset.thread === id);
+      if (!row) return 0;
+      const file = row.closest("details");
+      if (file) file.open = true;
+      const thread = row.querySelector<HTMLDetailsElement>("details.thread");
+      if (thread) thread.open = true;
+      main.scrollBy({ top: row.getBoundingClientRect().top - line, behavior: "instant" });
+      thread?.querySelector("summary")?.focus({ preventScroll: true });
+      return row.getBoundingClientRect().top;
+    };
+    return { stops: rows.map((row) => ({ id: row.dataset.thread ?? "", top: shownAt(row).getBoundingClientRect().top })), line, go };
   }
 
   /** @param request Where the versions come from. */
@@ -1541,6 +1569,7 @@ function renderResult(
         if (block?.isConnected) {
           block.replaceChildren(drawn);
           block.className = `thread-row column-${column}`;
+          block.toggleAttribute("data-resolved", thread.resolved);
           continue;
         }
         // Unfolding the first line before the last keeps the commented lines together.
@@ -1549,6 +1578,7 @@ function renderResult(
         if (!anchor) continue;
         while (anchor.nextElementSibling?.matches(".thread-row, .composer-row")) anchor = anchor.nextElementSibling;
         const added = el("div", { class: `thread-row column-${column}`, "data-thread": thread.id });
+        added.toggleAttribute("data-resolved", thread.resolved);
         added.append(drawn);
         anchor.after(added);
         blocks.set(thread.id, added);
@@ -1862,6 +1892,12 @@ function firstVisibleLine(main: HTMLElement): HTMLElement | null {
 
 /** How long a file tree jump keeps its file marked when it doesn't scroll, so no scroll end comes. */
 const JUMP_SETTLE_MS = 1500;
+
+/** @returns What stands for a thread's row on screen: the row, or its file's header while the file is folded. */
+function shownAt(row: HTMLElement): Element {
+  const file = row.closest("details");
+  return file && !file.open ? (file.querySelector(":scope > summary") ?? file) : row;
+}
 
 /** How many lines around a line taken out of a fold come out with it. */
 const UNFOLD_CONTEXT = 3;

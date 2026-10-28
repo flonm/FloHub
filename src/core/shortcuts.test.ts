@@ -45,8 +45,9 @@ describe("createShortcutMatcher", () => {
     expect(run([press("r", 0), press("x", 10), press("y", 20)])).toEqual([null, null, null]);
   });
 
-  test("pressing R again restarts the chord", () => {
-    expect(run([press("r", 0), press("r", 1400), press("y", 2800)])[2]).toMatchObject({ event: "APPROVE" });
+  test("R then R asks the stale reviewers again, and leaves nothing open for a Y after it", () => {
+    expect(run([press("r", 0), press("r", 200), press("y", 400)])).toEqual([null, { type: "ask", who: "stale" }, null]);
+    expect(run([press("r", 0), press("r", CHORD_TIMEOUT_MS + 1), press("y", CHORD_TIMEOUT_MS + 100)])[2]).toMatchObject({ event: "APPROVE" });
   });
 
   test("keys typed into a text field never fire", () => {
@@ -107,6 +108,42 @@ describe("createShortcutMatcher", () => {
     expect(run([press("c", 0), press("y", 10)])).toEqual([null, null]);
     expect(run([press("c", 0), press("g", 10)])).toEqual([null, { type: "copy", what: "link" }]);
     expect(run([press("r", 0), press("c", 10), press("c", 20)])[2]).toEqual({ type: "copy", what: "checkout" });
+  });
+
+  test("C then B copies the branch, and P then P pokes the waiting reviewers, claiming both keys", () => {
+    expect(run([press("c", 0), press("b", 200)])).toEqual([null, { type: "copy", what: "branch" }]);
+    expect(run([press("p", 0), press("p", 200)])).toEqual([null, { type: "ask", who: "waiting" }]);
+    expect(claims([press("p", 0), press("p", 200)])).toEqual([true, true]);
+  });
+
+  test.each([
+    ["no modifier", {}],
+    ["⌥, as a German Mac types them", { altKey: true }],
+    ["⇧", { shiftKey: true }],
+  ])("] and [ step through the threads with %s", (_, modifiers) => {
+    expect(run([press("]", 0, modifiers), press("[", 10, modifiers)])).toEqual([
+      { type: "thread", direction: 1 },
+      { type: "thread", direction: -1 },
+    ]);
+    expect(claims([press("]", 0, modifiers)])).toEqual([true]);
+  });
+
+  test("] and [ with ⌘ or Ctrl, or in a text field, are left to the page", () => {
+    expect(claims([press("]", 0, { metaKey: true }), press("[", 10, { ctrlKey: true }), press("]", 20, { editable: true })])).toEqual([false, false, false]);
+  });
+
+  test("V toggles the versions view, U goes to the next unviewed file and ⇧U marks the one in view first", () => {
+    expect(run([press("v", 0), press("u", 10), press("U", 20, { shiftKey: true })])).toEqual([
+      { type: "versions" },
+      { type: "file", markViewed: false },
+      { type: "file", markViewed: true },
+    ]);
+    expect(claims([press("v", 0), press("u", 10)])).toEqual([true, true]);
+    expect(run([press("u", 0, { metaKey: true }), press("U", 10, { shiftKey: true, altKey: true })])).toEqual([null, null]);
+  });
+
+  test("a single key ends an open chord", () => {
+    expect(run([press("c", 0), press("v", 10), press("c", 20)])).toEqual([null, { type: "versions" }, null]);
   });
 
   test("claims the C that starts a chord from GitHub, but leaves R and unrelated keys to the page", () => {

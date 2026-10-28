@@ -6,10 +6,17 @@ type ShortcutAction =
   | { type: "navigate"; direction: 1 | -1 }
   | { type: "review"; event: ReviewEvent; withComment: boolean }
   | { type: "copy"; what: CopyTarget }
-  | { type: "state"; intent: StateIntent };
+  | { type: "state"; intent: StateIntent }
+  | { type: "thread"; direction: 1 | -1 }
+  | { type: "file"; markViewed: boolean }
+  | { type: "versions" }
+  | { type: "ask"; who: AskTarget };
 
-/** What C then C, or C then G, copies: the `gh pr checkout` command, or the pull request's link. */
-export type CopyTarget = "checkout" | "link";
+/** What C then C, C then G or C then B copies: the `gh pr checkout` command, the pull request's link, or its branch. */
+export type CopyTarget = "checkout" | "link" | "branch";
+
+/** Whom R then R or P then P asks: reviewers whose verdict is on an older version, or reviewers who haven't answered yet. */
+export type AskTarget = "stale" | "waiting";
 
 export interface ShortcutMatch {
   /** The action the key completes, if any. */
@@ -34,6 +41,7 @@ export interface KeyInput {
 export const CHORD_TIMEOUT_MS = 1500;
 
 const REVIEW_CHORDS: Record<string, ShortcutAction> = {
+  r: { type: "ask", who: "stale" },
   y: { type: "review", event: "APPROVE", withComment: false },
   a: { type: "review", event: "APPROVE", withComment: true },
   n: { type: "review", event: "REQUEST_CHANGES", withComment: true },
@@ -49,10 +57,26 @@ const CHORDS: Record<string, { claimFirstKey: boolean; next: Record<string, Shor
   r: { claimFirstKey: false, next: REVIEW_CHORDS },
   c: {
     claimFirstKey: true,
-    next: { c: { type: "copy", what: "checkout" }, g: { type: "copy", what: "link" } },
+    next: { c: { type: "copy", what: "checkout" }, g: { type: "copy", what: "link" }, b: { type: "copy", what: "branch" } },
   },
-  // GitHub binds no D, so the first one is claimed like C's.
+  // GitHub binds no D or P on a pull request, so their first key is claimed like C's.
   d: { claimFirstKey: true, next: { d: { type: "state", intent: "toggle-draft" } } },
+  p: { claimFirstKey: true, next: { p: { type: "ask", who: "waiting" } } },
+};
+
+/** Single keys, which GitHub binds to nothing on a pull request. */
+const SINGLE_KEYS: Record<string, ShortcutAction> = {
+  v: { type: "versions" },
+  u: { type: "file", markViewed: false },
+};
+
+/**
+ * The thread keys, by the character they type. A German Mac types them with ⌥ and NeoQwertz on its third layer, so
+ * only ⌘ and Ctrl rule them out.
+ */
+const THREAD_KEYS: Record<string, ShortcutAction> = {
+  "]": { type: "thread", direction: 1 },
+  "[": { type: "thread", direction: -1 },
 };
 
 const MODIFIER_KEYS = new Set(["Shift", "Meta", "Control", "Alt", "CapsLock"]);
@@ -65,7 +89,10 @@ const NO_MATCH: ShortcutMatch = { action: null, claim: false };
  * copies the checkout command and C then G the pull request's link. GitHub binds a plain C itself, so the C that starts a chord is claimed;
  * the R is not, so quote-reply on selected text keeps working. On macOS, ⌘Esc closes the pull request, as on Graphite,
  * and ⌘⇧Esc reopens it; Windows keeps Ctrl+Esc and Ctrl+⇧Esc for itself, so elsewhere they have no key. D then D
- * turns a pull request into a draft, or a draft ready for review.
+ * turns a pull request into a draft, or a draft ready for review. ] and [ step through the unresolved threads, V shows
+ * or hides the versions view, U goes to the next file not marked Viewed and ⇧U marks the one in view first. C then B
+ * copies the branch, R then R asks again everyone whose verdict is on an older version, and P then P pokes everyone
+ * who hasn't answered.
  * @param mac Whether the viewer is on macOS.
  * @returns A function that takes each keydown and returns what it completes and whether to claim it.
  */
@@ -88,6 +115,15 @@ export function createShortcutMatcher(mac: boolean): (input: KeyInput) => Shortc
       const action = NAVIGATION[input.key] ?? null;
       return { action, claim: action !== null };
     }
+    const thread = input.metaKey || input.ctrlKey ? undefined : THREAD_KEYS[input.key];
+    if (thread) {
+      chord = null;
+      return { action: thread, claim: true };
+    }
+    if (input.shiftKey && input.key.toLowerCase() === "u" && !input.metaKey && !input.ctrlKey && !input.altKey) {
+      chord = null;
+      return { action: { type: "file", markViewed: true }, claim: true };
+    }
     if (input.metaKey || input.ctrlKey || input.altKey || input.shiftKey) {
       chord = null;
       return NO_MATCH;
@@ -98,6 +134,8 @@ export function createShortcutMatcher(mac: boolean): (input: KeyInput) => Shortc
     chord = null;
     const completed = open ? CHORDS[open]?.next[key] : undefined;
     if (completed) return { action: completed, claim: true };
+    const single = SINGLE_KEYS[key];
+    if (single) return { action: single, claim: true };
     const prefix = CHORDS[key];
     if (!prefix) return NO_MATCH;
     chord = { prefix: key, at: input.time };
@@ -127,6 +165,13 @@ export function shortcutHelp(mac: boolean): ShortcutHelp[] {
     { keys: ["R", "N"], join: "then", action: "Request changes, with or without a comment" },
     { keys: ["C", "C"], join: "then", action: "Copy gh pr checkout <number>" },
     { keys: ["C", "G"], join: "then", action: "Copy the pull request's link" },
+    { keys: ["C", "B"], join: "then", action: "Copy the pull request's branch" },
+    { keys: ["]", "["], join: "or", action: "Go to the next or previous unresolved thread" },
+    { keys: ["U"], join: null, action: "Go to the next file you haven't marked Viewed" },
+    { keys: ["⇧U"], join: null, action: "Mark the file in view as Viewed, and go to the next" },
+    { keys: ["V"], join: null, action: "Show or hide the versions view" },
+    { keys: ["R", "R"], join: "then", action: "Re-request review from everyone whose verdict is on an older version" },
+    { keys: ["P", "P"], join: "then", action: "Poke every requested reviewer who hasn't answered yet" },
     ...(mac
       ? [
           { keys: ["⌘Esc"], join: null, action: "Close the pull request" },

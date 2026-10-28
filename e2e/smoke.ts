@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import nodePath from "node:path";
@@ -527,7 +528,7 @@ function createFixture(
         });
         return;
       }
-      if (graphql?.query.includes("headRefName")) {
+      if (graphql?.query.includes("pullRequests(headRefName")) {
         await route.fulfill({ json: { data: { repository: { b0: { nodes: [] } } } } });
         return;
       }
@@ -555,6 +556,7 @@ function createFixture(
                   baseRefName: "main",
                   baseRefOid: "basebase",
                   headRefOid: "ccccccc3",
+                  headRefName: "feat/rebase-planner",
                   stack: {
                     number: 338,
                     size: STACK_PULLS.length,
@@ -834,7 +836,7 @@ await inlineBar(page).getByRole("button", { name: "Keyboard shortcuts" }).click(
 const shortcutRows = await inlineBar(page).getByRole("dialog", { name: "Keyboard shortcuts" }).locator("dd").count();
 await page.keyboard.press("Escape");
 check(
-  shortcutRows === (MAC ? 11 : 9) && (await inlineBar(page).getByRole("dialog", { name: "Keyboard shortcuts" }).count()) === 0,
+  shortcutRows === (MAC ? 18 : 16) && (await inlineBar(page).getByRole("dialog", { name: "Keyboard shortcuts" }).count()) === 0,
   `the toolbar's keyboard button lists every shortcut, and Escape closes the list: ${shortcutRows} rows`,
 );
 const favicons = async () =>
@@ -1334,6 +1336,26 @@ check(
 await docked.getByLabel("Split view").uncheck();
 await docked.locator("details.file", { hasText: "README.md" }).locator(".line:not(.split)", { hasText: "Sync adopts server rebases." }).waitFor();
 
+// ] and [ step through the unresolved threads the view shows, starting over past the last.
+await splitPage.evaluate(() => (document.querySelector("flohub-versions")?.shadowRoot?.activeElement as HTMLElement | null)?.blur());
+const focusedThread = async () =>
+  splitPage.evaluate(() => (document.querySelector("flohub-versions")?.shadowRoot?.activeElement?.closest(".thread-row") as HTMLElement | null)?.dataset.thread ?? "");
+const steps: string[] = [];
+for (const key of ["]", "]", "]", "["]) {
+  const before = await focusedThread();
+  await splitPage.keyboard.press(key);
+  await splitPage.waitForFunction(
+    (previous) => ((document.querySelector("flohub-versions")?.shadowRoot?.activeElement?.closest(".thread-row") as HTMLElement | null)?.dataset.thread ?? "") !== previous,
+    before,
+  );
+  steps.push(await focusedThread());
+}
+const stepToast = (await splitPage.locator("flohub-toast").getByText(/nresolved thread/u).innerText()).trim();
+check(
+  steps[0] !== steps[1] && steps[2] === steps[0] && steps[3] === steps[1] && /^(Unresolved thread|Back to the (first|last) unresolved thread,) [12] of 2\.$/u.test(stepToast),
+  `] and [ step through the versions view's two unresolved threads, focusing each and starting over past the end: ${JSON.stringify(steps)}, "${stepToast}"`,
+);
+
 // Commenting from the view, on v3, the head; the fixture records what would go to GitHub.
 const rebaseRow = (code: string) => docked.locator("details.file", { hasText: "cmd/rebase.go" }).locator(".line", { hasText: code });
 const addOn = async (code: string, shift = false) => {
@@ -1616,6 +1638,31 @@ await page.locator(".react-viewed").click();
 await tree.locator('flohub-viewed[data-path="cmd/utils.go"][aria-checked="false"]').waitFor();
 check(true, "pressing the React Viewed button updates the tree");
 await page.locator('nav[aria-label="File Tree Navigation"]').screenshot({ path: `${SCREENSHOTS}/file-tree-light.png` });
+
+// U goes to the next file not marked Viewed, ⇧U marks the one in view and goes on.
+const fileAtTop = async () => {
+  const id = await page.evaluate(() => {
+    const files = [...document.querySelectorAll<HTMLElement>("[id^='diff-']")].filter((file) => /^diff-[\da-f]{64}$/u.test(file.id));
+    return files.find((file) => Math.abs(file.getBoundingClientRect().top - 60) <= 2)?.id ?? "";
+  });
+  return Object.keys(CHANGED_FILES).find((path) => `diff-${createHash("sha256").update(path).digest("hex")}` === id) ?? id;
+};
+await page.evaluate(() => scrollTo({ top: 0, behavior: "instant" }));
+await page.keyboard.press("u");
+await page.locator("flohub-toast").getByText(/^File not viewed yet \d+ of \d+\.$/u).waitFor();
+const firstUnviewed = await fileAtTop();
+check(
+  (await viewedToggle(firstUnviewed).getAttribute("aria-checked")) === "false",
+  `U scrolls to a file not marked Viewed: ${firstUnviewed}`,
+);
+await page.keyboard.press("Shift+U");
+await page.locator("flohub-toast").getByText(`Marked ${firstUnviewed} as viewed.`, { exact: false }).waitFor();
+await tree.locator(`flohub-viewed[data-path="${firstUnviewed}"][aria-checked="true"]`).waitFor();
+const nextUnviewed = await fileAtTop();
+check(
+  nextUnviewed !== firstUnviewed && (await viewedToggle(nextUnviewed).getAttribute("aria-checked")) === "false",
+  `⇧U marks the file in view as viewed and goes to the next one not viewed: ${firstUnviewed} → ${nextUnviewed}`,
+);
 
 await inlineBar(page).getByRole("button", { name: "Stack" }).click();
 check(
@@ -2173,6 +2220,55 @@ check(
     JSON.stringify({ path: "/reviews/9/events", body: { event: "REQUEST_CHANGES" } }),
   "R→N with draft comments submits the pending review, comment optional",
 );
+
+await keyPage.keyboard.press("c");
+await keyPage.keyboard.press("b");
+await toast.getByText("Copied feat/rebase-planner").waitFor();
+check((await readClipboard()) === "feat/rebase-planner", "C then B copies the pull request's branch");
+
+// ] in GitHub's own diff goes to the one unresolved thread with lines in it, below the fold, and counts the rest.
+await keyPage.evaluate(() => {
+  const thread = Object.assign(document.createElement("div"), { id: "r1", textContent: "Log at debug level?", style: "height: 80px" });
+  thread.style.margin = "3000px 0";
+  document.body.append(thread);
+  scrollTo({ top: 0, behavior: "instant" });
+});
+await keyPage.keyboard.press("]");
+await toast.getByText("Unresolved thread 1 of 1. 3 outdated ones aren't in the current diff; the versions view shows them.").waitFor();
+const threadTop = await keyPage.evaluate(() => Math.round((document.getElementById("r1")?.getBoundingClientRect().top ?? 0) - innerHeight * 0.3));
+check(Math.abs(threadTop) <= 2, `] scrolls GitHub's diff to the unresolved thread, at the reading line: off by ${threadTop}px`);
+await keyPage.evaluate(() => scrollTo({ top: 0, behavior: "instant" }));
+
+// P then P pokes every requested reviewer who hasn't answered; the poke test below covers one at a time.
+await keyPage.keyboard.press("p");
+await keyPage.keyboard.press("p");
+const poked = (await toast.getByText(/^Poked /u).innerText()).trim();
+check(
+  poked === "Poked mojombo and github/backend. GitHub notifies them within a minute." &&
+    keyFixture.requestLog.toSorted((a, b) => a.localeCompare(b)).join(",") === "add:mojombo,add:team:backend,remove:mojombo,remove:team:backend",
+  `P then P pokes every requested reviewer who hasn't answered: "${poked}", ${keyFixture.requestLog.join(",")}`,
+);
+await keyPage.keyboard.press("p");
+await keyPage.keyboard.press("p");
+await toast.getByText("Nobody requested is waiting: everyone answered, or was poked within the hour.").waitFor();
+check(true, "P then P again pokes nobody within the hour");
+
+// R then R asks again everyone whose verdict is on an older version: defunkt requested changes on v1.
+await inlineBar(keyPage).locator(".reviewer", { hasText: "defunkt" }).locator(".behind").waitFor();
+const rerequestsBeforeKeys = keyFixture.rerequests.length;
+await keyPage.keyboard.press("r");
+await keyPage.keyboard.press("r");
+await toast.getByText("Re-requested review from defunkt.").waitFor();
+check(
+  keyFixture.rerequests.slice(rerequestsBeforeKeys).join(",") === "defunkt",
+  `R then R re-requests review from the reviewers whose verdict is on an older version: ${keyFixture.rerequests.slice(rerequestsBeforeKeys).join(",")}`,
+);
+
+await keyPage.keyboard.press("v");
+await keyPage.locator("flohub-versions").waitFor({ state: "attached" });
+await keyPage.keyboard.press("v");
+await keyPage.locator("flohub-versions").waitFor({ state: "detached" });
+check(true, "V opens the versions view and closes it again");
 
 const filter = keyPage.getByPlaceholder("Filter changed files");
 await filter.click();
