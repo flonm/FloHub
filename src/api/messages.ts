@@ -5,6 +5,7 @@ import type { PullRef } from "../core/pull-ref";
 import type { Inbox } from "../core/inbox";
 import type { ViewedFiles } from "../core/viewed";
 import type { ReviewEvent } from "../core/shortcuts";
+import type { PullMove } from "../core/pull-state";
 import type { VersionHistory } from "../core/versions";
 
 export type Message =
@@ -17,6 +18,7 @@ export type Message =
   | { type: "set-viewed"; pullRequestId: string; path: string; viewed: boolean }
   | { type: "pending-comments"; ref: PullRef }
   | { type: "submit-review"; ref: PullRef; event: ReviewEvent; body: string }
+  | { type: "move-pull"; pullRequestId: string; move: PullMove }
   /** `maxAgeMs` lets a stored inbox that young answer without asking GitHub. */
   | { type: "inbox"; maxAgeMs?: number }
   | { type: "versions"; ref: PullRef }
@@ -38,6 +40,7 @@ export interface ReplyByType {
   "set-viewed": null;
   "pending-comments": number | null;
   "submit-review": null;
+  "move-pull": null;
   inbox: Inbox;
   versions: VersionHistory;
   "version-patch": VersionPatch;

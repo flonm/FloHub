@@ -15,6 +15,13 @@ import type { Turn } from "../core/turn";
 import type { ProgressCounts } from "../core/addressed";
 import { type StandingVerdict, staleLabel } from "../core/since-review";
 import { reasonWords } from "./turn-words";
+import { MOVE_WORDS, moveKeys, type PullMove, type PullState, type PullStatus, pullMoves, STATE_WORDS } from "../core/pull-state";
+
+/** The busy key of a change to the pull request's state. */
+export const PULL_STATE_BUSY = "pull-state";
+
+const STATE_ICONS: Record<PullState, "pull" | "pull-draft" | "pull-closed"> = { open: "pull", draft: "pull-draft", closed: "pull-closed", merged: "pull" };
+const MOVE_ICONS: Record<PullMove, "pull" | "pull-draft" | "pull-closed"> = { close: "pull-closed", reopen: "pull", draft: "pull-draft", ready: "pull" };
 
 export type BarState =
   | { kind: "loading" }
@@ -56,6 +63,8 @@ export type BarState =
       progress?: ProgressCounts | null;
       /** Each reviewer's standing approval or change request with its version, by login, once the versions are known. */
       standings?: ReadonlyMap<string, StandingVerdict>;
+      /** The pull request's state and who may change it; null while only a cached stack from another layer is shown. */
+      pull?: PullStatus | null;
     };
 
 /** What Files changed shows: GitHub's diff, the same with what changed since the viewer's review highlighted, or the versions view. */
@@ -79,6 +88,8 @@ export interface BarActions {
   chooseDiff: (mode: DiffMode) => void;
   toggleDiscussion: () => void;
   toggleDiscussionBots: () => void;
+  /** Closes, reopens, converts to draft or marks ready for review. */
+  movePull: (move: PullMove) => void;
 }
 
 const MAX_FACES = 6;
@@ -109,6 +120,8 @@ export class ReviewBar {
   /** Whether the toolbar's list of shortcuts is open, kept across re-renders. */
   private shortcutsOpen = false;
   private releaseShortcuts: (() => void) | null = null;
+  /** Whether the menu of the pull request's state is open, kept across re-renders. */
+  private pullMenuOpen = false;
 
   constructor(
     private readonly mode: "inline" | "floating",
@@ -128,6 +141,15 @@ export class ReviewBar {
       if ((event as KeyboardEvent).key !== "Escape" || !this.shortcutsOpen) return;
       event.stopPropagation();
       this.showShortcuts(false);
+    });
+    this.shadow.addEventListener("keydown", (event) => {
+      if ((event as KeyboardEvent).key !== "Escape" || !this.pullMenuOpen) return;
+      event.stopPropagation();
+      this.showPullMenu(false);
+    });
+    document.addEventListener("pointerdown", (event) => {
+      const inside = event.composedPath().some((target) => target instanceof Element && target.classList.contains("pull-state"));
+      if (this.pullMenuOpen && !inside) this.showPullMenu(false);
     });
     document.addEventListener("pointerdown", (event) => {
       if (this.shortcutsOpen && event.composedPath().every((target) => !(target instanceof Element) || !target.classList.contains("shortcuts"))) {
@@ -220,7 +242,8 @@ export class ReviewBar {
     if (state.forcePushes.count > 0 || state.highlight) toolbar.append(...this.renderDiff(state));
     const talk = discussion ? renderDiscussionControls(discussion) : [];
     const group = el("div", { class: "tool-group end" });
-    group.append(...talk, this.renderShortcuts());
+    const pull = state.pull ? this.renderPullState(state.pull, state.busy.has(PULL_STATE_BUSY)) : null;
+    group.append(...(pull ? [pull] : []), ...talk, this.renderShortcuts());
     toolbar.append(group);
     layout.append(toolbar);
     const list = discussion ? renderDiscussionList(discussion) : null;
@@ -297,6 +320,52 @@ export class ReviewBar {
       controls.push(details);
     }
     return controls;
+  }
+
+  /**
+   * The pull request's state, as a button that opens the moves it can make: close or reopen it, convert it to a draft
+   * or mark it ready for review, each with its keys.
+   * @param pull The pull request's state and who may change it.
+   * @param busy Whether a move is under way.
+   * @returns The control, or null when there is no move to offer: a merged pull request, or a viewer who may not.
+   */
+  private renderPullState(pull: PullStatus, busy: boolean): HTMLElement | null {
+    const moves = pullMoves(pull.state, pull.canUpdate && pull.id !== null);
+    if (moves.length === 0) return null;
+    const details = el("details", { class: "pull-state", "data-state": pull.state });
+    details.open = this.pullMenuOpen && !busy;
+    details.addEventListener("toggle", () => (this.pullMenuOpen = details.open));
+    const word = STATE_WORDS[pull.state];
+    const summary = el("summary", {
+      class: busy ? "tool spinning" : "tool",
+      "data-focus-key": "pull-state",
+      "aria-label": `${word}. Change the pull request's state`,
+      "data-tip": busy ? "Changing the pull request's state…" : "Change the pull request's state",
+    });
+    summary.append(icon(busy ? "sync" : STATE_ICONS[pull.state]), word);
+    const menu = el("div", { class: "pull-moves", role: "menu", "aria-label": "Pull request state" });
+    const mac = isMac(navigator.platform);
+    for (const move of moves) {
+      const item = el("button", { type: "button", role: "menuitem", "data-move": move });
+      item.append(icon(MOVE_ICONS[move]), el("span", {}, MOVE_WORDS[move].label));
+      const keys = moveKeys(move, mac);
+      if (keys) item.append(el("kbd", {}, keys));
+      if (busy) item.setAttribute("disabled", "");
+      item.addEventListener("click", () => {
+        this.showPullMenu(false);
+        this.actions.movePull(move);
+      });
+      menu.append(item);
+    }
+    details.append(summary, menu);
+    return details;
+  }
+
+  private showPullMenu(open: boolean): void {
+    if (open === this.pullMenuOpen) return;
+    this.pullMenuOpen = open;
+    this.render(this.state);
+    if (!open) this.shadow.querySelector<HTMLElement>('[data-focus-key="pull-state"]')?.focus();
   }
 
   /** @returns The keyboard button, and the list of shortcuts it opens under it. */

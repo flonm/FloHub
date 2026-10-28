@@ -1,4 +1,5 @@
-import { type BarState, type DiffMode, ReviewBar } from "./ui/bar";
+import { type BarState, type DiffMode, PULL_STATE_BUSY, ReviewBar } from "./ui/bar";
+import { moveDone, moveFor, MOVE_WORDS, noMoveReason, type PullMove, pullStateOf, type StateIntent, stateAfter } from "./core/pull-state";
 import { findInlineAnchor } from "./ui/anchor";
 import { DiffHighlights, type HighlightStatus } from "./ui/diff-highlights";
 import { Favicon, faviconUrl } from "./ui/favicon";
@@ -8,7 +9,7 @@ import { isWholeFilesTab, type PullRef, parsePullRef, pullKey, pullTab } from ".
 import { ReviewDialog } from "./ui/review-dialog";
 import { deriveDiscussion, lastReviewBy } from "./core/discussion";
 import { deriveReviewers, type DismissedVerdict, type Reviewer } from "./core/reviewers";
-import { type CopyTarget, createShortcutMatcher, type ReviewEvent } from "./core/shortcuts";
+import { type CopyTarget, createShortcutMatcher, isMac, type ReviewEvent } from "./core/shortcuts";
 import type { Overview, VersionPatch } from "./api/github";
 import { readCachedOverview } from "./api/overview-cache";
 import { overviewTurnInput, repliesAwaiting, type Turn, whoseTurn } from "./core/turn";
@@ -90,7 +91,7 @@ const versionsView = new VersionsView();
 const jumpMenu = new JumpMenu();
 const toast = new Toast();
 const favicon = new Favicon();
-const matchShortcut = createShortcutMatcher();
+const matchShortcut = createShortcutMatcher(isMac(navigator.platform));
 
 const actions = {
   refresh: () => void load(true),
@@ -123,6 +124,7 @@ const actions = {
     showBots = !showBots;
     update({ showBots });
   },
+  movePull: (move: PullMove) => void movePull(move),
 };
 const inline = new ReviewBar("inline", actions);
 const floating = new ReviewBar("floating", actions);
@@ -373,6 +375,7 @@ function readyState(overview: Overview, ref: PullRef, exact: boolean): Extract<B
     versionsOpen: versionsView.isOpen,
     ...turnOf(pullRequest, overview.viewer.login, exact),
     standings: standingsFor(ref, reviewers),
+    pull: exact ? { state: pullStateOf(pullRequest), canUpdate: pullRequest.viewerCanUpdate, id: pullRequest.id ?? null } : null,
   };
 }
 
@@ -598,6 +601,8 @@ function openDismissal(reviewer: Reviewer, verdict: DismissedVerdict): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  // macOS sends no keyup for a key pressed with ⌘ held, so a claimed ⌘Esc is let go once Esc goes down again.
+  if (event.code === claimedKey) claimedKey = null;
   if (!current || dialog.isOpen) return;
   const { action, claim } = matchShortcut({
     key: event.key,
@@ -615,10 +620,57 @@ function onKeydown(event: KeyboardEvent): void {
     event.stopImmediatePropagation();
   }
   if (!action) return;
-  if (action.type === "navigate") navigateStack(action.direction);
-  else if (action.type === "copy") void copyForPull(action.what);
-  else if (action.withComment) openReview(action.event);
-  else void approveNow();
+  switch (action.type) {
+    case "navigate": {
+      navigateStack(action.direction);
+      break;
+    }
+    case "copy": {
+      void copyForPull(action.what);
+      break;
+    }
+    case "state": {
+      moveByShortcut(action.intent);
+      break;
+    }
+    case "review": {
+      if (action.withComment) openReview(action.event);
+      else void approveNow();
+      break;
+    }
+  }
+}
+
+/** Makes the move a shortcut asks for, or says why it makes none. */
+function moveByShortcut(intent: StateIntent): void {
+  const pull = state.kind === "ready" ? state.pull : null;
+  if (!pull?.id) {
+    toast.show("FloHub is still loading the pull request. Try again in a moment.", "info");
+    return;
+  }
+  const move = moveFor(intent, pull.state, pull.canUpdate);
+  if (move) void movePull(move);
+  else toast.show(noMoveReason(intent, pull.state, pull.canUpdate), "info");
+}
+
+/** Closes, reopens, converts to draft or marks ready for review, then shows the new state at once. */
+async function movePull(move: PullMove): Promise<void> {
+  const ref = current;
+  const pull = state.kind === "ready" ? state.pull : null;
+  if (!ref || !pull?.id || busy.has(PULL_STATE_BUSY)) return;
+  busy.add(PULL_STATE_BUSY);
+  render();
+  const reply = await send({ type: "move-pull", pullRequestId: pull.id, move });
+  busy.delete(PULL_STATE_BUSY);
+  const here = current && pullKey(current) === pullKey(ref);
+  if (reply.ok) {
+    toast.show(moveDone(move, ref.number, isMac(navigator.platform)), "success");
+    if (here) update({ pull: { ...pull, state: stateAfter(move) } });
+  } else {
+    toast.show(`Could not ${MOVE_WORDS[move].failed} #${ref.number}: ${reply.message}`, "danger");
+    if (here) render();
+  }
+  await load(true);
 }
 
 async function copyForPull(what: CopyTarget): Promise<void> {

@@ -26,7 +26,10 @@ export type IconName =
   | "target"
   | "keyboard"
   | "pin"
-  | "clock";
+  | "clock"
+  | "pull"
+  | "pull-draft"
+  | "pull-closed";
 
 type Shape = ["path", { d: string; class?: string }] | ["circle", { cx: string; cy: string; r: string; class?: string }];
 
@@ -98,6 +101,24 @@ const ICONS: Record<IconName, Shape[]> = {
         d: "M12.39 6.64L14.31 6.92V9.08L12.39 9.36L12.07 10.15L13.23 11.69L11.69 13.23L10.15 12.07L9.36 12.39L9.08 14.31H6.92L6.64 12.39L5.85 12.07L4.31 13.23L2.77 11.69L3.93 10.15L3.61 9.36L1.69 9.08V6.92L3.61 6.64L3.93 5.85L2.77 4.31L4.31 2.77L5.85 3.93L6.64 3.61L6.92 1.69H9.08L9.36 3.61L10.15 3.93L11.69 2.77L13.23 4.31L12.07 5.85Z",
       },
     ],
+  ],
+  pull: [
+    ["circle", { cx: "4", cy: "3.75", r: "1.75" }],
+    ["circle", { cx: "4", cy: "12.25", r: "1.75" }],
+    ["circle", { cx: "12", cy: "12.25", r: "1.75" }],
+    ["path", { d: "M4 5.5v5M12 10.5V6.25a2 2 0 0 0-2-2H7.5M9 2.75 7.5 4.25 9 5.75" }],
+  ],
+  "pull-draft": [
+    ["circle", { cx: "4", cy: "3.75", r: "1.75" }],
+    ["circle", { cx: "4", cy: "12.25", r: "1.75" }],
+    ["circle", { cx: "12", cy: "12.25", r: "1.75" }],
+    ["path", { d: "M4 5.5v5M12 3.25v.5M12 6.5v.5M12 9.25v.5" }],
+  ],
+  "pull-closed": [
+    ["circle", { cx: "4", cy: "3.75", r: "1.75" }],
+    ["circle", { cx: "4", cy: "12.25", r: "1.75" }],
+    ["circle", { cx: "12", cy: "12.25", r: "1.75" }],
+    ["path", { d: "M4 5.5v5M10.25 2.5l3.5 3.5M13.75 2.5l-3.5 3.5M12 8.25v2.25" }],
   ],
   branch: [
     ["circle", { cx: "5", cy: "3.75", r: "1.75" }],

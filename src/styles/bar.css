@@ -538,6 +538,74 @@
 .tool-group.end {
   margin-left: auto;
 }
+/* The pull request's state, coloured as GitHub colours it, and the menu of moves it opens. */
+.pull-state {
+  position: relative;
+}
+.pull-state > summary {
+  list-style: none;
+}
+.pull-state > summary::-webkit-details-marker {
+  display: none;
+}
+.pull-state[data-state="open"] > summary svg {
+  color: var(--flo-success);
+}
+.pull-state[data-state="closed"] > summary svg {
+  color: var(--flo-danger);
+}
+.pull-state[data-state="draft"] > summary svg {
+  color: var(--flo-muted);
+}
+.pull-moves {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 4px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  min-width: 220px;
+  padding: 4px;
+  border: 1px solid var(--flo-border);
+  border-radius: var(--flo-radius-md);
+  background: var(--flo-bg);
+  box-shadow: var(--flo-shadow);
+}
+.pull-moves button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--flo-radius-sm);
+  background: transparent;
+  color: var(--flo-fg);
+  font: 13px var(--flo-font);
+  text-align: left;
+  cursor: pointer;
+}
+.pull-moves button:hover:not(:disabled),
+.pull-moves button:focus-visible {
+  background: var(--flo-bg-muted);
+}
+.pull-moves button span {
+  flex: 1;
+  white-space: nowrap;
+}
+.pull-moves button svg {
+  width: 14px;
+  height: 14px;
+  color: var(--flo-muted);
+}
+.pull-moves button[data-move="close"] svg {
+  color: var(--flo-danger);
+}
+.pull-moves button[data-move="reopen"] svg,
+.pull-moves button[data-move="ready"] svg {
+  color: var(--flo-success);
+}
+
 .dropped {
   position: relative;
 }

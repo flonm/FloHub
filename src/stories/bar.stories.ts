@@ -3,7 +3,8 @@ import type { DiscussionItem } from "../core/discussion";
 import type { Reviewer } from "../core/reviewers";
 import { deriveStack } from "../core/stack";
 import type { Version } from "../core/versions";
-import { type BarActions, type BarState, ReviewBar } from "../ui/bar";
+import { type BarActions, type BarState, PULL_STATE_BUSY, ReviewBar } from "../ui/bar";
+import { type PullState, stateAfter } from "../core/pull-state";
 import { NOW, pull, stack } from "./shadow";
 
 const HOUR = 3_600_000;
@@ -35,6 +36,7 @@ const NOOP: BarActions = {
   chooseDiff: () => undefined,
   toggleDiscussion: () => undefined,
   toggleDiscussionBots: () => undefined,
+  movePull: () => undefined,
 };
 
 /** @returns A reviewer for the bar's chips. */
@@ -156,6 +158,7 @@ function ready(overrides: Partial<Extract<BarState, { kind: "ready" }>> = {}): E
     showBots: false,
     viewer: "tizian",
     versionsOpen: false,
+    pull: { state: "open", canUpdate: true, id: "PR_344" },
     ...overrides,
   };
 }
@@ -186,6 +189,10 @@ function interactive(state: Extract<BarState, { kind: "ready" }>): HTMLElement {
     },
     toggleDiscussionBots: () => {
       current = { ...current, showBots: !current.showBots };
+      instance.render(current);
+    },
+    movePull: (move) => {
+      current = { ...current, pull: current.pull ? { ...current.pull, state: stateAfter(move) } : null };
       instance.render(current);
     },
     chooseDiff: (mode) => {
@@ -375,6 +382,32 @@ export const InlineShortcuts: Story = {
     host.shadowRoot!.querySelector<HTMLButtonElement>('[data-focus-key="shortcuts"]')!.click();
     return host;
   },
+};
+
+/** @returns The bar for a pull request in the state, with its state menu open and its moves live. */
+function stateMenu(state: PullState, canUpdate = true): HTMLElement {
+  const host = interactive(ready({ pull: { state, canUpdate, id: "PR_344" } }));
+  host.shadowRoot!.querySelector<HTMLElement>('[data-focus-key="pull-state"]')?.click();
+  return host;
+}
+
+/** An open pull request's state menu: convert it to a draft, or close it. Pick one to see the state change. */
+export const StateOpen: Story = { render: () => stateMenu("open") };
+
+/** A draft's: mark it ready for review, or close it. */
+export const StateDraft: Story = { render: () => stateMenu("draft") };
+
+/** A closed pull request's: reopen it. */
+export const StateClosed: Story = { render: () => stateMenu("closed") };
+
+/** A merged pull request, or one the viewer may not change, has no moves, so the toolbar shows no state control. */
+export const StateMerged: Story = { render: () => stateMenu("merged") };
+
+export const StateNotYours: Story = { render: () => stateMenu("open", false) };
+
+/** While a move is under way, the control spins and its moves wait. */
+export const StateChanging: Story = {
+  render: () => inline(ready({ pull: { state: "draft", canUpdate: true, id: "PR_344" }, busy: new Set([PULL_STATE_BUSY]) })),
 };
 
 /** Force-pushes and highlighted changes since the viewer's review. */

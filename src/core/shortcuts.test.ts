@@ -6,13 +6,18 @@ function press(key: string, time: number, overrides: Partial<KeyInput> = {}): Ke
 }
 
 function claims(inputs: KeyInput[]) {
-  const match = createShortcutMatcher();
+  const match = createShortcutMatcher(true);
   return inputs.map((input) => match(input).claim);
 }
 
 function run(inputs: KeyInput[]) {
-  const match = createShortcutMatcher();
+  const match = createShortcutMatcher(true);
   return inputs.map((input) => match(input).action);
+}
+
+/** @returns Every key the shortcut list names. */
+function keys(mac: boolean): string[] {
+  return shortcutHelp(mac).flatMap((row) => row.keys);
 }
 
 describe("createShortcutMatcher", () => {
@@ -75,6 +80,27 @@ describe("createShortcutMatcher", () => {
     expect(run([press("ArrowUp", 0, { metaKey: true, shiftKey: true, altKey: true })])).toEqual([null]);
   });
 
+  test("⌘Esc closes the pull request and ⌘⇧Esc reopens it, on macOS only", () => {
+    expect(run([press("Escape", 0, { metaKey: true })])).toEqual([{ type: "state", intent: "close" }]);
+    expect(run([press("Escape", 0, { metaKey: true, shiftKey: true })])).toEqual([{ type: "state", intent: "reopen" }]);
+    expect(claims([press("Escape", 0, { metaKey: true })])).toEqual([true]);
+    const elsewhere = createShortcutMatcher(false);
+    expect(elsewhere(press("Escape", 0, { ctrlKey: true }))).toEqual({ action: null, claim: false });
+    expect(elsewhere(press("Escape", 0, { metaKey: true }))).toEqual({ action: null, claim: false });
+  });
+
+  test("a plain Esc, or one typed in a text field, is left to the page", () => {
+    expect(claims([press("Escape", 0)])).toEqual([false]);
+    expect(run([press("Escape", 0), press("Escape", 10, { metaKey: true, editable: true })])).toEqual([null, null]);
+    expect(run([press("Escape", 0, { metaKey: true, altKey: true })])).toEqual([null]);
+  });
+
+  test("D then D toggles the draft, claiming both Ds from the page", () => {
+    expect(run([press("d", 0), press("d", 200)])).toEqual([null, { type: "state", intent: "toggle-draft" }]);
+    expect(claims([press("d", 0), press("d", 200)])).toEqual([true, true]);
+    expect(run([press("d", 0), press("d", CHORD_TIMEOUT_MS + 1)])).toEqual([null, null]);
+  });
+
   test("C then C copies the checkout command, C then G the link", () => {
     expect(run([press("c", 0), press("c", 200)])).toEqual([null, { type: "copy", what: "checkout" }]);
     expect(run([press("c", 0), press("c", CHORD_TIMEOUT_MS + 1)])).toEqual([null, null]);
@@ -98,10 +124,16 @@ describe("the shortcut list", () => {
     expect(shortcutHelp(false)[0]?.keys).toEqual(["Ctrl+⇧↑", "Ctrl+⇧↓"]);
   });
 
+  test("lists closing and reopening only on macOS, where they have keys", () => {
+    expect(keys(true)).toContain("⌘Esc");
+    expect(keys(true)).toContain("⌘⇧Esc");
+    expect(keys(false).some((key) => key.includes("Esc") && key !== "Esc")).toBe(false);
+  });
+
   test("every chord it lists is one the matcher acts on", () => {
     for (const row of shortcutHelp(true)) {
       if (row.join !== "then") continue;
-      const match = createShortcutMatcher();
+      const match = createShortcutMatcher(true);
       const [first = "", second = ""] = row.keys.map((key) => key.toLowerCase());
       match(press(first, 0));
       expect(match(press(second, 100)).action).not.toBeNull();
