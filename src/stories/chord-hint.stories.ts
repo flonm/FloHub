@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
-import { chordHints } from "../core/shortcuts";
+import { chordHints, shortcutHelp } from "../core/shortcuts";
 import { ChordHint } from "../ui/chord-hint";
 import { el } from "../ui/dom";
 
@@ -37,3 +37,12 @@ export const Review: Story = { render: () => hint("r") };
 
 /** D: the one key that may follow. */
 export const Draft: Story = { render: () => hint("d") };
+
+/** ?: every shortcut, as the toolbar's keyboard button lists them. */
+export const AllShortcuts: Story = {
+  render: () => {
+    for (const previous of document.querySelectorAll("flohub-chord-hint")) previous.remove();
+    new ChordHint().showAll(shortcutHelp(true));
+    return el("p", {}, "The list appears fixed near the bottom of the page.");
+  },
+};

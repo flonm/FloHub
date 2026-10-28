@@ -128,6 +128,14 @@ describe("createShortcutMatcher", () => {
     expect(claims([press("]", 0, modifiers)])).toEqual([true]);
   });
 
+  test.each([
+    ["US layouts and a German Mac, with ⇧", { shiftKey: true }],
+    ["a layout that types it unshifted", {}],
+  ])("? shows the shortcut list, on %s, claiming it from GitHub's own", (_, modifiers) => {
+    expect(run([press("?", 0, modifiers)])).toEqual([{ type: "help" }]);
+    expect(claims([press("?", 0, modifiers), press("?", 10, { ...modifiers, metaKey: true })])).toEqual([true, false]);
+  });
+
   test("] and [ with ⌘ or Ctrl, or in a text field, are left to the page", () => {
     expect(claims([press("]", 0, { metaKey: true }), press("[", 10, { ctrlKey: true }), press("]", 20, { editable: true })])).toEqual([false, false, false]);
   });

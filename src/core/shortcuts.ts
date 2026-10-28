@@ -10,7 +10,8 @@ type ShortcutAction =
   | { type: "thread"; direction: 1 | -1 }
   | { type: "file"; markViewed: boolean }
   | { type: "versions" }
-  | { type: "ask"; who: AskTarget };
+  | { type: "ask"; who: AskTarget }
+  | { type: "help" };
 
 /** What C then C, C then G or C then B copies: the `gh pr checkout` command, the pull request's link, or its branch. */
 export type CopyTarget = "checkout" | "link" | "branch";
@@ -71,12 +72,13 @@ const SINGLE_KEYS: Record<string, ShortcutAction> = {
 };
 
 /**
- * The thread keys, by the character they type. A German Mac types them with ⌥ and NeoQwertz on its third layer, so
- * only ⌘ and Ctrl rule them out.
+ * The keys that type a symbol, by the symbol. A German Mac types ] and [ with ⌥ and ? with ⇧, and NeoQwertz its
+ * brackets on the third layer, so only ⌘ and Ctrl rule them out.
  */
-const THREAD_KEYS: Record<string, ShortcutAction> = {
+const SYMBOL_KEYS: Record<string, ShortcutAction> = {
   "]": { type: "thread", direction: 1 },
   "[": { type: "thread", direction: -1 },
+  "?": { type: "help" },
 };
 
 const MODIFIER_KEYS = new Set(["Shift", "Meta", "Control", "Alt", "CapsLock"]);
@@ -92,7 +94,7 @@ const NO_MATCH: ShortcutMatch = { action: null, claim: false };
  * turns a pull request into a draft, or a draft ready for review. ] and [ step through the unresolved threads, V shows
  * or hides the versions view, F goes to the next file not marked Viewed and ⇧F marks the one in view first. C then B
  * copies the branch, R then R asks again everyone whose verdict is on an older version, and P then P pokes everyone
- * who hasn't answered.
+ * who hasn't answered. ? shows the list of them all.
  * @param mac Whether the viewer is on macOS.
  * @returns A function that takes each keydown and returns what it completes and whether to claim it.
  */
@@ -115,10 +117,10 @@ export function createShortcutMatcher(mac: boolean): ShortcutMatcher {
       const action = NAVIGATION[input.key] ?? null;
       return { action, claim: action !== null };
     }
-    const thread = input.metaKey || input.ctrlKey ? undefined : THREAD_KEYS[input.key];
-    if (thread) {
+    const symbol = input.metaKey || input.ctrlKey ? undefined : SYMBOL_KEYS[input.key];
+    if (symbol) {
       chord = null;
-      return { action: thread, claim: true };
+      return { action: symbol, claim: true };
     }
     if (input.shiftKey && input.key.toLowerCase() === "f" && !input.metaKey && !input.ctrlKey && !input.altKey) {
       chord = null;
@@ -214,6 +216,7 @@ export function shortcutHelp(mac: boolean): ShortcutHelp[] {
       : []),
     { keys: ["D", "D"], join: "then", action: "Convert to draft, or mark a draft ready for review" },
     { keys: ["1", "2", "3"], join: null, action: "In the menu a comment's file link opens: pick a way to see its code" },
+    { keys: ["?"], join: null, action: "Show this list" },
     { keys: ["Esc"], join: null, action: "Close a menu, a dialog or the versions view" },
   ];
 }

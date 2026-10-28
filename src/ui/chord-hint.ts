@@ -1,4 +1,6 @@
+import type { ShortcutHelp } from "../core/shortcuts";
 import { el } from "./dom";
+import { renderShortcutList } from "./shortcut-list";
 
 const HINT_STYLES = `
 :host {
@@ -19,12 +21,17 @@ const HINT_STYLES = `
   background: var(--bgColor-default, #ffffff);
   color: var(--fgColor-default, #1f2328);
   box-shadow: var(--shadow-floating-large, 0 8px 24px rgba(140, 149, 159, 0.2));
+  max-height: calc(100vh - 120px);
+  overflow: auto;
   animation: rise 140ms ease-out;
 }
 .head { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; color: var(--fgColor-muted, #59636e); }
 .head .esc { margin-left: auto; font-size: 12px; }
 dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: baseline; margin: 0; }
-dt { justify-self: start; }
+.head strong { color: var(--fgColor-default, #1f2328); font-weight: 600; }
+.then { margin: 0 2px; color: var(--fgColor-muted, #59636e); font-size: 12px; }
+dt { justify-self: start; display: flex; align-items: center; gap: 4px; }
+.hint[data-all] { max-width: min(600px, calc(100vw - 32px)); }
 dd { margin: 0; }
 kbd {
   display: inline-block;
@@ -49,8 +56,8 @@ export interface ChordChoice {
 }
 
 /**
- * The hint that shows, after a pause, what may follow the first key of a chord, as Graphite's does. It only shows:
- * the keys themselves go to the shortcut matcher.
+ * The hint that shows, after a pause, what may follow the first key of a chord, as Graphite's does, or, for ?, every
+ * shortcut. It only shows: the keys themselves go to the shortcut matcher.
  */
 export class ChordHint {
   private readonly host: HTMLElement;
@@ -84,6 +91,21 @@ export class ChordHint {
       list.append(key, el("dd", {}, choice.action));
     }
     this.panel.replaceChildren(head, list);
+    delete this.panel.dataset.all;
+    if (!this.host.isConnected) document.body.append(this.host);
+  }
+
+  /** @returns Whether it shows every shortcut, as ? asks, rather than a chord's. */
+  get listsAll(): boolean {
+    return this.isOpen && this.panel.dataset.all !== undefined;
+  }
+
+  /** @param rows Every shortcut, as the shortcut list names them. */
+  showAll(rows: ShortcutHelp[]): void {
+    const head = el("p", { class: "head" });
+    head.append(el("strong", {}, "Keyboard shortcuts"), el("span", { class: "esc" }, "Esc closes"));
+    this.panel.replaceChildren(head, renderShortcutList(rows));
+    this.panel.dataset.all = "";
     if (!this.host.isConnected) document.body.append(this.host);
   }
 

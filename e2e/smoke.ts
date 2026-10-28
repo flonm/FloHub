@@ -836,7 +836,7 @@ await inlineBar(page).getByRole("button", { name: "Keyboard shortcuts" }).click(
 const shortcutRows = await inlineBar(page).getByRole("dialog", { name: "Keyboard shortcuts" }).locator("dd").count();
 await page.keyboard.press("Escape");
 check(
-  shortcutRows === (MAC ? 18 : 16) && (await inlineBar(page).getByRole("dialog", { name: "Keyboard shortcuts" }).count()) === 0,
+  shortcutRows === (MAC ? 19 : 17) && (await inlineBar(page).getByRole("dialog", { name: "Keyboard shortcuts" }).count()) === 0,
   `the toolbar's keyboard button lists every shortcut, and Escape closes the list: ${shortcutRows} rows`,
 );
 const favicons = async () =>
@@ -2243,6 +2243,17 @@ check(
   `Esc puts the hint away and drops the chord, so the next D starts afresh: ${keyFixture.pull.moves.join(",")}`,
 );
 await keyPage.keyboard.press("x");
+
+// ? shows every shortcut, instead of GitHub's own list, and ? again puts it away.
+await keyPage.keyboard.press("Shift+Slash");
+await chordHint.getByText("Keyboard shortcuts").waitFor();
+const listedRows = await chordHint.locator("dt").count();
+await keyPage.keyboard.press("Shift+Slash");
+await keyPage.waitForTimeout(100);
+check(
+  listedRows === (MAC ? 19 : 17) && (await chordHint.count()) === 0,
+  `? lists every shortcut and ? again puts the list away: ${listedRows} rows`,
+);
 
 // ] in GitHub's own diff goes to the one unresolved thread with lines in it, below the fold, and counts the rest.
 // GitHub folds it on its line while the comments panel is open: only a "View comments" button, which GitHub adds to the

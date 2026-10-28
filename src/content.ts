@@ -10,7 +10,7 @@ import { isWholeFilesTab, type PullRef, parsePullRef, pullKey, pullTab } from ".
 import { ReviewDialog } from "./ui/review-dialog";
 import { deriveDiscussion, lastReviewBy } from "./core/discussion";
 import { deriveReviewers, type DismissedVerdict, type Reviewer } from "./core/reviewers";
-import { type AskTarget, chordHints, type CopyTarget, createShortcutMatcher, isMac, type ReviewEvent } from "./core/shortcuts";
+import { type AskTarget, chordHints, type CopyTarget, createShortcutMatcher, isMac, type ReviewEvent, shortcutHelp } from "./core/shortcuts";
 import type { Overview, VersionPatch } from "./api/github";
 import { readCachedOverview } from "./api/overview-cache";
 import { overviewTurnInput, repliesAwaiting, type Turn, whoseTurn } from "./core/turn";
@@ -631,9 +631,11 @@ function onKeydown(event: KeyboardEvent): void {
   if (!current || dialog.isOpen) return;
   clearTimeout(hintTimer);
   if (chordHint.isOpen && !["Shift", "Meta", "Control", "Alt", "CapsLock"].includes(event.key)) {
+    const listed = chordHint.listsAll;
     chordHint.hide();
-    // Esc puts the hint away and drops the chord, and nothing else: not the versions view, not a GitHub dialog.
-    if (event.key === "Escape") {
+    // Esc puts the hint away and drops the chord, and nothing else: not the versions view, not a GitHub dialog. ? puts
+    // away the list it opened.
+    if (event.key === "Escape" || (listed && event.key === "?")) {
       matchShortcut.cancel();
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -690,6 +692,10 @@ function onKeydown(event: KeyboardEvent): void {
     }
     case "ask": {
       void askAll(action.who);
+      break;
+    }
+    case "help": {
+      chordHint.showAll(shortcutHelp(MAC));
       break;
     }
   }
