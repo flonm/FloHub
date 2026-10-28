@@ -5,12 +5,12 @@ import { el } from "../ui/dom";
 
 /**
  * @param first A chord's first key, lower case.
- * @returns A line that gives the canvas some height, since the hint itself floats above the toast's place.
+ * @returns A line that gives the canvas some height, since the hint itself floats in the middle of the window.
  */
 function hint(first: string): HTMLElement {
   for (const previous of document.querySelectorAll("flohub-chord-hint")) previous.remove();
   new ChordHint().show(first.toUpperCase(), chordHints(first, true));
-  return el("p", {}, "The hint appears fixed near the bottom of the page.");
+  return el("p", {}, "The hint appears fixed in the middle of the window.");
 }
 
 const meta = {
@@ -43,6 +43,6 @@ export const AllShortcuts: Story = {
   render: () => {
     for (const previous of document.querySelectorAll("flohub-chord-hint")) previous.remove();
     new ChordHint().showAll(shortcutHelp(true));
-    return el("p", {}, "The list appears fixed near the bottom of the page.");
+    return el("p", {}, "The list appears fixed in the middle of the window.");
   },
 };

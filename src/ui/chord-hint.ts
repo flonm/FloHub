@@ -5,10 +5,10 @@ import { renderShortcutList } from "./shortcut-list";
 const HINT_STYLES = `
 :host {
   position: fixed;
+  top: 50%;
   left: 50%;
-  bottom: 72px;
   z-index: 2147483000;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   font: 13px/1.5 var(--fontStack-sansSerif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif);
   pointer-events: none;
 }
@@ -21,7 +21,7 @@ const HINT_STYLES = `
   background: var(--bgColor-default, #ffffff);
   color: var(--fgColor-default, #1f2328);
   box-shadow: var(--shadow-floating-large, 0 8px 24px rgba(140, 149, 159, 0.2));
-  max-height: calc(100vh - 120px);
+  max-height: calc(100vh - 32px);
   overflow: auto;
   animation: rise 140ms ease-out;
 }
