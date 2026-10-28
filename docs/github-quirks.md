@@ -36,3 +36,23 @@ fetched comment instead.
 click a current comment's file link. If the page scrolls to the thread, GitHub fixed the first half. "In the current
 diff" with the view closed could then hand the click back to GitHub, but scrolling twice to the same thread is
 harmless. The menu itself stays, since GitHub has no versions view to offer.
+
+## A folded review thread only unfolds through a button that needs the mouse
+
+*Seen 2026-10-28 on the React Files changed page (`/pull/<n>/changes`), signed in.*
+
+**What GitHub does.** GitHub folds review threads on their line, resolved ones always and every one while the comments
+panel is open: the line shows the commenters' avatars and a count, and the thread (`div#r<first comment id>`) isn't
+drawn. The avatars themselves take no click. A "View comments" button
+(`td.diff-text-cell button[aria-label="View comments"]`) sits under them, and GitHub only renders it in the line's cell
+while the mouse is over the cell. It toggles the thread. Its `aria-expanded` stays `false` either way.
+
+**What FloHub does.** When <kbd>]</kbd> or <kbd>[</kbd> goes to a thread GitHub hasn't drawn, `unfoldThread` in
+`src/content.ts` sends the cell a `mouseover`, presses the button once it appears, sends a `mouseout`, and waits for
+`#r<first comment id>`. Since the button toggles, it does nothing to a thread already drawn. `markInPanel` then
+scrolls the comments panel (`#docked-side-panel-content`) to the thread's card, the `article` around
+`#paneldiscussion_r<first comment id>`, and outlines it.
+
+**How to tell it's fixed.** Open a pull request's Files changed tab with the comments panel open. If the avatars on a
+commented line unfold the thread when clicked, or the button is there without the mouse over the line, the hover can go,
+and FloHub can press GitHub's control directly.

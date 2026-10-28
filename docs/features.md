@@ -47,8 +47,8 @@ Graphite's shortcuts, on every pull request tab. They never fire while you type 
 | <kbd>C</kbd> then <kbd>G</kbd> | Copy the pull request's link |
 | <kbd>C</kbd> then <kbd>B</kbd> | Copy the pull request's branch |
 | <kbd>]</kbd> / <kbd>[</kbd> | Go to the next / previous unresolved thread: in the versions view while it's open, in GitHub's diff otherwise |
-| <kbd>U</kbd> | Go to the next file you haven't marked Viewed, in GitHub's diff |
-| <kbd>⇧</kbd><kbd>U</kbd> | Mark the file in view as Viewed, and go to the next |
+| <kbd>F</kbd> | Go to the next file you haven't marked Viewed, in GitHub's diff |
+| <kbd>⇧</kbd><kbd>F</kbd> | Mark the file in view as Viewed, and go to the next |
 | <kbd>V</kbd> | Show or hide the versions view |
 | <kbd>R</kbd> then <kbd>R</kbd> | Re-request review from everyone whose approval or change request is on an older version |
 | <kbd>P</kbd> then <kbd>P</kbd> | Poke every requested reviewer who hasn't answered yet, less those poked within the hour |
@@ -64,4 +64,6 @@ Closing, reopening and the draft toggle act at once, without asking, and the mes
 
 Since <kbd>C</kbd> starts a FloHub shortcut, GitHub's own <kbd>C</kbd> shortcut (the commits menu on the Files changed tab) doesn't fire on pull request pages. <kbd>R</kbd> still reaches GitHub, so quote-reply on selected text keeps working.
 
-<kbd>]</kbd> and <kbd>[</kbd> match the character typed, so they work wherever a layout puts them: <kbd>⌥</kbd><kbd>6</kbd> and <kbd>⌥</kbd><kbd>5</kbd> on a German Mac, the third layer on Neo. They go on from the last thread they went to while it is still on screen, and from where you scrolled otherwise; past the last thread they start over. GitHub's diff only shows threads whose lines are still in the current diff, so the message also counts the outdated ones, which the versions view shows. From another tab, they open Files changed on the first or last thread. <kbd>R</kbd> then <kbd>R</kbd> and <kbd>P</kbd> then <kbd>P</kbd> act at once, like each reviewer's own buttons, and the message names whom they asked. GitHub binds no <kbd>V</kbd>, <kbd>U</kbd>, <kbd>P</kbd>, <kbd>]</kbd> or <kbd>[</kbd> on a pull request, so FloHub keeps them from the page.
+Press a chord's first key (<kbd>C</kbd>, <kbd>R</kbd>, <kbd>D</kbd> or <kbd>P</kbd>) and wait a moment, and a hint lists what may follow, as on Graphite; the chord then waits for your next key however long you take. <kbd>Esc</kbd> or a click puts the hint away.
+
+<kbd>]</kbd> and <kbd>[</kbd> match the character typed, so they work wherever a layout puts them: <kbd>⌥</kbd><kbd>6</kbd> and <kbd>⌥</kbd><kbd>5</kbd> on a German Mac, the third layer on Neo. They go on from the last thread they went to while it is still on screen, and from where you scrolled otherwise; past the last thread they start over. In GitHub's diff a thread GitHub keeps folded on its line, as it does while the comments panel is open, is unfolded, and with the panel open its card there scrolls into view and keeps a blue outline until the next thread. GitHub's diff only shows threads whose lines are still in the current diff, so the message also counts the outdated ones, which the versions view shows. From another tab, they open Files changed on the first or last thread. <kbd>R</kbd> then <kbd>R</kbd> and <kbd>P</kbd> then <kbd>P</kbd> act at once, like each reviewer's own buttons, and the message names whom they asked. GitHub binds no <kbd>V</kbd>, <kbd>F</kbd>, <kbd>P</kbd>, <kbd>]</kbd> or <kbd>[</kbd> on a pull request, so FloHub keeps them from the page.

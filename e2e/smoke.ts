@@ -1639,7 +1639,7 @@ await tree.locator('flohub-viewed[data-path="cmd/utils.go"][aria-checked="false"
 check(true, "pressing the React Viewed button updates the tree");
 await page.locator('nav[aria-label="File Tree Navigation"]').screenshot({ path: `${SCREENSHOTS}/file-tree-light.png` });
 
-// U goes to the next file not marked Viewed, ⇧U marks the one in view and goes on.
+// F goes to the next file not marked Viewed, ⇧F marks the one in view and goes on.
 const fileAtTop = async () => {
   const id = await page.evaluate(() => {
     const files = [...document.querySelectorAll<HTMLElement>("[id^='diff-']")].filter((file) => /^diff-[\da-f]{64}$/u.test(file.id));
@@ -1648,20 +1648,20 @@ const fileAtTop = async () => {
   return Object.keys(CHANGED_FILES).find((path) => `diff-${createHash("sha256").update(path).digest("hex")}` === id) ?? id;
 };
 await page.evaluate(() => scrollTo({ top: 0, behavior: "instant" }));
-await page.keyboard.press("u");
+await page.keyboard.press("f");
 await page.locator("flohub-toast").getByText(/^File not viewed yet \d+ of \d+\.$/u).waitFor();
 const firstUnviewed = await fileAtTop();
 check(
   (await viewedToggle(firstUnviewed).getAttribute("aria-checked")) === "false",
-  `U scrolls to a file not marked Viewed: ${firstUnviewed}`,
+  `F scrolls to a file not marked Viewed: ${firstUnviewed}`,
 );
-await page.keyboard.press("Shift+U");
+await page.keyboard.press("Shift+F");
 await page.locator("flohub-toast").getByText(`Marked ${firstUnviewed} as viewed.`, { exact: false }).waitFor();
 await tree.locator(`flohub-viewed[data-path="${firstUnviewed}"][aria-checked="true"]`).waitFor();
 const nextUnviewed = await fileAtTop();
 check(
   nextUnviewed !== firstUnviewed && (await viewedToggle(nextUnviewed).getAttribute("aria-checked")) === "false",
-  `⇧U marks the file in view as viewed and goes to the next one not viewed: ${firstUnviewed} → ${nextUnviewed}`,
+  `⇧F marks the file in view as viewed and goes to the next one not viewed: ${firstUnviewed} → ${nextUnviewed}`,
 );
 
 await inlineBar(page).getByRole("button", { name: "Stack" }).click();
@@ -2221,22 +2221,76 @@ check(
   "R→N with draft comments submits the pending review, comment optional",
 );
 
+// A chord's first key alone shows, after a pause, what may follow, and waits past the chord's timeout for it.
+const chordHint = keyPage.locator("flohub-chord-hint");
 await keyPage.keyboard.press("c");
+await chordHint.getByText("Copy the pull request's branch").waitFor();
+const hintKeys = await chordHint.locator("dt kbd").allInnerTexts();
+await keyPage.waitForTimeout(1600);
 await keyPage.keyboard.press("b");
 await toast.getByText("Copied feat/rebase-planner").waitFor();
-check((await readClipboard()) === "feat/rebase-planner", "C then B copies the pull request's branch");
+check(
+  JSON.stringify(hintKeys) === JSON.stringify(["C", "G", "B"]) && (await chordHint.count()) === 0 && (await readClipboard()) === "feat/rebase-planner",
+  `C alone shows what may follow, and C then B, even after the hint's wait, copies the pull request's branch: ${JSON.stringify(hintKeys)}`,
+);
+await keyPage.keyboard.press("d");
+await chordHint.getByText("Convert to draft", { exact: false }).waitFor();
+await keyPage.keyboard.press("Escape");
+await keyPage.keyboard.press("d");
+await keyPage.waitForTimeout(100);
+check(
+  (await chordHint.count()) === 0 && keyFixture.pull.moves.length === 0,
+  `Esc puts the hint away and drops the chord, so the next D starts afresh: ${keyFixture.pull.moves.join(",")}`,
+);
+await keyPage.keyboard.press("x");
 
 // ] in GitHub's own diff goes to the one unresolved thread with lines in it, below the fold, and counts the rest.
+// GitHub folds it on its line while the comments panel is open: only a "View comments" button, which GitHub adds to the
+// line's cell while the mouse is over it, unfolds it. The panel lists the thread as a card.
 await keyPage.evaluate(() => {
-  const thread = Object.assign(document.createElement("div"), { id: "r1", textContent: "Log at debug level?", style: "height: 80px" });
-  thread.style.margin = "3000px 0";
-  document.body.append(thread);
+  const table = document.createElement("table");
+  table.setAttribute("aria-label", "Diff for: cmd/rebase.go");
+  table.style.margin = "3000px 0";
+  table.innerHTML = '<tbody><tr class="diff-line-row"><td class="diff-text-cell" data-diff-side="right" data-line-number="44">log(branch)</td></tr></tbody>';
+  const cell = table.querySelector("td")!;
+  cell.addEventListener("mouseover", () => {
+    if (cell.querySelector("button")) return;
+    const button = Object.assign(document.createElement("button"), { type: "button", textContent: "2" });
+    button.setAttribute("aria-label", "View comments");
+    button.addEventListener("click", () => {
+      const drawn = document.getElementById("r1");
+      if (drawn) drawn.remove();
+      else cell.append(Object.assign(document.createElement("div"), { id: "r1", textContent: "Log at debug level?" }));
+    });
+    cell.append(button);
+  });
+  cell.addEventListener("mouseout", () => cell.querySelector("button")?.remove());
+  const panel = Object.assign(document.createElement("div"), { id: "docked-side-panel-content" });
+  panel.innerHTML = '<div style="height: 200px; overflow: auto"><div style="height: 900px"></div><article><div id="paneldiscussion_r1">Log at debug level?</div></article><div style="height: 900px"></div></div>';
+  document.body.append(table, panel);
   scrollTo({ top: 0, behavior: "instant" });
 });
 await keyPage.keyboard.press("]");
 await toast.getByText("Unresolved thread 1 of 1. 3 outdated ones aren't in the current diff; the versions view shows them.").waitFor();
-const threadTop = await keyPage.evaluate(() => Math.round((document.getElementById("r1")?.getBoundingClientRect().top ?? 0) - innerHeight * 0.3));
-check(Math.abs(threadTop) <= 2, `] scrolls GitHub's diff to the unresolved thread, at the reading line: off by ${threadTop}px`);
+await keyPage.locator("#r1").waitFor();
+const landedThread = await keyPage.evaluate(() => {
+  const row = document.querySelector('table[aria-label="Diff for: cmd/rebase.go"] tr')!;
+  const card = document.querySelector("#docked-side-panel-content article")!;
+  const list = card.parentElement!;
+  return {
+    off: Math.round(row.getBoundingClientRect().top - innerHeight * 0.3),
+    marked: card.matches("[data-flohub-current-thread]"),
+    cardTop: Math.round(card.getBoundingClientRect().top - list.getBoundingClientRect().top),
+    buttonLeft: document.querySelectorAll('button[aria-label="View comments"]').length,
+  };
+});
+check(
+  Math.abs(landedThread.off) <= 2 && landedThread.marked && landedThread.cardTop === 12 && landedThread.buttonLeft === 0,
+  `] scrolls GitHub's diff to the thread's line, unfolds it, and scrolls the comments panel to its card and marks it: ${JSON.stringify(landedThread)}`,
+);
+await keyPage.keyboard.press("]");
+await toast.getByText("Unresolved thread 1 of 1.", { exact: false }).waitFor();
+check((await keyPage.locator("#r1").count()) === 1, "] again leaves an unfolded thread unfolded");
 await keyPage.evaluate(() => scrollTo({ top: 0, behavior: "instant" }));
 
 // P then P pokes every requested reviewer who hasn't answered; the poke test below covers one at a time.

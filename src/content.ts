@@ -10,7 +10,7 @@ import { isWholeFilesTab, type PullRef, parsePullRef, pullKey, pullTab } from ".
 import { ReviewDialog } from "./ui/review-dialog";
 import { deriveDiscussion, lastReviewBy } from "./core/discussion";
 import { deriveReviewers, type DismissedVerdict, type Reviewer } from "./core/reviewers";
-import { type AskTarget, type CopyTarget, createShortcutMatcher, isMac, type ReviewEvent } from "./core/shortcuts";
+import { type AskTarget, chordHints, type CopyTarget, createShortcutMatcher, isMac, type ReviewEvent } from "./core/shortcuts";
 import type { Overview, VersionPatch } from "./api/github";
 import { readCachedOverview } from "./api/overview-cache";
 import { overviewTurnInput, repliesAwaiting, type Turn, whoseTurn } from "./core/turn";
@@ -19,6 +19,7 @@ import { nameList, pokeMessage, rangeFileStats, type StandingVerdict, staleRevie
 import { interdiff } from "./core/interdiff";
 import { deriveStack } from "./core/stack";
 import { Toast } from "./ui/toast";
+import { ChordHint } from "./ui/chord-hint";
 import { type Landed, nextStop, READING_LINE, type Stop, stopToast } from "./core/steps";
 import type { ReviewThread } from "./core/threads";
 import {
@@ -98,7 +99,12 @@ const versionsView = new VersionsView();
 const jumpMenu = new JumpMenu();
 const toast = new Toast();
 const favicon = new Favicon();
-const matchShortcut = createShortcutMatcher(isMac(navigator.platform));
+const MAC = isMac(navigator.platform);
+const matchShortcut = createShortcutMatcher(MAC);
+const chordHint = new ChordHint();
+/** How long the first key of a chord waits alone before the hint shows what may follow, in milliseconds. */
+const HINT_DELAY_MS = 600;
+let hintTimer: ReturnType<typeof setTimeout> | undefined;
 
 const actions = {
   refresh: () => void load(true),
@@ -163,6 +169,8 @@ document.addEventListener("visibilitychange", () => {
 });
 addEventListener("focus", () => void load(false));
 addEventListener("keydown", onKeydown, true);
+addEventListener("pointerdown", dropChordHint, true);
+addEventListener("blur", dropChordHint);
 document.addEventListener("click", onCommentLink, { capture: true });
 addEventListener("keypress", swallowClaimedKey, true);
 addEventListener("keyup", swallowClaimedKey, true);
@@ -621,6 +629,17 @@ function onKeydown(event: KeyboardEvent): void {
   // macOS sends no keyup for a key pressed with ⌘ held, so a claimed ⌘Esc is let go once Esc goes down again.
   if (event.code === claimedKey) claimedKey = null;
   if (!current || dialog.isOpen) return;
+  clearTimeout(hintTimer);
+  if (chordHint.isOpen && !["Shift", "Meta", "Control", "Alt", "CapsLock"].includes(event.key)) {
+    chordHint.hide();
+    // Esc puts the hint away and drops the chord, and nothing else: not the versions view, not a GitHub dialog.
+    if (event.key === "Escape") {
+      matchShortcut.cancel();
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+  }
   const { action, claim } = matchShortcut({
     key: event.key,
     metaKey: event.metaKey,
@@ -636,6 +655,8 @@ function onKeydown(event: KeyboardEvent): void {
     event.preventDefault();
     event.stopImmediatePropagation();
   }
+  const pending = matchShortcut.pending(event.timeStamp);
+  if (pending !== null) hintTimer = setTimeout(() => showChordHint(pending), HINT_DELAY_MS);
   if (!action) return;
   switch (action.type) {
     case "navigate": {
@@ -672,6 +693,36 @@ function onKeydown(event: KeyboardEvent): void {
       break;
     }
   }
+}
+
+/**
+ * Shows what may follow a chord's first key, once it has waited alone a while, and keeps the chord open until the next
+ * key. Not when the key moved the focus into a text field, as R does when it quotes the selected text.
+ * @param first The chord's first key, lower case.
+ */
+function showChordHint(first: string): void {
+  if (matchShortcut.pending(performance.now()) !== first || typingIn(document.activeElement)) return;
+  matchShortcut.hold();
+  chordHint.show(first.toUpperCase(), chordHints(first, MAC));
+}
+
+/** Puts the hint away, and drops the chord it waits on, when the viewer clicks or leaves the window instead. */
+function dropChordHint(): void {
+  clearTimeout(hintTimer);
+  if (!chordHint.isOpen) return;
+  chordHint.hide();
+  matchShortcut.cancel();
+}
+
+/**
+ * @param element The focused element, which may be a shadow root's host.
+ * @returns Whether it, or what is focused inside it, takes text.
+ */
+function typingIn(element: Element | null): boolean {
+  let focused = element;
+  while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement;
+  if (!focused) return false;
+  return (focused instanceof HTMLElement && focused.isContentEditable) || focused.matches(TEXT_FIELDS);
 }
 
 /** Makes the move a shortcut asks for, or says why it makes none. */
@@ -1020,7 +1071,7 @@ async function stepThread(direction: 1 | -1): Promise<void> {
     const view = versionsView.threadStops();
     if (view === null) toast.show("The versions view is still loading.", "info");
     else if (view === "hidden") toast.show("Comments are switched off in the versions view. Switch them on to step through the threads.", "info");
-    else land(view.stops, view.line, direction, view.go, "unresolved thread", "No unresolved threads in this diff.");
+    else await land(view.stops, view.line, direction, view.go, "unresolved thread", "No unresolved threads in this diff.");
     return;
   }
   const threads = await reviewThreads(ref);
@@ -1050,14 +1101,99 @@ async function stepThread(direction: 1 | -1): Promise<void> {
     .filter((each): each is { thread: ReviewThread; element: Element } => each.element !== null)
     .map(({ thread, element }) => ({ id: thread.id, thread, element, top: element.getBoundingClientRect().top }))
     .toSorted((a, b) => (a.top === b.top ? (a.thread.line ?? 0) - (b.thread.line ?? 0) : a.top - b.top));
-  const go = (id: string): number => {
+  const go = async (id: string): Promise<number> => {
     const stop = found.find((each) => each.id === id);
     if (!stop) return 0;
     scrollToLine(stop.element, line);
-    if (!stop.element.matches("[id^='r']")) toast.show(`GitHub hasn't drawn this thread in ${stop.thread.path} yet. If the file is collapsed, expand it.`, "info");
+    if (stop.element instanceof HTMLTableRowElement) {
+      await unfoldThread(stop.thread, stop.element);
+      scrollToLine(stop.element, line);
+      flashRows([stop.element]);
+    } else if (!/^r\d+$/u.test(stop.element.id)) {
+      toast.show(`GitHub hasn't drawn this thread in ${stop.thread.path} yet. If the file is collapsed, expand it.`, "info");
+    }
+    markInPanel(stop.thread);
     return stop.element.getBoundingClientRect().top;
   };
-  land(found, line, direction, go, "unresolved thread", "GitHub hasn't drawn the files with unresolved threads yet.", elsewhere);
+  await land(found, line, direction, go, "unresolved thread", "GitHub hasn't drawn the files with unresolved threads yet.", elsewhere);
+}
+
+/** How long GitHub may take to draw a thread FloHub unfolded, in milliseconds. */
+const UNFOLD_WAIT_MS = 1000;
+
+/**
+ * Unfolds a thread GitHub draws folded on its line, as it does with the comments panel open. Its only way to unfold
+ * is a "View comments" button GitHub puts in the line's cell while the mouse is over it (see docs/github-quirks.md),
+ * so FloHub plays the mouse over the cell and presses that. The button toggles, so a thread already drawn is left.
+ * @param thread The thread.
+ * @param row Its line's row in GitHub's diff.
+ */
+async function unfoldThread(thread: ReviewThread, row: HTMLTableRowElement): Promise<void> {
+  const first = thread.comments[0]?.id;
+  if (first === undefined) return;
+  const drawn = () => {
+    const box = document.getElementById(`r${first}`)?.getBoundingClientRect();
+    return box !== undefined && box.height > 0;
+  };
+  if (drawn()) return;
+  const cell = row.querySelector(githubLineSelector({ path: thread.path, line: thread.line ?? 0, side: thread.side })) ?? row.querySelector("td.diff-text-cell");
+  if (!cell) return;
+  cell.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
+  const button = await waitFor(() => cell.querySelector<HTMLButtonElement>('button[aria-label="View comments"]'));
+  button?.click();
+  cell.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+  if (button) await waitFor(() => (drawn() ? true : null));
+}
+
+/**
+ * @param find What to wait for, null until it is there.
+ * @returns It, once there, or null after {@link UNFOLD_WAIT_MS}.
+ */
+async function waitFor<T>(find: () => T | null): Promise<T | null> {
+  const until = performance.now() + UNFOLD_WAIT_MS;
+  for (let found = find(); ; found = find()) {
+    if (found !== null || performance.now() > until) return found;
+    // oxlint-disable-next-line no-await-in-loop -- each look waits for GitHub's next frame
+    await new Promise((resolve) => {
+      requestAnimationFrame(resolve);
+    });
+  }
+}
+
+/** The comments panel's entry FloHub marked as the thread ] and [ went to. */
+const PANEL_MARK = "data-flohub-current-thread";
+const PANEL_MARKED = "[data-flohub-current-thread]";
+
+/**
+ * Scrolls the comments panel to a thread's entry, when the panel is open, and marks it until the next thread.
+ * @param thread The thread ] or [ went to.
+ */
+function markInPanel(thread: ReviewThread): void {
+  for (const marked of document.querySelectorAll(PANEL_MARKED)) marked.removeAttribute(PANEL_MARK);
+  const first = thread.comments[0]?.id;
+  const entry = first === undefined ? null : document.getElementById(`paneldiscussion_r${first}`);
+  if (!(entry instanceof HTMLElement) || !entry.closest(COMMENTS_PANEL)) return;
+  ensurePanelStyles();
+  // The entry is its thread's first comment; the thread's card, an article, holds its file, line and replies too.
+  const box = entry.closest("article") ?? entry;
+  box.setAttribute(PANEL_MARK, "");
+  let scroller = box.parentElement;
+  while (scroller && !(scroller.scrollHeight > scroller.clientHeight && /auto|scroll/u.test(getComputedStyle(scroller).overflowY))) {
+    scroller = scroller.parentElement;
+  }
+  // Scrolling the panel itself, since scrolling the entry into view would move the diff too.
+  if (scroller) scroller.scrollTop += box.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 12;
+}
+
+function ensurePanelStyles(): void {
+  if (document.getElementById("flohub-panel-mark")) return;
+  document.head.append(
+    Object.assign(document.createElement("style"), {
+      id: "flohub-panel-mark",
+      // Inside the card, since the panel clips what reaches past it.
+      textContent: `${PANEL_MARKED} { outline: 2px solid var(--fgColor-accent, #0969da); outline-offset: -2px; }`,
+    }),
+  );
 }
 
 /**
@@ -1081,23 +1217,23 @@ function scrollToLine(element: Element, line: number): void {
 }
 
 /**
- * Where GitHub's diff shows a thread: the thread itself while it's expanded, else its line, else its file's header.
+ * Where GitHub's diff shows a thread: its line, else the thread itself, else its file's header. The line comes first:
+ * a folded thread unfolds below it, which would move a stop measured by the thread.
  * @param thread An unresolved thread with lines in the current diff.
  * @returns The element, or null when GitHub hasn't drawn even the file.
  */
 async function threadOnPage(thread: ReviewThread): Promise<Element | null> {
-  const first = thread.comments[0]?.id;
-  const drawn = first === undefined ? null : document.getElementById(`r${first}`);
-  if (drawn) return drawn;
   if (thread.line !== null) {
     const row = document.querySelector(githubLineSelector({ path: thread.path, line: thread.line, side: thread.side }))?.closest("tr");
     if (row) return row;
   }
-  return document.getElementById(await githubFileAnchor(thread.path));
+  const first = thread.comments[0]?.id;
+  const drawn = first === undefined ? null : document.getElementById(`r${first}`);
+  return drawn ?? document.getElementById(await githubFileAnchor(thread.path));
 }
 
 /**
- * U goes to the next file not marked Viewed; ⇧U marks the file being read as viewed first. Both work in GitHub's
+ * F goes to the next file not marked Viewed; ⇧F marks the file being read as viewed first. Both work in GitHub's
  * diff, which has the marks.
  * @param markViewed Whether to mark the file being read first.
  */
@@ -1105,7 +1241,7 @@ async function stepFile(markViewed: boolean): Promise<void> {
   const ref = current;
   if (!ref) return;
   if (versionsView.isOpen || !isWholeFilesTab(location.pathname)) {
-    toast.show(`${markViewed ? "⇧U" : "U"} works in GitHub's own Files changed diff, where the Viewed marks are.`, "info");
+    toast.show(`${markViewed ? "⇧F" : "F"} works in GitHub's own Files changed diff, where the Viewed marks are.`, "info");
     return;
   }
   const files = viewedTree.files(ref);
@@ -1139,7 +1275,7 @@ async function stepFile(markViewed: boolean): Promise<void> {
     return file.element.getBoundingClientRect().top;
   };
   const line = reading ? reading.element.getBoundingClientRect().top : FILE_LINE_PX;
-  land(left, line, 1, go, "file not viewed yet", "", "", done);
+  await land(left, line, 1, go, "file not viewed yet", "", "", done);
 }
 
 /** The stop ] and [, or U, last went to, and where it landed. */
@@ -1150,20 +1286,29 @@ let landed: Landed | null = null;
  * @param stops The stops, top to bottom.
  * @param line The reading line, in the stops' pixels.
  * @param direction 1 to go down, -1 to go up.
- * @param go Scrolls to a stop by id, and returns where it landed.
+ * @param go Scrolls to a stop by id, and returns where it landed, once it has.
  * @param noun What a stop is, for the toast.
  * @param none What the toast says when there are none.
  * @param after What the toast adds at the end.
  * @param before What the toast starts with.
  */
-function land(stops: Stop[], line: number, direction: 1 | -1, go: (id: string) => number, noun: string, none: string, after = "", before = ""): void {
+async function land(
+  stops: Stop[],
+  line: number,
+  direction: 1 | -1,
+  go: (id: string) => number | Promise<number>,
+  noun: string,
+  none: string,
+  after = "",
+  before = "",
+): Promise<void> {
   const next = nextStop(stops, line, direction, landed);
   const stop = next ? stops[next.index] : undefined;
   if (!next || !stop) {
     toast.show(none, "info");
     return;
   }
-  landed = { id: stop.id, top: go(stop.id) };
+  landed = { id: stop.id, top: await go(stop.id) };
   toast.show(`${before}${stopToast(next.index, stops.length, next.wrapped, noun)}${after}`, "info");
 }
 
@@ -1172,6 +1317,11 @@ function showRows(first: Element, last: Element): void {
   const rows: Element[] = [];
   for (let row: Element | null = first; row; row = row === last ? null : row.nextElementSibling) rows.push(row);
   rows[Math.floor(rows.length / 2)]?.scrollIntoView({ block: "center" });
+  flashRows(rows);
+}
+
+/** Flashes rows of GitHub's diff, so the eye finds them. */
+function flashRows(rows: readonly Element[]): void {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   for (const row of rows) {
     for (const cell of row.querySelectorAll("td")) {

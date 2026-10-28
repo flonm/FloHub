@@ -264,7 +264,7 @@ export class ViewedTree {
   }
 
   /**
-   * The pull request's files with the viewer's Viewed marks, for U and ⇧U.
+   * The pull request's files with the viewer's Viewed marks, for F and ⇧F.
    * @param ref The pull request on screen.
    * @returns Each file's path, the id of its diff on the page and its mark; null until they are fetched.
    */

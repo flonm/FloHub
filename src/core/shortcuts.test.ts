@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CHORD_TIMEOUT_MS, createShortcutMatcher, isMac, type KeyInput, shortcutHelp } from "./shortcuts";
+import { CHORD_TIMEOUT_MS, chordHints, createShortcutMatcher, isMac, type KeyInput, shortcutHelp } from "./shortcuts";
 
 function press(key: string, time: number, overrides: Partial<KeyInput> = {}): KeyInput {
   return { key, time, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, repeat: false, editable: false, ...overrides };
@@ -132,14 +132,14 @@ describe("createShortcutMatcher", () => {
     expect(claims([press("]", 0, { metaKey: true }), press("[", 10, { ctrlKey: true }), press("]", 20, { editable: true })])).toEqual([false, false, false]);
   });
 
-  test("V toggles the versions view, U goes to the next unviewed file and ⇧U marks the one in view first", () => {
-    expect(run([press("v", 0), press("u", 10), press("U", 20, { shiftKey: true })])).toEqual([
+  test("V toggles the versions view, F goes to the next unviewed file and ⇧F marks the one in view first", () => {
+    expect(run([press("v", 0), press("f", 10), press("F", 20, { shiftKey: true })])).toEqual([
       { type: "versions" },
       { type: "file", markViewed: false },
       { type: "file", markViewed: true },
     ]);
-    expect(claims([press("v", 0), press("u", 10)])).toEqual([true, true]);
-    expect(run([press("u", 0, { metaKey: true }), press("U", 10, { shiftKey: true, altKey: true })])).toEqual([null, null]);
+    expect(claims([press("v", 0), press("f", 10)])).toEqual([true, true]);
+    expect(run([press("f", 0, { metaKey: true }), press("F", 10, { shiftKey: true, altKey: true })])).toEqual([null, null]);
   });
 
   test("a single key ends an open chord", () => {
@@ -152,6 +152,49 @@ describe("createShortcutMatcher", () => {
     expect(claims([press("x", 0), press("j", 10)])).toEqual([false, false]);
     expect(claims([press("c", 0, { editable: true })])).toEqual([false]);
     expect(claims([press("ArrowUp", 0, { metaKey: true, shiftKey: true }), press("ArrowLeft", 10, { metaKey: true, shiftKey: true })])).toEqual([true, false]);
+  });
+});
+
+describe("a waiting chord", () => {
+  test("is pending after its first key until it times out, and not after a single key", () => {
+    const match = createShortcutMatcher(true);
+    match(press("c", 0));
+    expect(match.pending(500)).toBe("c");
+    expect(match.pending(CHORD_TIMEOUT_MS + 1)).toBeNull();
+    match(press("v", 2000));
+    expect(match.pending(2100)).toBeNull();
+  });
+
+  test("held while its hint shows, it waits for the next key however long that takes", () => {
+    const match = createShortcutMatcher(true);
+    match(press("r", 0));
+    match.hold();
+    expect(match.pending(60_000)).toBe("r");
+    expect(match(press("y", 60_000)).action).toMatchObject({ event: "APPROVE" });
+    expect(match.pending(60_001)).toBeNull();
+  });
+
+  test("cancelled, the next key starts afresh", () => {
+    const match = createShortcutMatcher(true);
+    match(press("c", 0));
+    match.cancel();
+    expect(match(press("c", 100)).action).toBeNull();
+  });
+});
+
+describe("chordHints", () => {
+  test("lists what may follow a chord's first key, as the shortcut list names it", () => {
+    expect(chordHints("c", true)).toEqual([
+      { key: "C", action: "Copy gh pr checkout <number>" },
+      { key: "G", action: "Copy the pull request's link" },
+      { key: "B", action: "Copy the pull request's branch" },
+    ]);
+    expect(chordHints("r", true).map((hint) => hint.key)).toEqual(["Y", "A", "N", "R"]);
+    expect(chordHints("v", true)).toEqual([]);
+  });
+
+  test("every key that starts a chord has hints", () => {
+    for (const prefix of ["r", "c", "d", "p"]) expect(chordHints(prefix, false).length).toBeGreaterThan(0);
   });
 });
 
