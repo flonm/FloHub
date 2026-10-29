@@ -1,9 +1,12 @@
+import type { StateIntent } from "./pull-state";
+
 export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES";
 
 type ShortcutAction =
   | { type: "navigate"; direction: 1 | -1 }
   | { type: "review"; event: ReviewEvent; withComment: boolean }
-  | { type: "copy"; what: CopyTarget };
+  | { type: "copy"; what: CopyTarget }
+  | { type: "state"; intent: StateIntent };
 
 /** What C then C, or C then G, copies: the `gh pr checkout` command, or the pull request's link. */
 export type CopyTarget = "checkout" | "link";
@@ -48,6 +51,8 @@ const CHORDS: Record<string, { claimFirstKey: boolean; next: Record<string, Shor
     claimFirstKey: true,
     next: { c: { type: "copy", what: "checkout" }, g: { type: "copy", what: "link" } },
   },
+  // GitHub binds no D, so the first one is claimed like C's.
+  d: { claimFirstKey: true, next: { d: { type: "state", intent: "toggle-draft" } } },
 };
 
 const MODIFIER_KEYS = new Set(["Shift", "Meta", "Control", "Alt", "CapsLock"]);
@@ -58,10 +63,13 @@ const NO_MATCH: ShortcutMatch = { action: null, claim: false };
  * Creates a matcher for Graphite's shortcuts: ⌘⇧↑/↓ (Ctrl⇧↑/↓ elsewhere) move through the stack,
  * R followed within {@link CHORD_TIMEOUT_MS} by Y, A or N reviews the pull request, C then C
  * copies the checkout command and C then G the pull request's link. GitHub binds a plain C itself, so the C that starts a chord is claimed;
- * the R is not, so quote-reply on selected text keeps working.
+ * the R is not, so quote-reply on selected text keeps working. On macOS, ⌘Esc closes the pull request, as on Graphite,
+ * and ⌘⇧Esc reopens it; Windows keeps Ctrl+Esc and Ctrl+⇧Esc for itself, so elsewhere they have no key. D then D
+ * turns a pull request into a draft, or a draft ready for review.
+ * @param mac Whether the viewer is on macOS.
  * @returns A function that takes each keydown and returns what it completes and whether to claim it.
  */
-export function createShortcutMatcher(): (input: KeyInput) => ShortcutMatch {
+export function createShortcutMatcher(mac: boolean): (input: KeyInput) => ShortcutMatch {
   let chord: { prefix: string; at: number } | null = null;
 
   return (input) => {
@@ -71,6 +79,10 @@ export function createShortcutMatcher(): (input: KeyInput) => ShortcutMatch {
     }
     if (MODIFIER_KEYS.has(input.key)) return NO_MATCH;
 
+    if (mac && input.key === "Escape" && input.metaKey && !input.ctrlKey && !input.altKey) {
+      chord = null;
+      return { action: { type: "state", intent: input.shiftKey ? "reopen" : "close" }, claim: true };
+    }
     if ((input.metaKey || input.ctrlKey) && input.shiftKey && !input.altKey) {
       chord = null;
       const action = NAVIGATION[input.key] ?? null;
@@ -115,6 +127,13 @@ export function shortcutHelp(mac: boolean): ShortcutHelp[] {
     { keys: ["R", "N"], join: "then", action: "Request changes, with or without a comment" },
     { keys: ["C", "C"], join: "then", action: "Copy gh pr checkout <number>" },
     { keys: ["C", "G"], join: "then", action: "Copy the pull request's link" },
+    ...(mac
+      ? [
+          { keys: ["⌘Esc"], join: null, action: "Close the pull request" },
+          { keys: ["⌘⇧Esc"], join: null, action: "Reopen the pull request" },
+        ]
+      : []),
+    { keys: ["D", "D"], join: "then", action: "Convert to draft, or mark a draft ready for review" },
     { keys: ["1", "2", "3"], join: null, action: "In the menu a comment's file link opens: pick a way to see its code" },
     { keys: ["Esc"], join: null, action: "Close a menu, a dialog or the versions view" },
   ];

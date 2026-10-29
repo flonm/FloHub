@@ -47,6 +47,8 @@ function review(login: string, state: string, typename: "User" | "Bot" = "User")
 const HOUR = 3_600_000;
 const REPO_URL = PULL_URL.replace(/\/pull\/\d+$/u, "");
 const CURRENT = Number(PULL_URL.split("/").pop());
+/** Whether the browser runs on macOS, where FloHub binds ⌘Esc and ⌘⇧Esc. */
+const MAC = process.platform === "darwin";
 
 function ago(hours: number): string {
   return new Date(Date.now() - hours * HOUR).toISOString();
@@ -362,6 +364,8 @@ function createFixture(
     threadsHead: "ccccccc3",
     /** Every comment, reply and resolve the versions view sent, as the request or mutation and its input. */
     reviewActions: [] as string[],
+    /** The pull request's state, which closing, reopening and the draft toggle change, and each mutation sent. */
+    pull: { state: "OPEN", isDraft: false, moves: [] as string[] },
     async handle(route: Route): Promise<void> {
       const request = route.request();
       const graphql = request.url().endsWith("/graphql")
@@ -382,6 +386,14 @@ function createFixture(
       if (request.method() === "POST" && /\/pulls\/\d+\/comments(?:\/\d+\/replies)?$/u.test(request.url())) {
         created.reviewActions.push(`POST ${new URL(request.url()).pathname.replace(/^.*\/pulls\//u, "pulls/")} ${request.postData()}`);
         await route.fulfill({ status: 201, json: { id: 5 } });
+        return;
+      }
+      const move = graphql?.query.match(/\b(closePullRequest|reopenPullRequest|convertPullRequestToDraft|markPullRequestReadyForReview)\(/u)?.[1];
+      if (graphql && move) {
+        created.pull.moves.push(move);
+        if (move === "closePullRequest" || move === "reopenPullRequest") created.pull.state = move === "closePullRequest" ? "CLOSED" : "OPEN";
+        else created.pull.isDraft = move === "convertPullRequestToDraft";
+        await route.fulfill({ json: { data: { [move]: { pullRequest: { id: "PR_current" } } } } });
         return;
       }
       const mutation = graphql?.query.match(/\b(markFileAsViewed|unmarkFileAsViewed)\b/u)?.[1];
@@ -537,6 +549,9 @@ function createFixture(
                 pullRequest: {
                   ...STACK_PULLS.find((pull) => pull.number === CURRENT),
                   ...(options.partial && { statusCheckRollup: null }),
+                  id: "PR_current",
+                  state: created.pull.state,
+                  isDraft: created.pull.isDraft,
                   baseRefName: "main",
                   baseRefOid: "basebase",
                   headRefOid: "ccccccc3",
@@ -819,7 +834,7 @@ await inlineBar(page).getByRole("button", { name: "Keyboard shortcuts" }).click(
 const shortcutRows = await inlineBar(page).getByRole("dialog", { name: "Keyboard shortcuts" }).locator("dd").count();
 await page.keyboard.press("Escape");
 check(
-  shortcutRows === 8 && (await inlineBar(page).getByRole("dialog", { name: "Keyboard shortcuts" }).count()) === 0,
+  shortcutRows === (MAC ? 11 : 9) && (await inlineBar(page).getByRole("dialog", { name: "Keyboard shortcuts" }).count()) === 0,
   `the toolbar's keyboard button lists every shortcut, and Escape closes the list: ${shortcutRows} rows`,
 );
 const favicons = async () =>
@@ -2165,6 +2180,44 @@ await keyPage.keyboard.type("ry");
 await keyPage.keyboard.press("Escape");
 await filter.blur();
 check(keyFixture.submissions.length === 4, "keys typed into GitHub's own text fields are ignored");
+
+const pullState = inlineBar(keyPage).locator(".pull-state > summary");
+await keyPage.keyboard.press("d");
+await keyPage.keyboard.press("d");
+await toast.getByText(`Turned #${CURRENT} into a draft. D then D marks it ready.`).waitFor();
+await pullState.getByText("Draft").waitFor();
+await keyPage.keyboard.press("d");
+await keyPage.keyboard.press("d");
+await toast.getByText(`Marked #${CURRENT} ready for review.`, { exact: false }).waitFor();
+await pullState.getByText("Open").waitFor();
+check(
+  JSON.stringify(keyFixture.pull.moves) === JSON.stringify(["convertPullRequestToDraft", "markPullRequestReadyForReview"]),
+  `D then D turns the pull request into a draft, and again marks it ready: ${JSON.stringify(keyFixture.pull.moves)}`,
+);
+await pullState.click();
+await inlineBar(keyPage).getByRole("menuitem", { name: /Close pull request/u }).click();
+await toast.getByText(`Closed #${CURRENT}.`, { exact: false }).waitFor();
+await pullState.getByText("Closed").waitFor();
+if (MAC) {
+  await keyPage.keyboard.press("Meta+Shift+Escape");
+} else {
+  await pullState.click();
+  await inlineBar(keyPage).getByRole("menuitem", { name: /Reopen pull request/u }).click();
+}
+await toast.getByText(`Reopened #${CURRENT}.`, { exact: false }).waitFor();
+if (MAC) {
+  await keyPage.keyboard.press("Meta+Escape");
+  await toast.getByText(`Closed #${CURRENT}. ⌘⇧Esc reopens it.`).waitFor();
+  await keyPage.keyboard.press("Meta+Escape");
+  await toast.getByText("The pull request is already closed.").waitFor();
+  await keyPage.keyboard.press("Meta+Shift+Escape");
+  await toast.getByText(`Reopened #${CURRENT}.`, { exact: false }).waitFor();
+}
+check(
+  keyFixture.pull.moves.slice(2).join(",") ===
+    (MAC ? "closePullRequest,reopenPullRequest,closePullRequest,reopenPullRequest" : "closePullRequest,reopenPullRequest"),
+  `the state menu closes the pull request${MAC ? ", ⌘⇧Esc reopens it, ⌘Esc closes it and only once" : " and reopens it"}: ${keyFixture.pull.moves.join(",")}`,
+);
 
 const upRequest = keyPage.waitForRequest((request) => request.isNavigationRequest(), { timeout: 10_000 });
 await keyPage.keyboard.press("Meta+Shift+ArrowUp");

@@ -1,6 +1,7 @@
 import type { RawDiscussionComment } from "../core/discussion";
 import { assembleRawInbox, chunk, inboxIds, type RawInbox, type RawInboxIds, type RawInboxPull } from "../core/inbox";
 import type { PullRef } from "../core/pull-ref";
+import type { PullMove } from "../core/pull-state";
 import type { ReviewEvent } from "../core/shortcuts";
 import type { RawPullRequest } from "../core/reviewers";
 import type { RawStack, RawStackPull } from "../core/stack";
@@ -66,6 +67,7 @@ query ($owner: String!, $name: String!, $number: Int!) {
       baseRefName
       baseRefOid
       headRefOid
+      id
       author { login }
       viewerCanUpdate
       forcePushes: timelineItems(last: 1, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
@@ -242,6 +244,8 @@ interface RawOverview {
       | (RawPullRequest &
           RawStackPull & {
             baseRefName: string;
+            /** The node id, for changing the state. Missing from overviews cached before it was fetched. */
+            id?: string;
             /** Missing from overviews cached before these fields existed. */
             baseRefOid?: string;
             headRefOid?: string;
@@ -499,6 +503,28 @@ export async function setFileViewed(pullRequestId: string, path: string, viewed:
   );
   const saved = viewed ? data.markFileAsViewed : data.unmarkFileAsViewed;
   if (!saved) throw new GitHubError("failed", "GitHub did not save the change. Check the token's permissions.");
+}
+
+/** GitHub's mutation for each move, and where its answer says the new state. */
+const MOVE_MUTATIONS: Record<PullMove, string> = {
+  close: "closePullRequest",
+  reopen: "reopenPullRequest",
+  draft: "convertPullRequestToDraft",
+  ready: "markPullRequestReadyForReview",
+};
+
+/**
+ * Closes, reopens, converts to draft or marks ready for review.
+ * @param pullRequestId The pull request's node id.
+ * @param move The change to make.
+ */
+export async function movePullRequest(pullRequestId: string, move: PullMove): Promise<void> {
+  const field = MOVE_MUTATIONS[move];
+  const { data } = await graphql<Record<string, { pullRequest: { id: string } | null } | null | undefined>>(
+    `mutation ($id: ID!) { ${field}(input: { pullRequestId: $id }) { pullRequest { id } } }`,
+    { id: pullRequestId },
+  );
+  if (!data[field]?.pullRequest) throw new GitHubError("failed", "GitHub did not make the change. Check the token's permissions.");
 }
 
 /**

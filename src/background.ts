@@ -8,6 +8,7 @@ import {
   fetchVersions,
   fetchViewedFiles,
   GitHubError,
+  movePullRequest,
   pokeReviewer,
   postComment,
   readToken,
@@ -94,6 +95,10 @@ async function handle(message: Message): Promise<Reply<ReplyByType[Message["type
       }
       case "submit-review": {
         await submitReview(message.ref, message.event, message.body);
+        return { ok: true, value: null };
+      }
+      case "move-pull": {
+        await movePullRequest(message.pullRequestId, message.move);
         return { ok: true, value: null };
       }
       case "versions": {
