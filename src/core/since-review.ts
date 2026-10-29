@@ -1,4 +1,5 @@
 import type { FileInterdiff } from "./interdiff";
+import type { Reviewer } from "./reviewers";
 import { formatRangeParam, reviewPath, type Version } from "./versions";
 import { formatDiffStat } from "./viewed";
 
@@ -121,4 +122,43 @@ function plural(count: number, noun: string): string {
 /** @returns The text as inline code, with a longer fence when it holds a backtick itself. */
 function code(text: string): string {
   return text.includes("`") ? `\`\` ${text} \`\`` : `\`${text}\``;
+}
+
+/**
+ * Whom R then R asks to review again: the reviewers whose approval or change request is on an older version, and who
+ * aren't asked already, as each one's re-request button would.
+ * @param reviewers The pull request's reviewers.
+ * @param standings Each reviewer's standing verdict, by login.
+ * @returns The reviewers to re-request.
+ */
+export function staleReviewers(reviewers: readonly Reviewer[], standings: ReadonlyMap<string, StandingVerdict>): Reviewer[] {
+  return reviewers.filter((reviewer) => {
+    const standing = standings.get(reviewer.name);
+    return reviewer.canRerequest && standing?.verdict === reviewer.status && standing.behind > 0;
+  });
+}
+
+/**
+ * Whom P then P pokes: the requested reviewers who haven't answered the request yet, less those poked lately.
+ * @param reviewers The pull request's reviewers.
+ * @param pokedAt When the viewer last poked each, by reviewer key.
+ * @param now The current time.
+ * @param cooldown How long a poke counts as recent, in milliseconds.
+ * @returns The reviewers to poke.
+ */
+export function waitingReviewers(reviewers: readonly Reviewer[], pokedAt: ReadonlyMap<string, number>, now: number, cooldown: number): Reviewer[] {
+  return reviewers.filter((reviewer) => {
+    const poked = pokedAt.get(reviewer.key);
+    const waiting = reviewer.status === "pending" || reviewer.status === "rerequested";
+    return reviewer.canPoke && waiting && (poked === undefined || now - poked >= cooldown);
+  });
+}
+
+/**
+ * @param names Who was asked.
+ * @returns The names as a sentence takes them: "mona", "mona and hubot", "mona, hubot and octocat".
+ */
+export function nameList(names: readonly string[]): string {
+  if (names.length <= 1) return names.join("");
+  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }

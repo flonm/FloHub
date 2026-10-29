@@ -6,12 +6,20 @@ type ShortcutAction =
   | { type: "navigate"; direction: 1 | -1 }
   | { type: "review"; event: ReviewEvent; withComment: boolean }
   | { type: "copy"; what: CopyTarget }
-  | { type: "state"; intent: StateIntent };
+  | { type: "state"; intent: StateIntent }
+  | { type: "thread"; direction: 1 | -1 }
+  | { type: "file"; markViewed: boolean }
+  | { type: "versions" }
+  | { type: "ask"; who: AskTarget }
+  | { type: "help" };
 
-/** What C then C, or C then G, copies: the `gh pr checkout` command, or the pull request's link. */
-export type CopyTarget = "checkout" | "link";
+/** What C then C, C then G or C then B copies: the `gh pr checkout` command, the pull request's link, or its branch. */
+export type CopyTarget = "checkout" | "link" | "branch";
 
-export interface ShortcutMatch {
+/** Whom R then R or P then P asks: reviewers whose verdict is on an older version, or reviewers who haven't answered yet. */
+export type AskTarget = "stale" | "waiting";
+
+interface ShortcutMatch {
   /** The action the key completes, if any. */
   action: ShortcutAction | null;
   /** Whether to keep the key from the page's own shortcuts. */
@@ -34,6 +42,7 @@ export interface KeyInput {
 export const CHORD_TIMEOUT_MS = 1500;
 
 const REVIEW_CHORDS: Record<string, ShortcutAction> = {
+  r: { type: "ask", who: "stale" },
   y: { type: "review", event: "APPROVE", withComment: false },
   a: { type: "review", event: "APPROVE", withComment: true },
   n: { type: "review", event: "REQUEST_CHANGES", withComment: true },
@@ -49,10 +58,27 @@ const CHORDS: Record<string, { claimFirstKey: boolean; next: Record<string, Shor
   r: { claimFirstKey: false, next: REVIEW_CHORDS },
   c: {
     claimFirstKey: true,
-    next: { c: { type: "copy", what: "checkout" }, g: { type: "copy", what: "link" } },
+    next: { c: { type: "copy", what: "checkout" }, g: { type: "copy", what: "link" }, b: { type: "copy", what: "branch" } },
   },
-  // GitHub binds no D, so the first one is claimed like C's.
+  // GitHub binds no D or P on a pull request, so their first key is claimed like C's.
   d: { claimFirstKey: true, next: { d: { type: "state", intent: "toggle-draft" } } },
+  p: { claimFirstKey: true, next: { p: { type: "ask", who: "waiting" } } },
+};
+
+/** Single keys, which GitHub binds to nothing on a pull request. */
+const SINGLE_KEYS: Record<string, ShortcutAction> = {
+  v: { type: "versions" },
+  f: { type: "file", markViewed: false },
+};
+
+/**
+ * The keys that type a symbol, by the symbol. A German Mac types ] and [ with ⌥ and ? with ⇧, and NeoQwertz its
+ * brackets on the third layer, so only ⌘ and Ctrl rule them out.
+ */
+const SYMBOL_KEYS: Record<string, ShortcutAction> = {
+  "]": { type: "thread", direction: 1 },
+  "[": { type: "thread", direction: -1 },
+  "?": { type: "help" },
 };
 
 const MODIFIER_KEYS = new Set(["Shift", "Meta", "Control", "Alt", "CapsLock"]);
@@ -65,14 +91,17 @@ const NO_MATCH: ShortcutMatch = { action: null, claim: false };
  * copies the checkout command and C then G the pull request's link. GitHub binds a plain C itself, so the C that starts a chord is claimed;
  * the R is not, so quote-reply on selected text keeps working. On macOS, ⌘Esc closes the pull request, as on Graphite,
  * and ⌘⇧Esc reopens it; Windows keeps Ctrl+Esc and Ctrl+⇧Esc for itself, so elsewhere they have no key. D then D
- * turns a pull request into a draft, or a draft ready for review.
+ * turns a pull request into a draft, or a draft ready for review. ] and [ step through the unresolved threads, V shows
+ * or hides the versions view, F goes to the next file not marked Viewed and ⇧F marks the one in view first. C then B
+ * copies the branch, R then R asks again everyone whose verdict is on an older version, and P then P pokes everyone
+ * who hasn't answered. ? shows the list of them all.
  * @param mac Whether the viewer is on macOS.
  * @returns A function that takes each keydown and returns what it completes and whether to claim it.
  */
-export function createShortcutMatcher(mac: boolean): (input: KeyInput) => ShortcutMatch {
+export function createShortcutMatcher(mac: boolean): ShortcutMatcher {
   let chord: { prefix: string; at: number } | null = null;
 
-  return (input) => {
+  const match = (input: KeyInput): ShortcutMatch => {
     if (input.editable || input.repeat) {
       chord = null;
       return NO_MATCH;
@@ -88,6 +117,15 @@ export function createShortcutMatcher(mac: boolean): (input: KeyInput) => Shortc
       const action = NAVIGATION[input.key] ?? null;
       return { action, claim: action !== null };
     }
+    const symbol = input.metaKey || input.ctrlKey ? undefined : SYMBOL_KEYS[input.key];
+    if (symbol) {
+      chord = null;
+      return { action: symbol, claim: true };
+    }
+    if (input.shiftKey && input.key.toLowerCase() === "f" && !input.metaKey && !input.ctrlKey && !input.altKey) {
+      chord = null;
+      return { action: { type: "file", markViewed: true }, claim: true };
+    }
     if (input.metaKey || input.ctrlKey || input.altKey || input.shiftKey) {
       chord = null;
       return NO_MATCH;
@@ -98,11 +136,47 @@ export function createShortcutMatcher(mac: boolean): (input: KeyInput) => Shortc
     chord = null;
     const completed = open ? CHORDS[open]?.next[key] : undefined;
     if (completed) return { action: completed, claim: true };
+    const single = SINGLE_KEYS[key];
+    if (single) return { action: single, claim: true };
     const prefix = CHORDS[key];
     if (!prefix) return NO_MATCH;
     chord = { prefix: key, at: input.time };
     return { action: null, claim: prefix.claimFirstKey };
   };
+  return Object.assign(match, {
+    pending: (time: number) => (chord !== null && time - chord.at <= CHORD_TIMEOUT_MS ? chord.prefix : null),
+    hold: () => {
+      if (chord) chord.at = Infinity;
+    },
+    cancel: () => {
+      chord = null;
+    },
+  });
+}
+
+/** A matcher: a function that takes each keydown, and asks after the chord it may have started. */
+export type ShortcutMatcher = ((input: KeyInput) => ShortcutMatch) & {
+  /**
+   * @param time Now, on the clock the keys' times are on.
+   * @returns The first key of the chord waiting for its second, lower case, or null.
+   */
+  pending: (time: number) => string | null;
+  /** Keeps the waiting chord open until the next key, while its hint shows what may follow. */
+  hold: () => void;
+  /** Drops the waiting chord. */
+  cancel: () => void;
+};
+
+/**
+ * What may follow the first key of a chord, as the hint lists it after a pause.
+ * @param prefix The first key, lower case.
+ * @param mac Whether the viewer is on macOS.
+ * @returns Each second key, as the shortcut list names it, and what it does; empty for a key that starts no chord.
+ */
+export function chordHints(prefix: string, mac: boolean): { key: string; action: string }[] {
+  return shortcutHelp(mac)
+    .filter((row) => row.join === "then" && row.keys[0]?.toLowerCase() === prefix)
+    .map((row) => ({ key: row.keys[1] ?? "", action: row.action }));
 }
 
 /** One row of the shortcut list: the keys, pressed one after the other or as alternatives, and what they do. */
@@ -127,6 +201,13 @@ export function shortcutHelp(mac: boolean): ShortcutHelp[] {
     { keys: ["R", "N"], join: "then", action: "Request changes, with or without a comment" },
     { keys: ["C", "C"], join: "then", action: "Copy gh pr checkout <number>" },
     { keys: ["C", "G"], join: "then", action: "Copy the pull request's link" },
+    { keys: ["C", "B"], join: "then", action: "Copy the pull request's branch" },
+    { keys: ["]", "["], join: "or", action: "Go to the next or previous unresolved thread" },
+    { keys: ["F"], join: null, action: "Go to the next file you haven't marked Viewed" },
+    { keys: ["⇧F"], join: null, action: "Mark the file in view as Viewed, and go to the next" },
+    { keys: ["V"], join: null, action: "Show or hide the versions view" },
+    { keys: ["R", "R"], join: "then", action: "Re-request review from everyone whose verdict is on an older version" },
+    { keys: ["P", "P"], join: "then", action: "Poke every requested reviewer who hasn't answered yet" },
     ...(mac
       ? [
           { keys: ["⌘Esc"], join: null, action: "Close the pull request" },
@@ -135,6 +216,7 @@ export function shortcutHelp(mac: boolean): ShortcutHelp[] {
       : []),
     { keys: ["D", "D"], join: "then", action: "Convert to draft, or mark a draft ready for review" },
     { keys: ["1", "2", "3"], join: null, action: "In the menu a comment's file link opens: pick a way to see its code" },
+    { keys: ["?"], join: null, action: "Show this list" },
     { keys: ["Esc"], join: null, action: "Close a menu, a dialog or the versions view" },
   ];
 }

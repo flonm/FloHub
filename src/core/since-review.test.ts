@@ -1,14 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import type { FileInterdiff } from "./interdiff";
+import type { Reviewer } from "./reviewers";
 import {
+  nameList,
   pokeMessage,
   rangeFileStats,
   type RangeFileStat,
   staleLabel,
+  staleReviewers,
   standingVerdict,
   unseenRange,
   versionsRangeUrl,
   VERSIONS_PARAM,
+  waitingReviewers,
 } from "./since-review";
 import { parseRangeParam, type Version, type VersionReview } from "./versions";
 
@@ -190,5 +194,82 @@ describe("the poke message", () => {
   test("is nothing when the verdict is on the current version", () => {
     const fresh = standingVerdict(history(3, { 3: [review("alice", "approved")] }), "alice")!;
     expect(pokeMessage("alice", fresh, [stat("a.ts", 1, 0)], url)).toBeNull();
+  });
+});
+
+/** A reviewer the viewer may re-request or poke, with what the test says. */
+function reviewer(name: string, overrides: Partial<Reviewer> = {}): Reviewer {
+  return {
+    key: `user:${name}`,
+    kind: "user",
+    name,
+    avatarUrl: null,
+    url: `https://github.com/${name}`,
+    status: "approved",
+    previous: null,
+    dismissedFrom: null,
+    dismissId: null,
+    at: null,
+    canRerequest: true,
+    canPoke: false,
+    ...overrides,
+  };
+}
+
+describe("staleReviewers", () => {
+  const versions = history(4);
+  const standing = (verdict: "approved" | "changes_requested", on: number) => {
+    const [version, current] = [versions[on - 1], versions[3]];
+    if (!version || !current) throw new Error("no such version");
+    return { verdict, version, current, behind: current.number - version.number };
+  };
+
+  test("picks the reviewers whose verdict is on an older version and who may be asked again", () => {
+    const reviewers = [
+      reviewer("mona"),
+      reviewer("octocat", { status: "changes_requested" }),
+      reviewer("tizian"),
+      reviewer("hubot", { canRerequest: false }),
+      reviewer("defunkt", { status: "rerequested", previous: "approved", canRerequest: false }),
+    ];
+    const standings = new Map([
+      ["mona", standing("approved", 2)],
+      ["octocat", standing("changes_requested", 3)],
+      ["tizian", standing("approved", 4)],
+      ["hubot", standing("approved", 1)],
+      ["defunkt", standing("approved", 1)],
+    ]);
+    expect(staleReviewers(reviewers, standings).map((each) => each.name)).toEqual(["mona", "octocat"]);
+  });
+
+  test("skips a reviewer whose standing verdict the rows don't show, or who has none", () => {
+    const standings = new Map([["mona", standing("changes_requested", 1)]]);
+    expect(staleReviewers([reviewer("mona"), reviewer("octocat")], standings)).toEqual([]);
+  });
+});
+
+describe("waitingReviewers", () => {
+  const HOUR = 3_600_000;
+  test("picks the requested reviewers who haven't answered, less those poked within the cooldown", () => {
+    const reviewers = [
+      reviewer("mona", { status: "pending", canPoke: true }),
+      reviewer("octocat", { status: "rerequested", previous: "changes_requested", canPoke: true }),
+      reviewer("tizian", { status: "pending", canPoke: true }),
+      reviewer("hubot", { status: "changes_requested", canPoke: true }),
+      reviewer("defunkt", { status: "pending", canPoke: false }),
+    ];
+    const pokedAt = new Map([["user:tizian", 10 * HOUR - 60_000], ["user:mona", 8 * HOUR]]);
+    expect(waitingReviewers(reviewers, pokedAt, 10 * HOUR, HOUR).map((each) => each.name)).toEqual(["mona", "octocat"]);
+  });
+});
+
+describe("nameList", () => {
+  test.each([
+    [[], ""],
+    [["mona"], "mona"],
+    [["mona", "hubot"], "mona and hubot"],
+    [["mona", "hubot", "octocat"], "mona, hubot and octocat"],
+  ])("%p", (names, said) => {
+    expect(nameList(names)).toBe(said);
   });
 });

@@ -67,6 +67,7 @@ query ($owner: String!, $name: String!, $number: Int!) {
       baseRefName
       baseRefOid
       headRefOid
+      headRefName
       id
       author { login }
       viewerCanUpdate
@@ -249,6 +250,8 @@ interface RawOverview {
             /** Missing from overviews cached before these fields existed. */
             baseRefOid?: string;
             headRefOid?: string;
+            /** The head branch's name, for C then B. Missing from overviews cached before it was fetched. */
+            headRefName?: string;
             stack: RawStack | null;
             /** Missing from overviews cached before general comments were fetched. */
             comments?: { nodes: RawDiscussionComment[] };
