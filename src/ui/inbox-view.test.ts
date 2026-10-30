@@ -15,10 +15,11 @@ describe("problemFor", () => {
 
 describe("isEmptyInbox", () => {
   const group = { key: "a#1", repo: "a/b", stackNumber: null, stackSize: 1, pulls: [] };
-  test("is empty only when both sections are", () => {
+  test("is empty only when every search is", () => {
     expect(isEmptyInbox({ review: [], mine: [] })).toBe(true);
     expect(isEmptyInbox({ review: [group], mine: [] })).toBe(false);
     expect(isEmptyInbox({ review: [], mine: [group] })).toBe(false);
+    expect(isEmptyInbox({ review: [], mine: [], waiting: [], other: [group] })).toBe(false);
   });
 });
 

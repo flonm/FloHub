@@ -2,7 +2,7 @@ import type { RawPullRequest } from "./reviewers";
 import { deriveStatus, type RawStackPull } from "./stack";
 
 /** Whose move a pull request waits for, from the viewer's side: theirs, someone else's, or nobody's yet (a draft). */
-export type Whose = "you" | "them" | "none";
+type Whose = "you" | "them" | "none";
 
 /** Why a pull request waits for someone, as a stable code the views word themselves. */
 export type TurnCode =
@@ -27,6 +27,10 @@ export type TurnCode =
   | "waiting-on-reviewers"
   /** On someone else's pull request: its author has your verdict to answer. */
   | "waiting-on-author"
+  /** A review you're asked for, though `who` already requested changes: one human verdict is enough. */
+  | "changes-by-other"
+  /** A review you're asked for, though `who` already approved it. */
+  | "approved-by-other"
   | "draft";
 
 export interface TurnReason {

@@ -817,14 +817,54 @@ function pullPath(ref: PullRef): string {
  */
 export async function fetchInbox(): Promise<RawInbox> {
   const { data: ids } = await graphql<RawInboxIds>(INBOX_IDS_QUERY, { review: REVIEW_SEARCH, mine: MINE_SEARCH, waiting: WAITING_SEARCH });
+  return assembleRawInbox(ids, await fetchInboxDetails(inboxIds(ids)));
+}
+
+/** @returns Each pull request's details by node id, leaving out those that are gone or out of the token's reach. */
+async function fetchInboxDetails(ids: string[]): Promise<Map<string, RawInboxPull>> {
   const chunks = await Promise.all(
-    chunk(inboxIds(ids), INBOX_CHUNK).map(async (chunkIds) => {
+    chunk(ids, INBOX_CHUNK).map(async (chunkIds) => {
       const { data } = await graphql<{ nodes: (RawInboxPull | null)[] }>(INBOX_DETAILS_QUERY, { ids: chunkIds });
       return data.nodes;
     }),
   );
-  const details = new Map(chunks.flat().flatMap((pull) => (pull ? [[pull.id, pull] as const] : [])));
-  return assembleRawInbox(ids, details);
+  return new Map(chunks.flat().flatMap((pull) => (pull ? [[pull.id, pull] as const] : [])));
+}
+
+/** Every open pull request of an owner or a repository, for the inbox's "Everything else"; GitHub caps one search page at 100. */
+export const OPEN_PULLS_SEARCH = "is:pr is:open archived:false";
+const OPEN_PULLS_PAGE = 50;
+
+const OPEN_PULLS_QUERY = `
+query ($query: String!) {
+  viewer { login }
+  search(query: $query, type: ISSUE, first: ${OPEN_PULLS_PAGE}) { issueCount nodes { ... on PullRequest { id } } }
+}`;
+
+interface RawOpenPulls {
+  viewer: { login: string };
+  search: { issueCount: number; nodes: (Record<string, never> | { id: string })[] };
+}
+
+/**
+ * One search per owner or repository, side by side, since many qualifiers in one query string run into GitHub's length limit.
+ * @param qualifiers One search qualifier each, like `user:octo-org` or `repo:octo-org/api`.
+ * @returns The viewer, their open pull requests newest first, and whether one of them had more than one search returns.
+ */
+export async function fetchOpenPulls(qualifiers: string[]): Promise<{ viewer: string; pulls: RawInboxPull[]; capped: boolean }> {
+  const searches = await Promise.all(
+    qualifiers.map(async (qualifier) => {
+      const { data } = await graphql<RawOpenPulls>(OPEN_PULLS_QUERY, { query: `${OPEN_PULLS_SEARCH} ${qualifier}` });
+      return data;
+    }),
+  );
+  const ids = [...new Set(searches.flatMap((found) => found.search.nodes.flatMap((node) => (typeof node.id === "string" ? node.id : []))))];
+  const details = await fetchInboxDetails(ids);
+  return {
+    viewer: searches[0]?.viewer.login ?? "",
+    pulls: ids.flatMap((id) => details.get(id) ?? []),
+    capped: searches.some((found) => found.search.issueCount > found.search.nodes.length),
+  };
 }
 
 /**

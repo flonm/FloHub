@@ -28,6 +28,8 @@ describe("reasonWords", () => {
       "ask-for-review",
       "waiting-on-reviewers",
       "waiting-on-author",
+      "changes-by-other",
+      "approved-by-other",
       "draft",
     ];
     for (const code of codes) expect(reasonWords({ code, count: 2, who: ["alice"] }).text).not.toBe("");
@@ -42,6 +44,8 @@ describe("reasonWords", () => {
       detail: "Waiting for alice and bob to review.",
     });
     expect(reasonWords({ code: "ask-again", who: ["bob"] }).text).toBe("Ask bob again");
+    expect(reasonWords({ code: "changes-by-other", who: ["bob"] }).text).toBe("bob requested changes");
+    expect(reasonWords({ code: "approved-by-other", who: ["alice", "bob"] }).text).toBe("alice and bob approved");
   });
 });
 

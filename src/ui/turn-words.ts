@@ -72,6 +72,12 @@ export function reasonWords(reason: TurnReason): ReasonWords {
     case "waiting-on-author": {
       return { text: "Waiting for author", tone: "neutral", detail: "Its author has your review to answer." };
     }
+    case "changes-by-other": {
+      return { text: `${who} requested changes`, tone: "neutral", detail: `You're asked to review it, but ${who} already requested changes.` };
+    }
+    case "approved-by-other": {
+      return { text: `${who} approved`, tone: "neutral", detail: `You're asked to review it, but ${who} already approved it.` };
+    }
     case "draft": {
       return { text: "Draft", tone: "neutral", detail: "A draft waits for nobody." };
     }

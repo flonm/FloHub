@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { Inbox } from "../core/inbox";
-import { ensureInboxAlarm, INBOX_ALARM, INBOX_PERIOD_MINUTES, isFresh } from "./inbox-sync";
+import { ensureInboxAlarm, everythingSearchUrl, INBOX_ALARM, INBOX_PERIOD_MINUTES, isFresh, scopeQualifier } from "./inbox-sync";
 
 interface Alarm {
   name: string;
@@ -74,3 +74,18 @@ describe("isFresh", () => {
   });
 });
 
+
+describe("everythingSearchUrl", () => {
+  test("lists every owner's and repository's open pull requests on GitHub", () => {
+    const url = new URL(everythingSearchUrl(["octo-org", "mona/notes"]));
+    expect(url.origin + url.pathname).toBe("https://github.com/pulls");
+    expect(url.searchParams.get("q")).toBe("is:pr is:open archived:false user:octo-org repo:mona/notes");
+  });
+
+  test.each([
+    ["octo-org", "user:octo-org"],
+    ["octo-org/api", "repo:octo-org/api"],
+  ])("searches %s with %s", (scope, qualifier) => {
+    expect(scopeQualifier(scope)).toBe(qualifier);
+  });
+});
