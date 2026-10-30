@@ -610,3 +610,19 @@ ul {
     transition: none;
   }
 }
+
+/* The header's profile switch: quiet until hovered, like the icon buttons beside it. */
+.profile-switch {
+  max-width: 140px;
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid var(--flo-border);
+  border-radius: var(--flo-radius-sm);
+  background: var(--flo-bg);
+  color: var(--flo-fg);
+  font: inherit;
+  font-size: 12px;
+}
+.profile-switch:hover {
+  background: var(--flo-bg-muted);
+}

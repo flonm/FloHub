@@ -244,14 +244,35 @@ kbd {
 .add input {
   flex: 1;
 }
-#scope-status {
+#scope-status,
+#entry-status {
   margin: 8px 0 0;
 }
-#scope-status:empty {
+#scope-status:empty,
+#entry-status:empty {
   display: none;
 }
-#scope-status[data-tone="error"] {
+#scope-status[data-tone="error"],
+#entry-status[data-tone="error"] {
   color: var(--flo-danger);
+}
+.profile-names {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.profile-names label {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.profile-active {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 .disclaimer {
   padding: 10px 14px;
@@ -272,4 +293,11 @@ kbd {
   .keys dd {
     margin-bottom: 8px;
   }
+}
+.profile-active select {
+  font-weight: 400;
+}
+/* A repository listed on its own sits under its owner, indented. */
+.repo-entry .name {
+  padding-left: 16px;
 }

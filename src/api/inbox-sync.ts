@@ -2,6 +2,7 @@ import { fetchInbox, GitHubError, readToken } from "./github";
 import { buildInbox, type Inbox, type RawInbox } from "../core/inbox";
 import { readDirectRepos } from "../core/review-scope";
 import { badgeCount, MARKS_KEY, pruneMarks, readMarks } from "../core/inbox-marks";
+import { loadProfiles, profileInbox } from "../core/profiles";
 
 
 const STORAGE_KEY = "inbox";
@@ -88,15 +89,18 @@ async function fetchAndStore(): Promise<Inbox> {
   // A pull request that left the inbox was merged, closed or stopped waiting: its marks go with it.
   const kept = pruneMarks(marks, inbox, now);
   await chrome.storage.local.set({ [STORAGE_KEY]: inbox, ...(kept !== marks && { [MARKS_KEY]: kept }) });
-  await showBadge(badgeCount(inbox, kept, now));
+  const shown = profileInbox(inbox, await loadProfiles());
+  await showBadge(badgeCount(shown, kept, now));
   return inbox;
 }
 
-/** Counts the stored inbox on the badge again, for when the viewer pinned or snoozed something in the popup. */
+/** Counts the stored inbox on the badge again, for when the viewer pinned or snoozed something, or switched profiles. */
 export async function refreshBadge(): Promise<void> {
   const stored = await chrome.storage.local.get([STORAGE_KEY, MARKS_KEY]);
   const inbox = stored[STORAGE_KEY] as Inbox | undefined;
-  if (inbox) await showBadge(badgeCount(inbox, readMarks(stored[MARKS_KEY]), Date.now()));
+  if (!inbox) return;
+  const shown = profileInbox(inbox, await loadProfiles());
+  await showBadge(badgeCount(shown, readMarks(stored[MARKS_KEY]), Date.now()));
 }
 
 /** Drops the stored inbox and the badge, for when the token changes. */
