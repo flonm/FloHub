@@ -1662,7 +1662,9 @@ function renderResult(
   const details = el("details", { class: "unchanged" });
   const unchangedItems = new Map<FileInterdiff, HTMLLIElement>();
   // Pushing again resets the marks of files the push didn't change the pull request's work on; one click restores them.
-  const markUnchanged = viewed && unchanged.length > 0 ? el("button", { type: "button", class: "mark-unchanged", hidden: "" }) : null;
+  // GitHub doesn't say which version a mark was set on, so only a range from the viewer's own review vouches for it.
+  const markUnchanged =
+    viewed && unchanged.length > 0 && older?.viewerLatestReview === true ? el("button", { type: "button", class: "mark-unchanged", hidden: "" }) : null;
   if (unchanged.length > 0) {
     const heading = el("summary", {}, `${unchanged.length} ${unchanged.length === 1 ? "file makes" : "files make"} the same change in both versions`);
     if (markUnchanged) heading.append(markUnchanged);
@@ -1724,7 +1726,7 @@ function renderResult(
     const one = reset.length === 1;
     markUnchanged.hidden = reset.length === 0;
     markUnchanged.textContent = `Mark ${reset.length} as viewed again`;
-    markUnchanged.dataset.tip = `${one ? "This file was" : `These ${reset.length} files were`} marked as viewed until a push reset ${one ? "its mark" : "their marks"}, and ${one ? "makes" : "make"} the same change in v${newer.number} as in v${older?.number ?? 0}`;
+    markUnchanged.dataset.tip = `${one ? "This file was" : `These ${reset.length} files were`} marked as viewed until a push reset ${one ? "its mark" : "their marks"}, and ${one ? "makes" : "make"} the same change in v${newer.number} as in v${older?.number ?? 0}, the version you reviewed`;
   };
   if (viewed) {
     for (const [file, section] of sections) {

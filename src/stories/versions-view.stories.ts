@@ -571,6 +571,18 @@ const MARKS: Record<string, ViewedState> = {
  */
 export const ViewedMarksOnTheCurrentVersion: Story = { render: () => view(3, PATCHES, {}, true, undefined, [], MARKS) };
 
+/**
+ * From a version other than the viewer's last review (here v2, which only tizian reviewed), the view doesn't offer to mark the unchanged files as viewed
+ * again: GitHub doesn't say which version a mark was set on, so the files' change may be one the viewer never saw.
+ */
+export const ViewedMarksFromAnotherVersion: Story = {
+  render: () => {
+    // Someone else's v2: the history stays on these versions, as the refresh never arrives.
+    const cached = { ...history(3), versions: [V1, { ...V2, viewerLatestReview: false }, V3] };
+    return view("loading", PATCHES, { cached }, true, undefined, [], MARKS);
+  },
+};
+
 /** Ending at an older version, the view shows no Viewed boxes: GitHub keeps the marks for the current version only. */
 export const ViewedMarksOnAnOlderVersion: Story = {
   render: () => view(3, PATCHES, { saved: { from: V1.oid, to: V2.oid, toCurrent: false, at: NOW } }, true, undefined, [], MARKS),
