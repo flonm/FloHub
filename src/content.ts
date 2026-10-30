@@ -60,6 +60,7 @@ const RANGES_KEY = "versionRanges";
 const COMMENTS_PANEL = "#docked-side-panel-content";
 /** Whether the viewer reads the versions view side by side. */
 const SPLIT_KEY = "versionsSplitView";
+const TREE_WIDTH_KEY = "versionsTreeWidth";
 /** The URL parameter that keeps the versions view open on the Files changed tab, with the range it compares. */
 
 let current: PullRef | null = null;
@@ -1493,6 +1494,16 @@ function openVersions(ref: PullRef): void {
       }
     },
     saveSplitView: (split) => void chrome.storage.local.set({ [SPLIT_KEY]: split }).catch(() => undefined),
+    treeWidth: async () => {
+      try {
+        const stored = await chrome.storage.local.get(TREE_WIDTH_KEY);
+        const width = stored[TREE_WIDTH_KEY];
+        return typeof width === "number" ? width : null;
+      } catch {
+        return null;
+      }
+    },
+    saveTreeWidth: (width) => void chrome.storage.local.set({ [TREE_WIDTH_KEY]: width }).catch(() => undefined),
     viewed: {
       states: () => viewedTree.states(ref),
       set: async (path, viewed) => viewedTree.setViewed(path, viewed),

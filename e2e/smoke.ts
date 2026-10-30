@@ -967,7 +967,7 @@ check(
   (await pickerValue(versions, "From")) === "1" && (await pickerValue(versions, "To")) === "3",
   "versions default to the viewer's last reviewed version → current",
 );
-await versions.locator('.viewed-box[aria-checked="true"]').waitFor();
+await versions.locator('.viewed-box[aria-checked="true"]').first().waitFor();
 // Up to the current version, each file header has GitHub's Viewed box, and the files the viewer viewed start folded.
 const viewedBox = (path: string) => versions.locator("details.file", { hasText: path }).locator(".viewed-box");
 const readmeFile = versions.locator("details.file", { hasText: "README.md" });
@@ -994,11 +994,29 @@ check(
   `interdiff lists files whose change differs, ignoring moved hunks, folders first: ${JSON.stringify(fileRows)}`,
 );
 const treeRows = await versions
-  .locator("nav.files button")
+  .locator("nav.files button:not(.viewed-box)")
   .evaluateAll((buttons) => buttons.map((row) => [...row.querySelectorAll(":scope > .name, :scope > .counts > span")].map((part) => part.textContent).join(" ")));
 check(
   JSON.stringify(treeRows) === JSON.stringify(["cmd", "adopt_test.go +3", "legacy.go +1 −1", "rebase.go +2 −1", "README.md +1 −1"]),
   `the file tree lists the compared files by folder with their version-diff totals: ${JSON.stringify(treeRows)}`,
+);
+const treeWidthNow = async () => versions.locator("nav.files").evaluate((nav) => Math.round(nav.getBoundingClientRect().width));
+const treeEdge = versions.locator(".resizer");
+const treeWidthBefore = await treeWidthNow();
+const edgeBox = (await treeEdge.boundingBox())!;
+await page.mouse.move(edgeBox.x + edgeBox.width / 2, edgeBox.y + 100);
+await page.mouse.down();
+await page.mouse.move(edgeBox.x + edgeBox.width / 2 + 120, edgeBox.y + 100, { steps: 5 });
+await page.mouse.up();
+check(
+  treeWidthBefore === 280 && (await treeWidthNow()) === 400,
+  `dragging the file tree's edge makes it wider: ${treeWidthBefore} → ${await treeWidthNow()}`,
+);
+await treeEdge.focus();
+await page.keyboard.press("ArrowLeft");
+check(
+  (await treeWidthNow()) === 384 && (await treeEdge.getAttribute("aria-valuenow")) === "384",
+  `an arrow key on the edge moves it too, and says the width: ${await treeWidthNow()}`,
 );
 const readmeRow = versions.locator("nav.files button.file", { hasText: "README.md" });
 await readmeRow.click();
@@ -1065,11 +1083,16 @@ check(
   fixture.viewedMarks.join(",") === "mark:cmd/rebase.go" && !(await rebaseOpen()),
   `⇧F in the versions view marks the file in view through GitHub's mark and folds it: ${fixture.viewedMarks.join(",")}`,
 );
-await viewedBox("cmd/rebase.go").click();
+const treeBox = versions.locator("nav.files li:has(> button.file[title='cmd/rebase.go']) > .viewed-box");
+check(
+  (await treeBox.getAttribute("aria-checked")) === "true" && (await treeBox.getAttribute("aria-label")) === "Viewed: cmd/rebase.go",
+  "the file tree has a Viewed box on each file's row too, showing the same mark",
+);
+await treeBox.click();
 await viewedBox("cmd/rebase.go").and(versions.locator('[aria-checked="false"]')).waitFor();
 check(
-  fixture.viewedMarks.join(",") === "mark:cmd/rebase.go,unmark:cmd/rebase.go" && (await rebaseOpen()),
-  `the Viewed box unmarks the file and opens it again, without the header's click folding it: ${fixture.viewedMarks.join(",")}`,
+  fixture.viewedMarks.join(",") === "mark:cmd/rebase.go,unmark:cmd/rebase.go" && (await rebaseOpen()) && (await treeBox.getAttribute("aria-checked")) === "false",
+  `the tree's Viewed box unmarks the file and opens it again, and the header's box follows: ${fixture.viewedMarks.join(",")}`,
 );
 // With GitHub's React diff on the page, the box presses the file's own Viewed button, which flips only later.
 await page.evaluate(() => {
@@ -1186,6 +1209,7 @@ check(
   (await pickedRange()) === "1→2" && fixture.compareLog.length === comparesBeforeReload,
   `after a reload the versions view opens on the range picked last, without comparing again: ${await pickedRange()}, ${fixture.compareLog.length - comparesBeforeReload} new compares`,
 );
+check((await treeWidthNow()) === 384, `the file tree keeps its width after a reload: ${await treeWidthNow()}`);
 const storedVersions = await (light.serviceWorkers()[0] ?? (await light.waitForEvent("serviceworker"))).evaluate(async () => {
   const local = await chrome.storage.local.get(["versionPatchIndex", "versionHistories", "versionRanges"]);
   const ranges = local.versionRanges as Record<string, { from: string; to: string }> | undefined;

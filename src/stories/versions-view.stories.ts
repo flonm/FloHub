@@ -563,8 +563,8 @@ const MARKS: Record<string, ViewedState> = {
 };
 
 /**
- * Comparing up to the current version, each file's header has GitHub's Viewed box, and ticking it marks the file in
- * GitHub's diff too. A viewed file starts folded and dimmed in the tree. A box with an amber dot is a file that changed
+ * Comparing up to the current version, each file's header and its row in the tree have GitHub's Viewed box, and
+ * ticking either marks the file in GitHub's diff too. A viewed file starts folded and dimmed in the tree. A box with an amber dot is a file that changed
  * since it was viewed. The deleted file has no box: GitHub keeps no mark for a file the pull request no longer changes.
  * `src/ui/stack-view.ts` makes the same change in both versions, but the push reset its mark: the button beside the
  * unchanged files marks it as viewed again.

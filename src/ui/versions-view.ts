@@ -40,6 +40,7 @@ import { type JumpTarget, threadElsewhere } from "../core/comment-jump";
 import { type SplitSide, splitRows } from "../core/split";
 import { READING_LINE, type Stop } from "../core/steps";
 import { notViewed, viewedBeforeUnchanged, type ViewedState } from "../core/viewed";
+import { clampTreeWidth, MIN_TREE_WIDTH, TREE_WIDTH, treeWidthForKey } from "../core/tree-width";
 import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
 import {
   BASE,
@@ -152,6 +153,10 @@ export interface VersionsViewRequest {
   splitView?: () => Promise<boolean>;
   /** Remembers the layout the viewer chose. */
   saveSplitView?: (split: boolean) => void;
+  /** Resolves to the file tree's width the viewer last dragged it to, or to null. */
+  treeWidth?: () => Promise<number | null>;
+  /** Remembers the file tree's width. */
+  saveTreeWidth?: (width: number) => void;
   /** The viewer's Viewed marks, shown and changed while the diff ends at the current version. */
   viewed?: ViewedMarks;
 }
@@ -402,7 +407,7 @@ details.unchanged .other-threads { margin: 4px 0 8px; border: 1px solid var(--vd
 .files .comment-count svg { width: 12px; height: 12px; }
 .files.hide-threads .comment-count { display: none; }
 
-nav.files { position: relative; flex: none; width: 280px; overflow: auto; overscroll-behavior: contain; padding: 8px; border-right: 1px solid var(--vd-border); font-size: 12px; }
+nav.files { position: relative; flex: none; width: var(--tree-width, ${TREE_WIDTH}px); overflow: auto; overscroll-behavior: contain; padding: 8px; border-right: 1px solid var(--vd-border); font-size: 12px; }
 nav.files:empty { display: none; }
 .files-head { display: flex; align-items: center; gap: 8px; padding: 4px 8px 8px; color: var(--vd-muted); font-weight: 600; }
 .files-head .counts { margin-left: auto; }
@@ -429,7 +434,14 @@ nav.files:empty { display: none; }
 .counts { flex: none; display: inline-flex; gap: 4px; font: 600 11px var(--vd-mono); }
 .counts .add { color: var(--vd-success); }
 .counts .del { color: var(--vd-danger); }
-@media (max-width: 760px) { nav.files { display: none; } }
+@media (max-width: 760px) { nav.files, .resizer { display: none; } }
+/* The tree's right edge, dragged or moved with the arrow keys to make the tree wider or narrower. */
+.resizer { position: relative; z-index: 2; flex: none; width: 7px; margin: 0 -4px 0 -3px; cursor: col-resize; touch-action: none; }
+.resizer::after { content: ""; position: absolute; inset: 0 2px; transition: background 120ms; }
+.resizer:hover::after, .resizer:focus-visible::after, .resizing .resizer::after { background: var(--vd-accent); }
+.resizer:focus-visible { outline: none; }
+nav.files:empty + .resizer { display: none; }
+.body.resizing { cursor: col-resize; user-select: none; }
 .message { color: var(--vd-muted); }
 button {
   min-height: 32px;
@@ -585,6 +597,10 @@ details.unchanged > summary { color: var(--vd-muted); cursor: pointer; }
 .viewed-box[data-state="DISMISSED"] .tick::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--vd-attention); }
 .viewed-box[aria-busy="true"] { opacity: 0.5; cursor: progress; }
 .files .file[data-viewed="VIEWED"] { opacity: 0.55; }
+/* The tree's box sits at the right end of the file's row, beside the row's own button. */
+.files li:has(> .in-tree) { position: relative; }
+.files li:has(> .in-tree:not([hidden])) > .file { padding-right: 32px; }
+.files .viewed-box.in-tree { position: absolute; top: 50%; right: 8px; width: auto; min-height: 0; padding: 4px; border: 0; background: none; transform: translateY(-50%); }
 .mark-unchanged { min-height: 22px; margin-left: 8px; padding: 0 8px; color: var(--vd-fg); font-size: 12px; font-weight: 400; }
 details.unchanged ul { margin: 6px 0 0; padding-left: 20px; font: 12px/20px var(--vd-mono); color: var(--vd-muted); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; user-select: none; }
@@ -806,7 +822,52 @@ export class VersionsView {
     const main = el("main");
     main.append(el("p", { class: "message", role: "status" }, "Loading versions…"));
     const body = el("div", { class: "body" });
-    body.append(files, main);
+    const resizer = el("div", {
+      class: "resizer",
+      role: "separator",
+      tabindex: "0",
+      "aria-orientation": "vertical",
+      "aria-label": "File tree width",
+      "aria-valuemin": String(MIN_TREE_WIDTH),
+      "data-tip": "Drag to resize the file tree, or use the arrow keys. Double-click for the usual width.",
+    });
+    body.append(files, resizer, main);
+    let treeWidth = TREE_WIDTH;
+    /** Gives the tree a width within its limits, and remembers it when the viewer is done picking it. */
+    const resize = (width: number, save: boolean) => {
+      // Before the view is laid out it has no width to share yet.
+      treeWidth = clampTreeWidth(width, body.clientWidth > 0 ? body.clientWidth : Infinity);
+      body.style.setProperty("--tree-width", `${treeWidth}px`);
+      resizer.setAttribute("aria-valuenow", String(treeWidth));
+      if (save) request.saveTreeWidth?.(treeWidth);
+    };
+    resize(TREE_WIDTH, false);
+    resizer.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      resizer.setPointerCapture(event.pointerId);
+      const from = event.clientX;
+      const start = treeWidth;
+      body.classList.add("resizing");
+      const move = (moved: PointerEvent) => resize(start + moved.clientX - from, false);
+      resizer.addEventListener("pointermove", move);
+      resizer.addEventListener(
+        "lostpointercapture",
+        () => {
+          resizer.removeEventListener("pointermove", move);
+          body.classList.remove("resizing");
+          resize(treeWidth, true);
+        },
+        { once: true },
+      );
+    });
+    resizer.addEventListener("keydown", (event) => {
+      const width = treeWidthForKey(event.key, treeWidth, body.clientWidth);
+      if (width === null) return;
+      event.preventDefault();
+      resize(width, true);
+    });
+    resizer.addEventListener("dblclick", () => resize(TREE_WIDTH, true));
     this.surface.replaceChildren(header, body);
 
     let history: VersionHistory | null = null;
@@ -1172,13 +1233,15 @@ export class VersionsView {
     };
 
     const start = async () => {
-      const [cached, saved, sideBySide] = await Promise.all([
+      const [cached, saved, sideBySide, width] = await Promise.all([
         request.cachedVersions?.() ?? null,
         request.savedRange?.() ?? null,
         request.splitView?.() ?? false,
+        request.treeWidth?.() ?? null,
       ]);
       if (!live()) return;
       split = sideBySide;
+      if (width !== null) resize(width, false);
       if (cached) present(cached, saved);
       const revalidate = async () => {
         void loadThreads();
@@ -1617,7 +1680,8 @@ function renderResult(
   const treeRows = sections.size > 0 ? renderFileTree(nav, tree, sections, main, signal) : new Map<HTMLDetailsElement, HTMLButtonElement>();
 
   const byPath = new Map([...sections].map(([file, section]) => [file.path, section]));
-  const boxes = new Map<FileInterdiff, HTMLButtonElement>();
+  /** Each file's Viewed boxes, in its header and in the file tree, with what each one's label names. */
+  const boxes = new Map<FileInterdiff, { box: HTMLButtonElement; name: string }[]>();
   /** Files the viewer was taken to, which the marks' first arrival leaves open. */
   const revealed = new Set<HTMLDetailsElement>();
   let folded = false;
@@ -1633,20 +1697,22 @@ function renderResult(
   };
   const marks = () => {
     const states = viewed?.states() ?? null;
-    for (const [file, box] of boxes) {
+    for (const [file, fileBoxes] of boxes) {
       const state = states?.get(file.path);
-      box.hidden = state === undefined;
       const section = sections.get(file);
       const row = section && treeRows.get(section);
       if (row) {
         if (state === "VIEWED") row.dataset.viewed = "VIEWED";
         else delete row.dataset.viewed;
       }
-      if (!state) continue;
-      box.setAttribute("aria-checked", String(state === "VIEWED"));
-      box.setAttribute("aria-label", state === "DISMISSED" ? "Viewed, changed since you viewed it" : "Viewed");
-      box.dataset.state = state;
-      box.dataset.tip = VIEWED_TIP[state];
+      for (const { box, name } of fileBoxes) {
+        box.hidden = state === undefined;
+        if (!state) continue;
+        box.setAttribute("aria-checked", String(state === "VIEWED"));
+        box.setAttribute("aria-label", `${name}${state === "DISMISSED" ? ", changed since you viewed it" : ""}`);
+        box.dataset.state = state;
+        box.dataset.tip = VIEWED_TIP[state];
+      }
     }
     // Like GitHub's diff, the view opens with the viewed files folded.
     if (states && !folded) {
@@ -1662,21 +1728,28 @@ function renderResult(
   };
   if (viewed) {
     for (const [file, section] of sections) {
-      const box = viewedBox();
-      box.addEventListener("click", (event) => {
-        // Inside the file's header, a click would fold or open the file as well.
+      const inHeader = viewedBox(true);
+      const inTree = viewedBox(false);
+      const both = [inHeader, inTree];
+      const toggle = (event: Event) => {
+        // Inside the file's header, a click would fold or open the file as well; in the tree, jump to it.
         event.preventDefault();
         event.stopPropagation();
         const state = viewed.states()?.get(file.path);
-        if (!state || box.getAttribute("aria-busy") === "true") return;
-        box.setAttribute("aria-busy", "true");
+        if (!state || inHeader.getAttribute("aria-busy") === "true") return;
+        for (const box of both) box.setAttribute("aria-busy", "true");
         void setViewed(file.path, state !== "VIEWED").finally(() => {
-          box.removeAttribute("aria-busy");
+          for (const box of both) box.removeAttribute("aria-busy");
           marks();
         });
-      });
-      section.querySelector(":scope > summary")?.append(box);
-      boxes.set(file, box);
+      };
+      for (const box of both) box.addEventListener("click", toggle);
+      section.querySelector(":scope > summary")?.append(inHeader);
+      treeRows.get(section)?.after(inTree);
+      boxes.set(file, [
+        { box: inHeader, name: "Viewed" },
+        { box: inTree, name: `Viewed: ${file.path}` },
+      ]);
     }
     markUnchanged?.addEventListener("click", (event) => {
       event.preventDefault();
@@ -1902,12 +1975,16 @@ const VIEWED_TIP: Record<ViewedState, string> = {
 /** How far below the top of the diff a file's header counts as the one being read, in pixels. */
 const FILE_LINE_PX = 8;
 
-/** @returns A file header's Viewed box, hidden until the file's mark is known. */
-function viewedBox(): HTMLButtonElement {
-  const box = el("button", { type: "button", class: "viewed-box", role: "checkbox", "aria-checked": "false", hidden: "" });
+/**
+ * @param labelled Whether the box says "Viewed" beside it, as in a file's header; the file tree's has only the box.
+ * @returns A Viewed box, hidden until the file's mark is known.
+ */
+function viewedBox(labelled: boolean): HTMLButtonElement {
+  const box = el("button", { type: "button", class: labelled ? "viewed-box" : "viewed-box in-tree", role: "checkbox", "aria-checked": "false", hidden: "" });
   const tick = el("span", { class: "tick", "aria-hidden": "true" });
   tick.append(icon("check"));
-  box.append(tick, "Viewed");
+  box.append(tick);
+  if (labelled) box.append("Viewed");
   return box;
 }
 
