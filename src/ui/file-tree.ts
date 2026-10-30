@@ -332,6 +332,8 @@ export class ViewedTree {
     if (control) {
       this.seen.set(path, isChecked(control));
       if (isChecked(control) !== viewed) control.click();
+      // GitHub's React button flips only once it re-renders; the control is followed again when it does.
+      loaded.states.set(path, viewed ? "VIEWED" : "UNVIEWED");
       this.redecorate();
       return;
     }

@@ -1071,6 +1071,32 @@ check(
   fixture.viewedMarks.join(",") === "mark:cmd/rebase.go,unmark:cmd/rebase.go" && (await rebaseOpen()),
   `the Viewed box unmarks the file and opens it again, without the header's click folding it: ${fixture.viewedMarks.join(",")}`,
 );
+// With GitHub's React diff on the page, the box presses the file's own Viewed button, which flips only later.
+await page.evaluate(() => {
+  const header = document.querySelector('.file-header[data-path="README.md"]');
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "readme-viewed";
+  const render = (pressed: boolean) => {
+    button.setAttribute("aria-pressed", String(pressed));
+    button.setAttribute("aria-label", pressed ? "Viewed" : "Not Viewed");
+  };
+  render(true);
+  button.addEventListener("click", () => setTimeout(() => render(button.getAttribute("aria-pressed") !== "true"), 1000));
+  header?.append(button);
+});
+await viewedBox("README.md").click();
+const whileFlipping = await viewedBox("README.md").getAttribute("aria-checked");
+await page.locator('.readme-viewed[aria-pressed="false"]').waitFor();
+await page.waitForTimeout(200);
+check(
+  whileFlipping === "false" && (await viewedBox("README.md").getAttribute("aria-checked")) === "false" && fixture.viewedMarks.length === 2,
+  `the Viewed box presses GitHub's own Viewed button instead of calling the API, and shows the new mark while GitHub catches up: ${whileFlipping}`,
+);
+await viewedBox("README.md").click();
+await page.locator('.readme-viewed[aria-pressed="true"]').waitFor();
+await viewedBox("README.md").and(versions.locator('[aria-checked="true"]')).waitFor();
+await page.evaluate(() => document.querySelector(".readme-viewed")?.remove());
 // The checks of GitHub's own file tree further on start from the fixture's marks.
 fixture.viewedMarks.length = 0;
 fixture.viewed["cmd/rebase.go"] = "DISMISSED";
