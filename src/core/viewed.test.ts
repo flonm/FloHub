@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { diffAnchor, formatDiffStat, matchPath, stateFromCheckbox } from "./viewed";
+import { diffAnchor, formatDiffStat, matchPath, notViewed, stateFromCheckbox, viewedBeforeUnchanged, type ViewedState } from "./viewed";
 
 describe("diffAnchor", () => {
   test("matches the anchor GitHub renders for README.md", async () => {
@@ -57,5 +57,37 @@ describe("formatDiffStat", () => {
 
   test("shows nothing for a binary file or a pure rename", () => {
     expect(formatDiffStat(0, 0)).toBeNull();
+  });
+});
+
+describe("notViewed", () => {
+  const states = new Map<string, ViewedState>([
+    ["a.ts", "VIEWED"],
+    ["b.ts", "UNVIEWED"],
+    ["c.ts", "DISMISSED"],
+  ]);
+
+  test("keeps the files not marked Viewed, a file changed since it was viewed among them, in the order given", () => {
+    expect(notViewed(["c.ts", "a.ts", "b.ts"], states)).toEqual(["c.ts", "b.ts"]);
+  });
+
+  test("leaves out a file the pull request no longer changes, which GitHub has no mark for", () => {
+    expect(notViewed(["gone.ts", "b.ts"], states)).toEqual(["b.ts"]);
+  });
+
+  test("is empty without files", () => {
+    expect(notViewed([], states)).toEqual([]);
+  });
+});
+
+describe("viewedBeforeUnchanged", () => {
+  const states = new Map<string, ViewedState>([
+    ["viewed.ts", "VIEWED"],
+    ["never.ts", "UNVIEWED"],
+    ["reset.ts", "DISMISSED"],
+  ]);
+
+  test("offers only the files whose mark GitHub reset, not those never viewed or still viewed", () => {
+    expect(viewedBeforeUnchanged(["viewed.ts", "never.ts", "reset.ts", "gone.ts"], states)).toEqual(["reset.ts"]);
   });
 });

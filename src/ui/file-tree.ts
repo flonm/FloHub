@@ -94,6 +94,8 @@ export class ViewedTree {
   private readonly changedAt = new Map<string, number>();
   /** The last state seen on each file's page control, so a re-rendered control only counts when it changed. */
   private readonly seen = new Map<string, boolean>();
+  /** Called whenever a mark changes, for the versions view. */
+  private readonly listeners = new Set<() => void>();
 
   constructor(private readonly notify: (message: string) => void) {}
 
@@ -111,6 +113,35 @@ export class ViewedTree {
     const key = pullKey(ref);
     if (this.loaded?.key !== key && this.loadingKey !== key && this.failedKey !== key) void this.load(ref);
     if (this.loaded?.key === key) this.decorate(tree, this.loaded);
+  }
+
+  /**
+   * Fetches the marks once per pull request even where the page has no file tree, and calls back whenever they change.
+   * @param ref The pull request.
+   * @param listener Called after each change.
+   * @returns Stops the calls.
+   */
+  watch(ref: PullRef, listener: () => void): () => void {
+    this.listeners.add(listener);
+    const key = pullKey(ref);
+    if (this.loaded?.key !== key && this.loadingKey !== key && this.failedKey !== key) void this.load(ref);
+    return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * @param ref The pull request.
+   * @returns The viewer's mark on each file of its current diff, or null until they are fetched.
+   */
+  states(ref: PullRef): ReadonlyMap<string, ViewedState> | null {
+    return this.loaded?.key === pullKey(ref) ? this.loaded.states : null;
+  }
+
+  /**
+   * @param path A file to mark.
+   * @param viewed The mark it gets, unless it has it already.
+   */
+  async setViewed(path: string, viewed: boolean): Promise<void> {
+    if ((this.loaded?.states.get(path) === "VIEWED") !== viewed) await this.toggle(path);
   }
 
   /** @param ref The pull request to fetch the viewed states again for, if they were requested before. */
@@ -134,6 +165,11 @@ export class ViewedTree {
     for (const element of document.querySelectorAll("[data-flohub-file], [data-flohub-viewed], [data-flohub-row]")) {
       clearDecoration(element);
     }
+    this.changed();
+  }
+
+  private changed(): void {
+    for (const listener of this.listeners) listener();
   }
 
   private async load(ref: PullRef): Promise<void> {
@@ -196,9 +232,10 @@ export class ViewedTree {
       else clearDecoration(item);
     }
 
+    let followed = false;
     for (const [item, path] of files) {
       const control = pageControl(path, loaded, headers);
-      if (control && !this.busy.has(path)) this.followControl(control, path, loaded);
+      if (control && !this.busy.has(path)) followed = this.followControl(control, path, loaded) || followed;
       this.decorateFile(item, path, loaded.states.get(path) ?? "UNVIEWED");
       decorateDiffStat(item, loaded.stats.get(path) ?? null);
     }
@@ -211,25 +248,30 @@ export class ViewedTree {
       const row = rowOf(folder);
       if (row) setAttribute(row, "data-flohub-row", allViewed ? "" : null);
     }
+    if (followed) this.changed();
   }
 
   /**
    * Keeps the tree and the page's Viewed control for one file in step. A control that appears after the tree
    * changed the file through the API may come from the page's stale cache, so the tree clicks it into line.
    * Otherwise the control's state wins whenever it is new or changed.
+   * @returns Whether the file's mark changed.
    */
-  private followControl(control: HTMLElement, path: string, loaded: Loaded): void {
+  private followControl(control: HTMLElement, path: string, loaded: Loaded): boolean {
     const checked = isChecked(control);
     const before = this.seen.get(path);
     this.seen.set(path, checked);
     if (before === undefined && this.changedAt.has(path)) {
       this.changedAt.delete(path);
       if (checked !== (loaded.states.get(path) === "VIEWED")) control.click();
-      return;
+      return false;
     }
-    if (before === checked) return;
-    loaded.states.set(path, stateFromCheckbox(checked, loaded.states.get(path)));
+    if (before === checked) return false;
+    const state = stateFromCheckbox(checked, loaded.states.get(path));
+    const moved = state !== loaded.states.get(path);
+    loaded.states.set(path, state);
     this.changedAt.delete(path);
+    return moved;
   }
 
   private decorateFile(item: Element, path: string, state: ViewedState): void {
@@ -290,6 +332,8 @@ export class ViewedTree {
     if (control) {
       this.seen.set(path, isChecked(control));
       if (isChecked(control) !== viewed) control.click();
+      // GitHub's React button flips only once it re-renders; the control is followed again when it does.
+      loaded.states.set(path, viewed ? "VIEWED" : "UNVIEWED");
       this.redecorate();
       return;
     }
@@ -316,6 +360,7 @@ export class ViewedTree {
   private redecorate(): void {
     const tree = findTree();
     if (tree && this.loaded) this.decorate(tree, this.loaded);
+    this.changed();
   }
 }
 

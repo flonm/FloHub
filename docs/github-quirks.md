@@ -56,3 +56,21 @@ scrolls the comments panel (`#docked-side-panel-content`) to the thread's card, 
 **How to tell it's fixed.** Open a pull request's Files changed tab with the comments panel open. If the avatars on a
 commented line unfold the thread when clicked, or the button is there without the mouse over the line, the hover can go,
 and FloHub can press GitHub's control directly.
+
+## A push resets the Viewed marks of files whose change stayed the same
+
+*Expected from how GitHub dismisses Viewed marks (`viewerViewedState: DISMISSED`), not yet observed on a real pull
+request.*
+
+**What GitHub does.** A file's Viewed mark turns into *changed since you viewed it* when a push changes the file at the
+head. After a rebase, that includes files whose change the pull request makes is the same as before: their content
+moved with the base branch, so GitHub asks to look at them again.
+
+**What FloHub does.** The versions view knows which files make the same change in both compared versions. While **To**
+is the current version and **From** the version the viewer last reviewed, a button in the summary under the toolbar, *Mark N unchanged files as viewed again* (`markUnchanged` in `renderResult`,
+`src/ui/versions-view.ts`), marks those whose mark GitHub reset as viewed. It leaves files that were never viewed
+alone (`viewedBeforeUnchanged` in `src/core/viewed.ts`).
+
+**How to tell it's fixed.** Mark a file as viewed, rebase the pull request onto a newer base that doesn't touch that
+file's lines, and push. If the file is still marked as viewed, GitHub compares the change rather than the content, and
+the button never shows. It can then go.
