@@ -80,3 +80,26 @@ export function stateFromCheckbox(checked: boolean, known: ViewedState | undefin
   if (checked) return "VIEWED";
   return known === "DISMISSED" ? "DISMISSED" : "UNVIEWED";
 }
+
+/**
+ * @param paths Files, in the order they show.
+ * @param states The viewer's marks on the pull request's current files.
+ * @returns The files that can be marked and aren't yet, in the same order: where F goes next.
+ */
+export function notViewed(paths: readonly string[], states: ReadonlyMap<string, ViewedState>): string[] {
+  return paths.filter((path) => {
+    const state = states.get(path);
+    return state !== undefined && state !== "VIEWED";
+  });
+}
+
+/**
+ * Files GitHub reset the mark of, picked from files whose change is the same in both compared versions: the viewer
+ * looked at them before, and what the pull request does to them hasn't changed since the older version.
+ * @param paths Files that make the same change in both versions.
+ * @param states The viewer's marks on the pull request's current files.
+ * @returns The ones marked as changed since the viewer viewed them.
+ */
+export function viewedBeforeUnchanged(paths: readonly string[], states: ReadonlyMap<string, ViewedState>): string[] {
+  return paths.filter((path) => states.get(path) === "DISMISSED");
+}

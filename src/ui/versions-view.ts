@@ -39,6 +39,7 @@ import { standingVerdict, unseenRange } from "../core/since-review";
 import { type JumpTarget, threadElsewhere } from "../core/comment-jump";
 import { type SplitSide, splitRows } from "../core/split";
 import { READING_LINE, type Stop } from "../core/steps";
+import { notViewed, viewedBeforeUnchanged, type ViewedState } from "../core/viewed";
 import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
 import {
   BASE,
@@ -94,6 +95,33 @@ interface ReviewHooks {
   } | null;
 }
 
+/** The viewer's Viewed marks, which GitHub keeps for the pull request's current diff only. */
+export interface ViewedMarks {
+  /** Each file's mark in the pull request's current diff, or null until they are fetched. */
+  states: () => ReadonlyMap<string, ViewedState> | null;
+  /** Marks a file as viewed or not; resolves once the mark is set, or has failed and said so. */
+  set: (path: string, viewed: boolean) => Promise<void>;
+  /** Calls back whenever a mark changes, here or on GitHub's page; returns what stops the calls. */
+  watch: (listener: () => void) => () => void;
+}
+
+/** What F and ⇧F need from the diff on screen. */
+export interface FileSteps {
+  /** The files not marked Viewed, top to bottom, each by its path. */
+  stops: Stop[];
+  /** The line a file's header lands on, in the stops' pixels. */
+  line: number;
+  /** The file being read, which ⇧F marks, or null when none in view can be marked. */
+  reading: string | null;
+  /** Scrolls a file's header to the top and returns where it landed. */
+  go: (path: string) => number;
+  /** Marks a file as viewed and folds it, as its Viewed box does. */
+  markViewed: (path: string) => Promise<void>;
+}
+
+/** Why F and ⇧F have nothing to go to: the marks aren't fetched yet, or the diff doesn't end at the current version. */
+type NoFileSteps = "unknown" | "not-head";
+
 export interface VersionsViewRequest {
   /** Names the pull request: opening the same one again shows what the view showed last, refreshed. */
   key: string;
@@ -124,6 +152,8 @@ export interface VersionsViewRequest {
   splitView?: () => Promise<boolean>;
   /** Remembers the layout the viewer chose. */
   saveSplitView?: (split: boolean) => void;
+  /** The viewer's Viewed marks, shown and changed while the diff ends at the current version. */
+  viewed?: ViewedMarks;
 }
 
 
@@ -535,6 +565,27 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 .expander:hover, .expander:hover .num { background: var(--vd-accent); color: var(--vd-bg); }
 
 details.unchanged > summary { color: var(--vd-muted); cursor: pointer; }
+.viewed-box { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 0 8px; font-size: 12px; font-weight: 400; }
+.viewed-box[hidden], .mark-unchanged[hidden] { display: none; }
+.viewed-box .tick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--vd-border);
+  border-radius: 3px;
+  background: var(--vd-bg);
+  color: var(--fgColor-onEmphasis, #ffffff);
+}
+.viewed-box .tick svg { width: 10px; height: 10px; stroke-width: 2.25; }
+.viewed-box:not([aria-checked="true"]) .tick svg { display: none; }
+.viewed-box[aria-checked="true"] .tick { border-color: var(--bgColor-accent-emphasis, #0969da); background: var(--bgColor-accent-emphasis, #0969da); }
+.viewed-box[data-state="DISMISSED"] .tick { border-color: var(--vd-attention); }
+.viewed-box[data-state="DISMISSED"] .tick::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--vd-attention); }
+.viewed-box[aria-busy="true"] { opacity: 0.5; cursor: progress; }
+.files .file[data-viewed="VIEWED"] { opacity: 0.55; }
+.mark-unchanged { min-height: 22px; margin-left: 8px; padding: 0 8px; color: var(--vd-fg); font-size: 12px; font-weight: 400; }
 details.unchanged ul { margin: 6px 0 0; padding-left: 20px; font: 12px/20px var(--vd-mono); color: var(--vd-muted); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; user-select: none; }
 ${THREAD_STYLES}
@@ -595,6 +646,10 @@ export class VersionsView {
   private alignUntil = 0;
   /** Shows a range, and a line in it, once the view has its versions. */
   private target: ((range: SavedRange, line?: CommentLine) => void) | null = null;
+  /** What F and ⇧F step through in the diff on screen, or null while none is drawn. */
+  private steps: (() => FileSteps | NoFileSteps) | null = null;
+  /** Stops the Viewed marks' calls for the pull request shown before. */
+  private unwatch: (() => void) | undefined;
   private readonly tooltip = new Tooltip();
 
   constructor() {
@@ -703,6 +758,15 @@ export class VersionsView {
     return { stops: rows.map((row) => ({ id: row.dataset.thread ?? "", top: shownAt(row).getBoundingClientRect().top })), line, go };
   }
 
+  /**
+   * The files F and ⇧F step through.
+   * @returns The steps; "not-head" while the diff ends before the current version, which GitHub keeps the marks for;
+   *   "unknown" until the marks are fetched; null while no diff is drawn.
+   */
+  fileSteps(): FileSteps | NoFileSteps | null {
+    return this.isOpen && this.steps ? this.steps() : null;
+  }
+
   /** @param request Where the versions come from. */
   open(request: VersionsViewRequest): void {
     this.onClose = request.onClose;
@@ -712,6 +776,7 @@ export class VersionsView {
       return;
     }
     this.shown = null;
+    this.steps = null;
     const run = ++this.generation;
     const live = () => run === this.generation;
 
@@ -762,7 +827,12 @@ export class VersionsView {
       reveal: Reveal;
       place: PlaceThreads;
       compared: Compared;
+      marks: () => void;
     } | null = null;
+    this.unwatch?.();
+    this.unwatch = request.viewed?.watch(() => {
+      if (live()) onScreen?.marks();
+    });
     /** The pull request's review threads and pending review, once fetched, and whether the viewer wants them shown. */
     let discussion: ReviewDiscussion | null = null;
     let threadsShown = true;
@@ -878,6 +948,7 @@ export class VersionsView {
       picker.refresh();
       if (!kept) {
         onScreen = null;
+        this.steps = null;
         tracking?.abort();
         error.textContent = "";
         notice.textContent = "";
@@ -917,7 +988,9 @@ export class VersionsView {
             show: (target) => this.goTo(target.range, target.line),
             comment: commentable ? { mode: () => postingMode(discussion?.pending ?? null, newer.oid), post, released: release } : null,
           };
-          const show = renderResult({ main, review, summary, legend, files, signal: tracking.signal }, diff, {
+          // GitHub keeps one Viewed mark per file, for the current version only.
+          const viewed = newer.current ? (request.viewed ?? null) : null;
+          const show = renderResult({ main, review, summary, legend, files, viewed, signal: tracking.signal }, diff, {
             split,
             older,
             newer,
@@ -927,7 +1000,8 @@ export class VersionsView {
             repoUrl: request.repoUrl,
           });
           const shownVersions = { older: older?.oid ?? null, newer: newer.oid, newerIsHead: newer.current };
-          onScreen = { oids, before, after, reveal: show.reveal, place: show.place, compared: shownVersions };
+          onScreen = { oids, before, after, reveal: show.reveal, place: show.place, compared: shownVersions, marks: show.marks };
+          this.steps = viewed ? show.steps : () => (newer.current ? "unknown" : "not-head");
           placeAll();
         }
         if (pending?.line && pending.oids === oids && onScreen) {
@@ -1432,6 +1506,8 @@ interface Slots {
   legend: HTMLElement;
   /** The file tree beside the diff. */
   files: HTMLElement;
+  /** The viewer's Viewed marks, or null when the diff doesn't end at the current version. */
+  viewed: ViewedMarks | null;
   /** Aborts when another range replaces this result. */
   signal: AbortSignal;
 }
@@ -1440,13 +1516,14 @@ interface Slots {
  * @param slots Where the result goes.
  * @param files The compared files.
  * @param context The versions compared.
- * @returns Functions that scroll to a commented line and mark it, and that put the review threads at their lines.
+ * @returns Functions that scroll to a commented line and mark it, that put the review threads at their lines, that
+ *   show the Viewed marks as they are now, and that give F and ⇧F their files.
  */
 function renderResult(
-  { main, review, summary, legend, files: nav, signal }: Slots,
+  { main, review, summary, legend, files: nav, viewed, signal }: Slots,
   files: FileInterdiff[],
   context: Context,
-): { reveal: Reveal; place: PlaceThreads } {
+): { reveal: Reveal; place: PlaceThreads; marks: () => void; steps: () => FileSteps | NoFileSteps } {
   const { older, newer } = context;
   // Past GitHub's file limit, a file only one version lists may just be cut off from the other's list.
   const truncated = Boolean(context.before?.truncated) || context.after.truncated;
@@ -1521,8 +1598,12 @@ function renderResult(
   }
   const details = el("details", { class: "unchanged" });
   const unchangedItems = new Map<FileInterdiff, HTMLLIElement>();
+  // Pushing again resets the marks of files the push didn't change the pull request's work on; one click restores them.
+  const markUnchanged = viewed && unchanged.length > 0 ? el("button", { type: "button", class: "mark-unchanged", hidden: "" }) : null;
   if (unchanged.length > 0) {
-    details.append(el("summary", {}, `${unchanged.length} ${unchanged.length === 1 ? "file makes" : "files make"} the same change in both versions`));
+    const heading = el("summary", {}, `${unchanged.length} ${unchanged.length === 1 ? "file makes" : "files make"} the same change in both versions`);
+    if (markUnchanged) heading.append(markUnchanged);
+    details.append(heading);
     const list = el("ul");
     for (const file of unchanged) {
       const item = el("li", {}, file.oldPath ? `${file.oldPath} → ${file.path}` : file.path);
@@ -1534,6 +1615,112 @@ function renderResult(
   }
   main.replaceChildren(...content);
   const treeRows = sections.size > 0 ? renderFileTree(nav, tree, sections, main, signal) : new Map<HTMLDetailsElement, HTMLButtonElement>();
+
+  const byPath = new Map([...sections].map(([file, section]) => [file.path, section]));
+  const boxes = new Map<FileInterdiff, HTMLButtonElement>();
+  /** Files the viewer was taken to, which the marks' first arrival leaves open. */
+  const revealed = new Set<HTMLDetailsElement>();
+  let folded = false;
+  /** Marks a file and folds it, or unmarks it and opens it, as GitHub's own Viewed box does. */
+  const setViewed = async (path: string, mark: boolean) => {
+    const section = byPath.get(path);
+    if (!viewed || !section) return;
+    section.open = !mark;
+    // Folded above the top, the file's header would leave the screen: it stays where the diff is read.
+    const { top } = main.getBoundingClientRect();
+    if (mark && section.getBoundingClientRect().top < top) main.scrollBy({ top: section.getBoundingClientRect().top - top, behavior: "instant" });
+    await viewed.set(path, mark);
+  };
+  const marks = () => {
+    const states = viewed?.states() ?? null;
+    for (const [file, box] of boxes) {
+      const state = states?.get(file.path);
+      box.hidden = state === undefined;
+      const section = sections.get(file);
+      const row = section && treeRows.get(section);
+      if (row) {
+        if (state === "VIEWED") row.dataset.viewed = "VIEWED";
+        else delete row.dataset.viewed;
+      }
+      if (!state) continue;
+      box.setAttribute("aria-checked", String(state === "VIEWED"));
+      box.setAttribute("aria-label", state === "DISMISSED" ? "Viewed, changed since you viewed it" : "Viewed");
+      box.dataset.state = state;
+      box.dataset.tip = VIEWED_TIP[state];
+    }
+    // Like GitHub's diff, the view opens with the viewed files folded.
+    if (states && !folded) {
+      folded = true;
+      for (const [file, section] of sections) if (states.get(file.path) === "VIEWED" && !revealed.has(section)) section.open = false;
+    }
+    if (!markUnchanged) return;
+    const reset = states ? viewedBeforeUnchanged(unchanged.map((file) => file.path), states) : [];
+    const one = reset.length === 1;
+    markUnchanged.hidden = reset.length === 0;
+    markUnchanged.textContent = `Mark ${reset.length} as viewed again`;
+    markUnchanged.dataset.tip = `${one ? "This file was" : `These ${reset.length} files were`} marked as viewed until a push reset ${one ? "its mark" : "their marks"}, and ${one ? "makes" : "make"} the same change in v${newer.number} as in v${older?.number ?? 0}`;
+  };
+  if (viewed) {
+    for (const [file, section] of sections) {
+      const box = viewedBox();
+      box.addEventListener("click", (event) => {
+        // Inside the file's header, a click would fold or open the file as well.
+        event.preventDefault();
+        event.stopPropagation();
+        const state = viewed.states()?.get(file.path);
+        if (!state || box.getAttribute("aria-busy") === "true") return;
+        box.setAttribute("aria-busy", "true");
+        void setViewed(file.path, state !== "VIEWED").finally(() => {
+          box.removeAttribute("aria-busy");
+          marks();
+        });
+      });
+      section.querySelector(":scope > summary")?.append(box);
+      boxes.set(file, box);
+    }
+    markUnchanged?.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const states = viewed.states();
+      if (!states) return;
+      markUnchanged.disabled = true;
+      const reset = viewedBeforeUnchanged(unchanged.map((file) => file.path), states);
+      const mark = async () => {
+        for (const path of reset) {
+          // oxlint-disable-next-line no-await-in-loop -- one mutation at a time, as GitHub asks of API clients
+          await viewed.set(path, true);
+        }
+      };
+      void mark().finally(() => {
+        markUnchanged.disabled = false;
+        marks();
+      });
+    });
+    marks();
+  }
+
+  const markRead = async (path: string) => {
+    await setViewed(path, true);
+    marks();
+  };
+  const steps = (): FileSteps | NoFileSteps => {
+    const states = viewed?.states();
+    if (!states) return "unknown";
+    const box = main.getBoundingClientRect();
+    const line = box.top + FILE_LINE_PX;
+    const topOf = (path: string) => byPath.get(path)?.getBoundingClientRect().top ?? 0;
+    const markable = [...byPath.keys()].filter((path) => states.has(path));
+    const reading = markable.findLast((path) => topOf(path) <= line) ?? markable.find((path) => topOf(path) < box.bottom) ?? null;
+    const go = (path: string): number => {
+      const section = byPath.get(path);
+      if (!section) return 0;
+      section.open = true;
+      main.scrollBy({ top: section.getBoundingClientRect().top - box.top, behavior: "instant" });
+      section.querySelector("summary")?.focus({ preventScroll: true });
+      return section.getBoundingClientRect().top;
+    };
+    return { stops: notViewed([...byPath.keys()], states).map((path) => ({ id: path, top: topOf(path) })), line, reading, go, markViewed: markRead };
+  };
 
   /** Each thread's block, kept across placements so an open box or a thread the viewer opened stays as it is. */
   const blocks = new Map<string, HTMLElement>();
@@ -1683,6 +1870,7 @@ function renderResult(
     const section = file && sections.get(file);
     if (!file || !section) return "missing";
     section.open = true;
+    revealed.add(section);
     // A comment names its lines as the version it was written on numbers them, which the lines keep as their origin.
     const at = (number: number) =>
       file.lines.findIndex((each) => (line.side === "LEFT" ? each.origin?.left : each.origin?.right) === number);
@@ -1701,7 +1889,26 @@ function renderResult(
     marked.at(-1)?.scrollIntoView({ block: "center" });
     return marked.length > 0 ? "line" : "file";
   };
-  return { reveal, place };
+  return { reveal, place, marks, steps };
+}
+
+/** What a file's Viewed box says on hover, for each mark. */
+const VIEWED_TIP: Record<ViewedState, string> = {
+  VIEWED: "Viewed. Click to mark as not viewed.",
+  UNVIEWED: "Not viewed. Click to mark as viewed.",
+  DISMISSED: "Changed since you viewed it. Click to mark as viewed.",
+};
+
+/** How far below the top of the diff a file's header counts as the one being read, in pixels. */
+const FILE_LINE_PX = 8;
+
+/** @returns A file header's Viewed box, hidden until the file's mark is known. */
+function viewedBox(): HTMLButtonElement {
+  const box = el("button", { type: "button", class: "viewed-box", role: "checkbox", "aria-checked": "false", hidden: "" });
+  const tick = el("span", { class: "tick", "aria-hidden": "true" });
+  tick.append(icon("check"));
+  box.append(tick, "Viewed");
+  return box;
 }
 
 /**

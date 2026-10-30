@@ -1299,13 +1299,17 @@ async function threadOnPage(thread: ReviewThread): Promise<Element | null> {
 
 /**
  * F goes to the next file not marked Viewed; ⇧F marks the file being read as viewed first. Both work in GitHub's
- * diff, which has the marks.
+ * diff and in the versions view while it ends at the current version, the one GitHub keeps the marks for.
  * @param markViewed Whether to mark the file being read first.
  */
 async function stepFile(markViewed: boolean): Promise<void> {
   const ref = current;
   if (!ref) return;
-  if (versionsView.isOpen || !isWholeFilesTab(location.pathname)) {
+  if (versionsView.isOpen) {
+    await stepVersionsFile(markViewed);
+    return;
+  }
+  if (!isWholeFilesTab(location.pathname)) {
     toast.show(`${markViewed ? "⇧F" : "F"} works in GitHub's own Files changed diff, where the Viewed marks are.`, "info");
     return;
   }
@@ -1341,6 +1345,43 @@ async function stepFile(markViewed: boolean): Promise<void> {
   };
   const line = reading ? reading.element.getBoundingClientRect().top : FILE_LINE_PX;
   await land(left, line, 1, go, "file not viewed yet", "", "", done);
+}
+
+/**
+ * F and ⇧F in the versions view.
+ * @param markViewed Whether to mark the file being read first.
+ */
+async function stepVersionsFile(markViewed: boolean): Promise<void> {
+  const key = markViewed ? "⇧F" : "F";
+  const steps = versionsView.fileSteps();
+  if (steps === null) {
+    toast.show("The versions view is still loading.", "info");
+    return;
+  }
+  if (steps === "not-head") {
+    toast.show(`GitHub keeps the Viewed marks for the current version only. Compare up to it to use ${key}.`, "info");
+    return;
+  }
+  if (steps === "unknown") {
+    toast.show("FloHub is still loading which files you viewed. Try again in a moment.", "info");
+    return;
+  }
+  const reading = markViewed ? steps.reading : null;
+  if (markViewed && !reading) {
+    toast.show("No file in view can be marked as viewed.", "info");
+    return;
+  }
+  if (reading) await steps.markViewed(reading);
+  // Marking a file viewed folds it, which moves the files below: they are measured again.
+  const after = reading ? versionsView.fileSteps() : steps;
+  if (after === null || typeof after === "string") return;
+  const done = reading ? `Marked ${reading} as viewed. ` : "";
+  const left = after.stops.filter((stop) => stop.id !== reading);
+  if (left.length === 0) {
+    toast.show(`${done}Every file in this diff is marked as viewed.`, "success");
+    return;
+  }
+  await land(left, after.line, 1, after.go, "file not viewed yet", "", "", done);
 }
 
 /** The stop ] and [, or U, last went to, and where it landed. */
@@ -1452,6 +1493,11 @@ function openVersions(ref: PullRef): void {
       }
     },
     saveSplitView: (split) => void chrome.storage.local.set({ [SPLIT_KEY]: split }).catch(() => undefined),
+    viewed: {
+      states: () => viewedTree.states(ref),
+      set: async (path, viewed) => viewedTree.setViewed(path, viewed),
+      watch: (listener) => viewedTree.watch(ref, listener),
+    },
   });
   render();
 }
