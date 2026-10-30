@@ -601,7 +601,7 @@ details.unchanged > summary { color: var(--vd-muted); cursor: pointer; }
 .files li:has(> .in-tree) { position: relative; }
 .files li:has(> .in-tree:not([hidden])) > .file { padding-right: 32px; }
 .files .viewed-box.in-tree { position: absolute; top: 50%; right: 8px; width: auto; min-height: 0; padding: 4px; border: 0; background: none; transform: translateY(-50%); }
-.mark-unchanged { min-height: 22px; margin-left: 8px; padding: 0 8px; color: var(--vd-fg); font-size: 12px; font-weight: 400; }
+.mark-unchanged { min-height: 22px; margin-left: 4px; padding: 0 8px; color: var(--vd-fg); font-size: 12px; font-weight: 400; }
 details.unchanged ul { margin: 6px 0 0; padding-left: 20px; font: 12px/20px var(--vd-mono); color: var(--vd-muted); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; user-select: none; }
 ${THREAD_STYLES}
@@ -1665,9 +1665,10 @@ function renderResult(
   // GitHub doesn't say which version a mark was set on, so only a range from the viewer's own review vouches for it.
   const markUnchanged =
     viewed && unchanged.length > 0 && older?.viewerLatestReview === true ? el("button", { type: "button", class: "mark-unchanged", hidden: "" }) : null;
+  // In the summary under the toolbar, where it's seen first after a push, not below every changed file.
+  if (markUnchanged) summary.append(" ", markUnchanged);
   if (unchanged.length > 0) {
     const heading = el("summary", {}, `${unchanged.length} ${unchanged.length === 1 ? "file makes" : "files make"} the same change in both versions`);
-    if (markUnchanged) heading.append(markUnchanged);
     details.append(heading);
     const list = el("ul");
     for (const file of unchanged) {
@@ -1725,7 +1726,7 @@ function renderResult(
     const reset = states ? viewedBeforeUnchanged(unchanged.map((file) => file.path), states) : [];
     const one = reset.length === 1;
     markUnchanged.hidden = reset.length === 0;
-    markUnchanged.textContent = `Mark ${reset.length} as viewed again`;
+    markUnchanged.textContent = `Mark ${reset.length} unchanged ${one ? "file" : "files"} as viewed again`;
     markUnchanged.dataset.tip = `${one ? "This file was" : `These ${reset.length} files were`} marked as viewed until a push reset ${one ? "its mark" : "their marks"}, and ${one ? "makes" : "make"} the same change in v${newer.number} as in v${older?.number ?? 0}, the version you reviewed`;
   };
   if (viewed) {

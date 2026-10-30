@@ -67,7 +67,7 @@ head. After a rebase, that includes files whose change the pull request makes is
 moved with the base branch, so GitHub asks to look at them again.
 
 **What FloHub does.** The versions view knows which files make the same change in both compared versions. While **To**
-is the current version, a button beside them, *Mark N as viewed again* (`markUnchanged` in `renderResult`,
+is the current version and **From** the version the viewer last reviewed, a button in the summary under the toolbar, *Mark N unchanged files as viewed again* (`markUnchanged` in `renderResult`,
 `src/ui/versions-view.ts`), marks those whose mark GitHub reset as viewed. It leaves files that were never viewed
 alone (`viewedBeforeUnchanged` in `src/core/viewed.ts`).
 
