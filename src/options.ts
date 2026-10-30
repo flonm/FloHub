@@ -4,6 +4,8 @@ import type { Inbox } from "./core/inbox";
 import { parseRepo, readDirectRepos, REVIEW_SCOPES_KEY, type ReviewScope, writeReviewScope } from "./core/review-scope";
 import { isMac, shortcutHelp } from "./core/shortcuts";
 import { renderShortcutList } from "./ui/shortcut-list";
+import { assignEntry, knownEntries, loadProfiles, PROFILES_KEY, type Profiles, saveProfiles } from "./core/profiles";
+import { type ProfileActions, renderProfileEditor } from "./ui/profile-view";
 
 const form = document.querySelector<HTMLFormElement>("#token-form");
 const input = document.querySelector<HTMLInputElement>("#token");
@@ -15,6 +17,10 @@ const repoList = document.querySelector<HTMLUListElement>("#repos");
 const repoForm = document.querySelector<HTMLFormElement>("#add-repo");
 const repoInput = document.querySelector<HTMLInputElement>("#repo");
 const scopeStatus = document.querySelector<HTMLParagraphElement>("#scope-status");
+const profileBox = document.querySelector<HTMLDivElement>("#profiles");
+const entryForm = document.querySelector<HTMLFormElement>("#add-entry");
+const entryInput = document.querySelector<HTMLInputElement>("#entry");
+const entryStatus = document.querySelector<HTMLParagraphElement>("#entry-status");
 const origins = requiredOrigins();
 
 const shortcuts = shortcutHelp(isMac(navigator.platform));
@@ -45,6 +51,64 @@ if (repoList && repoForm && repoInput && scopeStatus) {
     event.preventDefault();
     void addDirectRepo(repoInput, scopeStatus);
   });
+}
+
+if (profileBox && entryForm && entryInput && entryStatus) {
+  void renderProfiles(profileBox);
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if ((area === "sync" && Object.hasOwn(changes, PROFILES_KEY)) || (area === "local" && "inbox" in changes)) void renderProfiles(profileBox);
+  });
+  entryForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void addEntry(entryInput, entryStatus);
+  });
+}
+
+/** Every change reads the profiles afresh, so one made in the popup meanwhile isn't undone. */
+const profileActions: ProfileActions = {
+  pick: (active) => void changeProfiles((profiles) => ({ ...profiles, active })),
+  rename: (index, name) =>
+    void changeProfiles((profiles) => {
+      const names: Profiles["names"] = [...profiles.names];
+      names[index] = name.trim() || names[index];
+      return { ...profiles, names };
+    }),
+  assign: (entry, profile) => void changeProfiles((profiles) => assignEntry(profiles, entry, profile)),
+};
+
+async function changeProfiles(change: (profiles: Profiles) => Profiles): Promise<void> {
+  await saveProfiles(change(await loadProfiles()));
+}
+
+/**
+ * Lists every owner the inbox or the profiles know, and every repository listed on its own, each with its profile.
+ * @param box The element to fill.
+ */
+async function renderProfiles(box: HTMLElement): Promise<void> {
+  const [profiles, stored] = await Promise.all([loadProfiles(), chrome.storage.local.get("inbox")]);
+  const focused = box.contains(document.activeElement) ? (document.activeElement as HTMLElement) : null;
+  const key = focused?.dataset.entry ?? focused?.dataset.profile ?? focused?.dataset.focusKey;
+  box.replaceChildren(renderProfileEditor(profiles, knownEntries(stored.inbox as Inbox | undefined, profiles), profileActions));
+  if (key) box.querySelector<HTMLElement>(`[data-entry="${CSS.escape(key)}"], [data-profile="${CSS.escape(key)}"], [data-focus-key="${CSS.escape(key)}"]`)?.focus();
+}
+
+const OWNER_PATTERN = /^[\w-]+$/u;
+
+/** Adds an owner, or a repository that should go elsewhere than its owner, to the first profile. */
+async function addEntry(field: HTMLInputElement, notice: HTMLElement): Promise<void> {
+  const typed = field.value.trim().replace(/^(https?:\/\/)?github\.com\//iu, "").replace(/\/$/u, "");
+  const owner = OWNER_PATTERN.test(typed) ? typed : null;
+  const entry = typed.includes("/") ? parseRepo(typed) : owner;
+  if (!entry) {
+    notice.textContent = "Enter an owner, like octo-org, or a repository, like octo-org/api.";
+    notice.dataset.tone = "error";
+    return;
+  }
+  const profiles = await loadProfiles();
+  await saveProfiles(assignEntry(profiles, entry, 0));
+  field.value = "";
+  notice.textContent = `Added ${entry} to ${profiles.names[0]}. Change its profile in the list.`;
+  notice.dataset.tone = "info";
 }
 
 async function requestAccess(notice: HTMLElement): Promise<void> {

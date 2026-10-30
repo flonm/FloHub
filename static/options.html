@@ -73,6 +73,20 @@
         </form>
         <p id="scope-status" role="status" aria-live="polite"></p>
       </section>
+      <section class="card" aria-labelledby="profiles-title">
+        <h2 id="profiles-title">Profiles</h2>
+        <p>
+          Split the inbox in two, like work during the week and your own projects at the weekend. Put each repository
+          owner on a profile; an owner on neither shows in both. Add a repository on its own to put it elsewhere than
+          its owner. The popup's header switches between them.
+        </p>
+        <div id="profiles"></div>
+        <form class="add" id="add-entry">
+          <input id="entry" aria-label="Owner or repository" autocomplete="off" spellcheck="false" placeholder="octo-org or octo-org/api" />
+          <button type="submit" class="primary">Add</button>
+        </form>
+        <p id="entry-status" role="status" aria-live="polite"></p>
+      </section>
     </main>
     <script src="options.js"></script>
   </body>

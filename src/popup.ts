@@ -15,6 +15,8 @@ import {
 import { send } from "./api/messages";
 import { writeReviewScope } from "./core/review-scope";
 import { type InboxMarks, isPinned, MARKS_KEY, NO_MARKS, readMarks, setSnooze, snoozeFor, togglePin } from "./core/inbox-marks";
+import { DEFAULT_PROFILES, loadProfiles, PROFILES_KEY, profileInbox, type Profiles, readProfiles, saveProfiles } from "./core/profiles";
+import { renderProfileSwitch } from "./ui/profile-view";
 
 const TICK_MS = 15_000;
 /** How old the stored inbox may be for opening the popup to skip asking GitHub; the alarm refreshes it every few minutes. */
@@ -35,11 +37,14 @@ let placedFocus = false;
 let collapsed = new Set<SectionKind>();
 /** The pull requests the user pinned or snoozed, kept in storage for the service worker's notifications too. */
 let marks: InboxMarks = NO_MARKS;
+/** Which repositories the inbox shows, kept in sync storage. */
+let profiles: Profiles = DEFAULT_PROFILES;
 /** The sections whose snoozed pull requests are shown, for this popup only. */
 const showSnoozed = new Set<SectionKind>();
 
 const top = el("div", { class: "top" });
 const header = el("header");
+const title = el("h1", {}, "Inbox");
 const updated = el("span", { class: "updated" });
 const reload = iconButton("refresh", "Refresh", () => void refresh(), "refresh");
 const settings = iconButton("gear", "Settings", () => void openSettings(), "settings");
@@ -70,11 +75,15 @@ const actions: InboxViewActions = {
 };
 
 if (app) {
-  header.append(el("h1", {}, "Inbox"), updated, reload, settings);
+  header.append(title, updated, reload, settings);
   top.append(header, notice);
   app.append(top, main, live);
   document.addEventListener("keydown", onKeydown);
   chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "sync" && Object.hasOwn(changes, PROFILES_KEY)) {
+      profiles = readProfiles(changes[PROFILES_KEY]?.newValue);
+      render();
+    }
     if (area !== "local") return;
     if (Object.hasOwn(changes, MARKS_KEY)) {
       marks = readMarks(changes[MARKS_KEY]?.newValue);
@@ -99,7 +108,8 @@ if (app) {
 
 /** Shows the inbox the service worker stored last, until the refresh answers. */
 async function showStored(): Promise<void> {
-  const stored = await chrome.storage.local.get(["inbox", "inboxCollapsed", MARKS_KEY]);
+  const [stored, saved] = await Promise.all([chrome.storage.local.get(["inbox", "inboxCollapsed", MARKS_KEY]), loadProfiles()]);
+  profiles = saved;
   inbox ??= (stored.inbox as Inbox | undefined) ?? null;
   collapsed = new Set(stored.inboxCollapsed as SectionKind[] | undefined);
   marks = readMarks(stored[MARKS_KEY]);
@@ -151,7 +161,9 @@ function render(): void {
   const focusIndex = rows().indexOf(focused as HTMLAnchorElement);
 
   renderHeader();
-  main.replaceChildren(...renderInbox({ inbox, problem, collapsed, marks, showSnoozed, now: Date.now() }, actions));
+  const shown = inbox && profileInbox(inbox, profiles);
+  const scope = profiles.active === null ? undefined : profiles.names[profiles.active];
+  main.replaceChildren(...renderInbox({ inbox: shown, problem, collapsed, marks, showSnoozed, now: Date.now(), scope }, actions));
   main.setAttribute("aria-busy", String(refreshing && !inbox));
   updateTabStop();
   document.documentElement.style.scrollPaddingTop = `${top.offsetHeight}px`;
@@ -172,6 +184,14 @@ function render(): void {
 }
 
 function renderHeader(): void {
+  const current = header.querySelector(".profile-switch");
+  const next = renderProfileSwitch(profiles, (active) => void saveProfiles({ ...profiles, active }));
+  if (next) {
+    if (current) current.replaceWith(next);
+    else title.after(next);
+  } else {
+    current?.remove();
+  }
   updated.textContent = inbox ? updatedLabel(inbox.fetchedAt, Date.now()) : "";
   reload.classList.toggle("spinning", refreshing);
   reload.title = refreshing ? "Refreshing" : "Refresh";
@@ -241,7 +261,8 @@ function onKeydown(event: KeyboardEvent): void {
     window.close();
     return;
   }
-  if (event.altKey || event.isComposing) return;
+  // The profile switch keeps its arrow keys for picking a profile.
+  if (event.altKey || event.isComposing || event.target instanceof HTMLSelectElement) return;
   const all = rows();
   const row = event.target instanceof HTMLAnchorElement ? event.target : null;
   const index = row ? all.indexOf(row) : -1;

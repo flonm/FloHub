@@ -1,6 +1,7 @@
 import { BAR_STYLES } from "../ui/bar-styles";
 import type { RawStack, RawStackPull } from "../core/stack";
 import popupCss from "../styles/popup.css?inline";
+import optionsCss from "../styles/options.css?inline";
 
 /**
  * GitHub's Primer tokens the bar reads. On github.com the page defines them, and they reach into the shadow root.
@@ -122,6 +123,23 @@ export function inPopup(content: Node): HTMLElement {
   page.className = "popup";
   page.append(content);
   shadow.append(style, page);
+  return host;
+}
+
+/**
+ * Mounts content the way the options page does: options.css inside a shadow root, in one of its cards.
+ * @param content The rendered UI.
+ * @returns The shadow host.
+ */
+export function inOptions(content: Node): HTMLElement {
+  const host = document.createElement("div");
+  const shadow = host.attachShadow({ mode: "open" });
+  const style = document.createElement("style");
+  style.textContent = `:host {\n  display: block;\n  max-width: 680px;\n  color: var(--flo-fg);\n  font: 14px/1.5 var(--flo-font);\n}\n${optionsCss}`;
+  const card = document.createElement("section");
+  card.className = "card";
+  card.append(content);
+  shadow.append(style, card);
   return host;
 }
 

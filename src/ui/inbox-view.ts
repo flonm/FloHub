@@ -29,6 +29,8 @@ export interface InboxViewState {
   showSnoozed?: ReadonlySet<SectionKind>;
   /** The current time, for which snoozes are over. */
   now?: number;
+  /** The active profile's name, when the inbox shows only its repositories. */
+  scope?: string;
 }
 
 /** What the popup does when the user acts on the inbox. */
@@ -144,7 +146,7 @@ export function renderInbox(state: InboxViewState, actions: InboxViewActions): H
       blank(
         "check",
         "Nothing to review",
-        `No review requests and no open pull requests. FloHub checks again every ${INBOX_PERIOD_MINUTES} minutes.`,
+        `No review requests and no open pull requests${state.scope ? ` in ${state.scope}` : ""}. FloHub checks again every ${INBOX_PERIOD_MINUTES} minutes.`,
       ),
     ];
   }
