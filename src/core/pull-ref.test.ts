@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isWholeFilesTab, parsePullRef, pullTab } from "./pull-ref";
+import { isWholeFilesTab, parsePullRef, parseRepoPullsRef, pullTab } from "./pull-ref";
 
 describe("parsePullRef", () => {
   test.each([
@@ -18,6 +18,26 @@ describe("parsePullRef", () => {
     "https://gist.github.com/octo-org/octo-repo/pull/7383",
   ])("ignores %s", (href) => {
     expect(parsePullRef(href)).toBeNull();
+  });
+});
+
+describe("parseRepoPullsRef", () => {
+  test.each([
+    "https://github.com/octo-org/octo-repo/pulls",
+    "https://github.com/octo-org/octo-repo/pulls/",
+    "https://github.com/octo-org/octo-repo/pulls?q=is%3Apr+state%3Aclosed",
+    "https://github.com/octo-org/octo-repo/pulls/review-requested/mona#flohub=your-turn",
+  ])("reads %s", (href) => {
+    expect(parseRepoPullsRef(href)).toEqual({ owner: "octo-org", repo: "octo-repo" });
+  });
+
+  test.each([
+    "https://github.com/pulls",
+    "https://github.com/octo-org/octo-repo/pull/7383",
+    "https://github.com/octo-org/octo-repo/pullsx",
+    "https://gist.github.com/octo-org/octo-repo/pulls",
+  ])("ignores %s", (href) => {
+    expect(parseRepoPullsRef(href)).toBeNull();
   });
 });
 

@@ -1,6 +1,9 @@
-export interface PullRef {
+export interface RepoRef {
   owner: string;
   repo: string;
+}
+
+export interface PullRef extends RepoRef {
   number: number;
 }
 
@@ -20,6 +23,22 @@ export function parsePullRef(href: string): PullRef | null {
   if (!match) return null;
   const [, owner, repo, number] = match as unknown as [string, string, string, string];
   return { owner, repo, number: Number(number) };
+}
+
+const PULLS_PATH = /^\/([^/]+)\/([^/]+)\/pulls(?:\/|$)/u;
+
+/**
+ * Reads the repository whose list of pull requests a github.com URL shows, on any of the sidebar's lists.
+ * @param href The page URL.
+ * @returns The repository, or null for any other page.
+ */
+export function parseRepoPullsRef(href: string): RepoRef | null {
+  const url = new URL(href);
+  if (url.hostname !== "github.com") return null;
+  const match = PULLS_PATH.exec(url.pathname);
+  if (!match) return null;
+  const [, owner, repo] = match as unknown as [string, string, string];
+  return { owner, repo };
 }
 
 /**

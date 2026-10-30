@@ -88,6 +88,11 @@ export interface InboxViewState {
   /** The active profile's name, when the inbox shows only its repositories. */
   scope?: string;
   everything?: EverythingState;
+  /**
+   * One view to draw on its own, without the sections around it, as the pull request list's sidebar opens it: the
+   * section whose snoozed pull requests it shows, and its categories.
+   */
+  view?: { section: SectionKind; categories: readonly InboxCategory[] };
 }
 
 /** What the popup does when the user acts on the inbox. */
@@ -211,6 +216,7 @@ export function renderInbox(state: InboxViewState, actions: InboxViewActions): H
   }
   const categories = inboxCategories(inbox, state.everything?.loaded?.groups);
   const inInbox = new Set((inbox.other ?? []).flatMap((entry) => entry.pulls.map((pull) => pull.url)));
+  if (state.view) return [renderView(state.view, categories, inInbox, state, actions)];
   return SECTIONS_IN_ORDER.map((kind) => renderSection(kind, categories, inInbox, state, actions));
 }
 
@@ -277,17 +283,7 @@ function renderSection(
   state: InboxViewState,
   actions: InboxViewActions,
 ): HTMLElement {
-  const marks = state.marks ?? NO_MARKS;
-  const now = state.now ?? Date.now();
-  const showing = state.showSnoozed?.has(kind) ?? false;
-  const parts = SECTION_CATEGORIES[kind].map((category) => {
-    const marked = applyMarks(categories[category], marks, now, showing);
-    return { category, groups: marked.groups, snoozed: marked.snoozed };
-  });
-  const snoozed = parts.reduce((sum, part) => sum + part.snoozed, 0);
-  // Snoozed pull requests never count, shown or not.
-  const count = (part: (typeof parts)[number]) => part.groups.reduce((sum, entry) => sum + entry.pulls.length, 0) - (showing ? part.snoozed : 0);
-  const total = parts.reduce((sum, part) => sum + count(part), 0);
+  const parts = markParts(kind, SECTION_CATEGORIES[kind], categories, state);
   const id = `section-${kind}`;
   const bodyId = `section-body-${kind}`;
   const open = !state.collapsed.has(kind);
@@ -300,7 +296,7 @@ function renderSection(
     "aria-controls": bodyId,
     "data-focus-key": `section:${kind}`,
   });
-  toggle.append(icon("chevron"), el("span", { class: "section-title" }, SECTION_TITLES[kind]), el("span", { class: "count" }, String(total)));
+  toggle.append(icon("chevron"), el("span", { class: "section-title" }, SECTION_TITLES[kind]), el("span", { class: "count" }, String(parts.total)));
   toggle.addEventListener("click", () => actions.toggleSection(kind));
   const heading = el("h2");
   heading.append(toggle);
@@ -308,22 +304,73 @@ function renderSection(
   body.hidden = !open;
   section.append(heading, body);
   if (!open) return section;
+  body.append(...renderParts(kind, parts, inInbox, state, actions));
+  if (kind === "other" && state.everything) body.append(renderEverything(state.everything, parts.now, actions));
+  return section;
+}
+
+/** One view of the pull request list's sidebar: its categories without a section heading, since the sidebar names it. */
+function renderView(
+  view: NonNullable<InboxViewState["view"]>,
+  categories: Record<InboxCategory, TurnGroup[]>,
+  inInbox: ReadonlySet<string>,
+  state: InboxViewState,
+  actions: InboxViewActions,
+): HTMLElement {
+  const box = el("div", { class: "view", "data-section": view.section });
+  box.append(...renderParts(view.section, markParts(view.section, view.categories, categories, state), inInbox, state, actions));
+  return box;
+}
+
+/** A section's categories with the viewer's marks applied, and how many pull requests they show. */
+interface MarkedParts {
+  parts: { category: InboxCategory; groups: TurnGroup[]; snoozed: number; count: number }[];
+  total: number;
+  snoozed: number;
+  showing: boolean;
+  marks: InboxMarks;
+  now: number;
+}
+
+function markParts(
+  kind: SectionKind,
+  list: readonly InboxCategory[],
+  categories: Record<InboxCategory, TurnGroup[]>,
+  state: InboxViewState,
+): MarkedParts {
+  const marks = state.marks ?? NO_MARKS;
+  const now = state.now ?? Date.now();
+  const showing = state.showSnoozed?.has(kind) ?? false;
+  const parts = list.map((category) => {
+    const marked = applyMarks(categories[category], marks, now, showing);
+    // Snoozed pull requests never count, shown or not.
+    const count = marked.groups.reduce((sum, entry) => sum + entry.pulls.length, 0) - (showing ? marked.snoozed : 0);
+    return { category, groups: marked.groups, snoozed: marked.snoozed, count };
+  });
+  const total = parts.reduce((sum, part) => sum + part.count, 0);
+  const snoozed = parts.reduce((sum, part) => sum + part.snoozed, 0);
+  return { parts, total, snoozed, showing, marks, now };
+}
+
+function renderParts(kind: SectionKind, marked: MarkedParts, inInbox: ReadonlySet<string>, state: InboxViewState, actions: InboxViewActions): HTMLElement[] {
+  const { parts, total, snoozed, showing, marks, now } = marked;
+  const nodes: HTMLElement[] = [];
   const marking = { marks, now, inInbox };
   for (const part of parts) {
     // A section of one category needs no heading of its own; the others name every category, empty ones too.
     if (parts.length > 1) {
       const subhead = el("h3", { class: "category", "data-category": part.category });
-      const number = String(count(part));
-      subhead.append(el("span", {}, CATEGORY_TITLES[part.category]), el("span", { class: "count" }, number));
+      subhead.append(el("span", {}, CATEGORY_TITLES[part.category]), el("span", { class: "count" }, String(part.count)));
       if (part.groups.length === 0) subhead.dataset.empty = "";
-      body.append(subhead);
+      nodes.push(subhead);
     }
     if (part.groups.length === 0) continue;
     const list = el("ul", { class: "groups" });
     for (const entry of part.groups) list.append(renderGroup(entry, part.category, actions, marking));
-    body.append(list);
+    nodes.push(list);
   }
-  if (parts.length === 1 && total === 0 && snoozed === 0 && kind !== "other") body.append(el("p", { class: "empty" }, "Nothing here."));
+  const alone = parts.length === 1 || state.view !== undefined;
+  if (alone && total === 0 && snoozed === 0 && kind !== "other") nodes.push(el("p", { class: "empty" }, "Nothing here."));
   if (snoozed > 0) {
     const label = `${snoozed} snoozed`;
     const more = el(
@@ -333,10 +380,9 @@ function renderSection(
     );
     more.prepend(icon("clock"));
     more.addEventListener("click", () => actions.toggleSnoozed(kind));
-    body.append(more);
+    nodes.push(more);
   }
-  if (kind === "other" && state.everything) body.append(renderEverything(state.everything, now, actions));
-  return section;
+  return nodes;
 }
 
 /**

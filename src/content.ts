@@ -6,7 +6,13 @@ import { DiffHighlights, type HighlightStatus } from "./ui/diff-highlights";
 import { Favicon, faviconUrl } from "./ui/favicon";
 import { ViewedTree } from "./ui/file-tree";
 import { type Reply, send } from "./api/messages";
-import { isWholeFilesTab, type PullRef, parsePullRef, pullKey, pullTab } from "./core/pull-ref";
+import { isWholeFilesTab, type PullRef, parsePullRef, parseRepoPullsRef, pullKey, pullTab, type RepoRef } from "./core/pull-ref";
+import type { Inbox } from "./core/inbox";
+import { type InboxMarks, MARKS_KEY, NO_MARKS, readMarks, setSnooze, snoozeFor, togglePin } from "./core/inbox-marks";
+import { repoInbox, repoViewCounts, type RepoView, viewFromHash } from "./core/repo-views";
+import { writeReviewScope } from "./core/review-scope";
+import { type InboxViewActions, type Problem, problemFor, type SectionKind } from "./ui/inbox-view";
+import { RepoPullsViews } from "./ui/repo-pulls";
 import { ReviewDialog } from "./ui/review-dialog";
 import { deriveDiscussion, lastReviewBy } from "./core/discussion";
 import { deriveReviewers, type DismissedVerdict, type Reviewer } from "./core/reviewers";
@@ -147,6 +153,57 @@ const highlights = new DiffHighlights((status) => {
   update({ highlight });
 });
 
+/** How old the stored inbox may be for a repository's pull request list to skip asking GitHub, as for the popup. */
+const REPO_PULLS_FRESH_MS = 60_000;
+
+/** What FloHub's views on the repository's pull request list show, while the page is one. */
+let repoPulls: {
+  ref: RepoRef;
+  view: RepoView | null;
+  inbox: Inbox | null;
+  problem: Problem | null;
+  marks: InboxMarks;
+  showSnoozed: Set<SectionKind>;
+} | null = null;
+
+const repoActions: InboxViewActions = {
+  openPull: (url, background) => {
+    if (background) window.open(url, "_blank", "noopener");
+    else location.assign(url);
+  },
+  focusRow: () => undefined,
+  toggleSection: () => undefined,
+  hideTeamRequests: (repo) => void writeReviewScope(repo, "direct"),
+  togglePin: (url) => {
+    if (repoPulls) void saveRepoMarks(togglePin(repoPulls.marks, url));
+  },
+  snooze: (pull, preset) => {
+    if (!repoPulls) return;
+    const snooze = preset ? snoozeFor(preset, new Date(), pull) : null;
+    void saveRepoMarks(setSnooze(repoPulls.marks, pull.url, snooze));
+  },
+  toggleSnoozed: (kind) => {
+    if (!repoPulls) return;
+    if (repoPulls.showSnoozed.has(kind)) repoPulls.showSnoozed.delete(kind);
+    else repoPulls.showSnoozed.add(kind);
+    renderRepoPulls();
+  },
+  loadEverything: () => undefined,
+  retryRefresh: () => void refreshRepoPulls(),
+  openSettings: () => void send({ type: "open-options" }),
+};
+const repoViews = new RepoPullsViews(repoActions);
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !repoPulls) return;
+  if (Object.hasOwn(changes, MARKS_KEY)) repoPulls.marks = readMarks(changes[MARKS_KEY]?.newValue);
+  if (Object.hasOwn(changes, "inbox")) {
+    const next = changes.inbox?.newValue as Inbox | undefined;
+    if (next) repoPulls.inbox = next;
+  }
+  if (Object.hasOwn(changes, MARKS_KEY) || Object.hasOwn(changes, "inbox")) renderRepoPulls();
+});
+
 void restoreSettings();
 setInterval(() => update({ now: Date.now() }), AGE_TICK_MS);
 
@@ -162,6 +219,7 @@ new MutationObserver(schedule).observe(document.documentElement, {
 document.addEventListener("change", schedule, { capture: true });
 document.addEventListener("click", schedule, { capture: true });
 addEventListener("popstate", schedule);
+addEventListener("hashchange", schedule);
 document.addEventListener("turbo:load", schedule);
 (globalThis as { navigation?: EventTarget }).navigation?.addEventListener("currententrychange", schedule);
 document.addEventListener("visibilitychange", () => {
@@ -199,6 +257,7 @@ async function restoreSettings(): Promise<void> {
 function sync(): void {
   // The DOM types promise a body, but there is none while the page is still parsing.
   if (!(document.body as HTMLElement | null)) return;
+  syncRepoPulls(parseRepoPullsRef(location.href));
   const ref = parsePullRef(location.href);
   if (!ref) {
     current = null;
@@ -1509,4 +1568,66 @@ async function askAll(who: AskTarget): Promise<void> {
   }
   if (current && pullKey(current) === pullKey(ref)) update({ pokedAt: pokedAtFor(ref) });
   await load(true);
+}
+
+/**
+ * Shows FloHub's views on a repository's pull request list, and takes them away on any other page.
+ * @param ref The repository whose list the page shows, or null.
+ */
+function syncRepoPulls(ref: RepoRef | null): void {
+  if (!ref) {
+    if (repoPulls) repoViews.remove();
+    repoPulls = null;
+    return;
+  }
+  const view = viewFromHash(location.hash);
+  if (!repoPulls || `${repoPulls.ref.owner}/${repoPulls.ref.repo}`.toLowerCase() !== `${ref.owner}/${ref.repo}`.toLowerCase()) {
+    repoPulls = { ref, view, inbox: null, problem: null, marks: NO_MARKS, showSnoozed: new Set() };
+    renderRepoPulls();
+    void showStoredInbox();
+    void refreshRepoPulls(REPO_PULLS_FRESH_MS);
+  } else if (repoPulls.view !== view) {
+    repoPulls.view = view;
+    renderRepoPulls();
+  }
+  repoViews.place(ref, view !== null);
+}
+
+async function showStoredInbox(): Promise<void> {
+  const stored = await chrome.storage.local.get(["inbox", MARKS_KEY]);
+  if (!repoPulls) return;
+  repoPulls.inbox ??= (stored.inbox as Inbox | undefined) ?? null;
+  repoPulls.marks = readMarks(stored[MARKS_KEY]);
+  renderRepoPulls();
+}
+
+/** @param maxAgeMs How old a stored inbox may be to answer instead of fetching; omit it to always fetch. */
+async function refreshRepoPulls(maxAgeMs?: number): Promise<void> {
+  const reply = await send({ type: "inbox", maxAgeMs });
+  if (!repoPulls) return;
+  if (reply.ok) {
+    repoPulls.inbox = reply.value;
+    repoPulls.problem = null;
+  } else {
+    repoPulls.problem = problemFor(reply.code, reply.message);
+  }
+  renderRepoPulls();
+}
+
+function renderRepoPulls(): void {
+  if (!repoPulls) return;
+  const { ref, view, inbox, problem, marks, showSnoozed } = repoPulls;
+  const now = Date.now();
+  const shown = inbox && repoInbox(inbox, ref);
+  repoViews.render({
+    view,
+    counts: shown && repoViewCounts(shown, marks, now),
+    inbox: { inbox: shown, problem, collapsed: new Set(), marks, showSnoozed, now, scope: `${ref.owner}/${ref.repo}` },
+  });
+}
+
+async function saveRepoMarks(next: InboxMarks): Promise<void> {
+  if (repoPulls) repoPulls.marks = next;
+  renderRepoPulls();
+  await chrome.storage.local.set({ [MARKS_KEY]: next });
 }
