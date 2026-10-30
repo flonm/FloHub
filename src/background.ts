@@ -18,7 +18,7 @@ import {
   submitReview,
   type VersionPatch,
 } from "./api/github";
-import { clearInbox, ensureInboxAlarm, INBOX_ALARM, refreshBadge, refreshInbox, refreshInboxAgain } from "./api/inbox-sync";
+import { clearInbox, ensureInboxAlarm, INBOX_ALARM, loadEverything, refreshBadge, refreshInbox, refreshInboxAgain } from "./api/inbox-sync";
 import { MARKS_KEY } from "./core/inbox-marks";
 import { PROFILES_KEY } from "./core/profiles";
 import type { Message, Reply, ReplyByType } from "./api/messages";
@@ -61,6 +61,9 @@ async function handle(message: Message): Promise<Reply<ReplyByType[Message["type
     switch (message.type) {
       case "inbox": {
         return { ok: true, value: await refreshInbox(message.maxAgeMs) };
+      }
+      case "everything": {
+        return { ok: true, value: await loadEverything(message.scopes) };
       }
       case "overview": {
         const token = await readToken();

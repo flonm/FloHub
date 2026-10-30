@@ -22,11 +22,11 @@
 
 **The stack and its reviewers.** Every layer of the stack with its status, from *Needs review* to *Ready to merge*, and every reviewer with their verdict: approved, changes requested, asked again. Re-request, poke or dismiss a review with one click. The toolbar says whose turn it is ("Your turn · 1 reply") and whether the open threads were addressed.
 
-**An inbox for your reviews.** The toolbar button lists what waits for you, sorted by whose turn it is. Reviews you're asked for again come first: their author applied your review and waits on a quick second look. Pin a pull request to the top, or snooze it until something happens on it.
+**An inbox for your reviews.** The toolbar button lists what waits for you, sorted by whose turn it is, each under a heading that says why. Reviews you're asked for again come first: their author applied your review and waits on a quick second look. A review request someone else already answered moves out of your way, and every other open pull request is one click away. Pin a pull request to the top, snooze it until something happens on it, or switch between a work and a personal profile.
 
 <p align="center"><picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/inbox-dark.png">
-  <img src="docs/screenshots/inbox-light.png" alt="The inbox popup: Re-requested, Your turn and Their turn, each row saying why it waits" width="420">
+  <img src="docs/screenshots/inbox-light.png" alt="The inbox popup: Your turn and Their turn, each split into categories like Re-requested, each row saying why it waits" width="420">
 </picture></p>
 
 **Every version of a pull request.** Compare any two versions, even across force pushes and rebases: FloHub diffs what the pull request itself changes, so nothing the base branch gained shows up. A timeline marks who reviewed which version, and each comment says whether its code changed since.

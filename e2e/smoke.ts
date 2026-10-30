@@ -166,6 +166,9 @@ const INBOX = {
   },
 };
 
+/** An open pull request only "Everything else" finds, when asked to load every open one. */
+const ELSEWHERE = inboxPull(140, "refactor(api): split the resolvers", { reviewRequests: { nodes: [] } }, "octo-org/api");
+
 const UNREADABLE = "Resource not accessible by personal access token";
 
 const CHANGED_FILES: Record<string, string> = {
@@ -205,7 +208,7 @@ function inboxIds(inbox: InboxFixture): Record<string, unknown> {
 
 /** What the details query answers for the node ids it asks for. */
 function inboxDetails(inbox: InboxFixture, ids: string[]): { nodes: object[] } {
-  const pulls = Object.values(inbox).flatMap((value) => ("nodes" in value ? value.nodes : []));
+  const pulls = [...Object.values(inbox).flatMap((value) => ("nodes" in value ? value.nodes : [])), ELSEWHERE];
   return { nodes: ids.map((id) => ({ id, ...pulls.find((pull) => pull.url === id) })) };
 }
 
@@ -422,6 +425,12 @@ function createFixture(
             },
           },
         });
+        return;
+      }
+      if (graphql?.query.includes("search(query: $query")) {
+        // Every open pull request of an owner: one the inbox shows already, and one only this search finds.
+        const urls = [(ELSEWHERE as { url: string }).url, "https://github.com/octo-org/api/pull/122"];
+        await route.fulfill({ json: { data: { viewer: { login: "octocat" }, search: { issueCount: 2, nodes: urls.map((id) => ({ id })) } } } });
         return;
       }
       if (graphql?.query.includes("review: search(")) {
@@ -1869,10 +1878,10 @@ for (const scheme of ["light", "dark"] as const) {
     check(
       JSON.stringify(sections) ===
         JSON.stringify([
-          { heading: "Re-requested1", rows: ["#77 fix(auth): refresh tokens before they expire and retry the failed request once"] },
           {
-            heading: "Your turn5",
+            heading: "Your turn6",
             rows: [
+              "#77 fix(auth): refresh tokens before they expire and retry the failed request once",
               "#903 feat(ui): render the stack",
               "#901 feat(api): add the stack endpoint",
               "#130 fix(sync): keep local commits on rebase",
@@ -1881,8 +1890,33 @@ for (const scheme of ["light", "dark"] as const) {
             ],
           },
           { heading: "Their turn1", rows: ["#122 feat(stack): page through long stacks"] },
+          { heading: "Reviewed by someone else0", rows: [] },
+          { heading: "Drafts0", rows: [] },
+          { heading: "Everything else0", rows: [] },
         ]),
-      `popup puts the reviews asked again first, then sorts pull requests by whose turn it is, newest first, a stack's layers together top first: ${JSON.stringify(sections)}`,
+      `popup sorts pull requests by whose turn it is, the reviews asked again first, a stack's layers together top first: ${JSON.stringify(sections)}`,
+    );
+    const categories = await popup.locator(".category").evaluateAll((headings) =>
+      headings.map((heading) => {
+        const list = heading.nextElementSibling?.matches(".groups") ? heading.nextElementSibling : null;
+        const numbers = [...(list?.querySelectorAll(":scope .pull .number") ?? [])].map((number) => number.textContent.trim());
+        return `${heading.textContent}:${numbers.join(" ")}`;
+      }),
+    );
+    check(
+      JSON.stringify(categories) ===
+        JSON.stringify([
+          "Re-requested1:#77",
+          "New review requests2:#903 #901",
+          "Replies to you0:",
+          "New commits since your review1:#130",
+          "Your pull requests: to fix1:#121",
+          "Your pull requests: ask for a review0:",
+          "Your pull requests: ready to merge1:#120",
+          "Waiting for the author0:",
+          "Waiting for reviewers1:#122",
+        ]),
+      `each section names every category, empty ones too, and each pull request sits under why it waits: ${JSON.stringify(categories)}`,
     );
     const chips = async (number: number) => (await popup.locator(".pull", { hasText: `#${number} ` }).locator(".status").allTextContents()).join(",");
     check(
@@ -1891,7 +1925,7 @@ for (const scheme of ["light", "dark"] as const) {
     );
     check(
       (await popup.locator(".pull", { hasText: "#77" }).getByText("Re-requested").count()) === 0 &&
-        (await popup.locator("section", { has: popup.getByRole("button", { name: /^Re-requested/u }) }).locator(".pull", { hasText: "#77" }).count()) === 1,
+        (await popup.locator('.category[data-category="rerequested"] + .groups').locator(".pull", { hasText: "#77" }).count()) === 1,
       "a review request the viewer answered before goes to Re-requested, which needs no chip to say so",
     );
     const waitingFlags = await popup.locator(".pull", { hasText: "#130" }).locator(".status").allTextContents();
@@ -1991,6 +2025,16 @@ for (const scheme of ["light", "dark"] as const) {
     );
     await existing.close();
 
+    await popup.getByRole("button", { name: /^Everything else/u }).click();
+    await popup.getByRole("button", { name: /^Load every open pull request in /u }).click();
+    await popup.locator(".pull", { hasText: "#140 " }).waitFor();
+    check(
+      (await popup.locator(".pull", { hasText: "#122 " }).count()) === 1 &&
+        (await popup.locator(".layer", { hasText: "#140 " }).locator(".row-tools").count()) === 0 &&
+        (await popup.locator(".everything-note", { hasText: /^Loaded /u }).count()) === 1,
+      "Everything else loads every open pull request on request, once each, without pin and snooze for the loaded ones",
+    );
+    await popup.getByRole("button", { name: /^Everything else/u }).click();
     const rowOf = (number: number) => popup.locator(".layer", { hasText: `#${number} ` });
     const titles = async () => popup.locator(".pull .number").allTextContents();
     await rowOf(120).hover();
@@ -1999,8 +2043,9 @@ for (const scheme of ["light", "dark"] as const) {
     const pinnedOrder = await titles();
     const storedMarks = await inboxContext.serviceWorkers()[0]?.evaluate(async () => (await chrome.storage.local.get("inboxMarks")).inboxMarks);
     check(
-      pinnedOrder[0]?.trim() === "#77" && pinnedOrder[1]?.trim() === "#120" && JSON.stringify(storedMarks).includes("/pull/120"),
-      `a pinned pull request sorts first in its section, and the pin is stored: ${pinnedOrder.join(",")}`,
+      (await popup.locator('.category[data-category="merge"] + .groups .pull .number').first().textContent())?.trim() === "#120" &&
+        JSON.stringify(storedMarks).includes("/pull/120"),
+      `a pinned pull request sorts first in its category, and the pin is stored: ${pinnedOrder.join(",")}`,
     );
     await rowOf(121).locator(".pull").focus();
     await popup.keyboard.press("s");
@@ -2013,7 +2058,7 @@ for (const scheme of ["light", "dark"] as const) {
     await rowOf(121).waitFor({ state: "detached" });
     const snoozedToggle = popup.getByRole("button", { name: "Show 1 snoozed" });
     check(
-      (await snoozedToggle.count()) === 1 && (await popup.getByRole("button", { name: /^Your turn/u }).textContent()) === "Your turn4",
+      (await snoozedToggle.count()) === 1 && (await popup.getByRole("button", { name: /^Your turn/u }).textContent()) === "Your turn5",
       "a snoozed pull request leaves its section, which counts it out and offers to show it",
     );
     let snoozedBadge = "";
@@ -2034,7 +2079,7 @@ for (const scheme of ["light", "dark"] as const) {
     await reviewToggle.click();
     check(
       (await reviewToggle.getAttribute("aria-expanded")) === "false" &&
-        (await popup.locator(".pull").count()) === 2 &&
+        (await popup.locator(".pull").count()) === 1 &&
         (await popup.evaluate(() => document.activeElement?.id)) === "section-you",
       "a section heading collapses its rows and keeps focus",
     );

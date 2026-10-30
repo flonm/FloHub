@@ -626,3 +626,59 @@ ul {
 .profile-switch:hover {
   background: var(--flo-bg-muted);
 }
+
+/*
+ * A category's heading inside its section: why the rows below it wait. An empty one stays, faded, so the layout
+ * never shifts and says what isn't waiting too.
+ */
+.category {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 2px 12px 2px 26px;
+  color: var(--flo-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.category .count {
+  font-size: 11px;
+}
+.category[data-empty] {
+  opacity: 0.55;
+}
+/* Being asked again is the most pressing thing in the inbox, so its heading takes the attention colour. */
+.category[data-category="rerequested"]:not([data-empty]) {
+  margin: 4px 6px 0;
+  padding-left: 20px;
+  border-radius: var(--flo-radius-sm);
+  background: var(--flo-attention-bg);
+  color: var(--flo-attention);
+}
+.category[data-category="rerequested"]:not([data-empty]) + .groups {
+  margin: 0 6px;
+  border-left: 2px solid var(--flo-attention-border);
+}
+
+/* Under "Everything else": when its open pull requests were loaded, and the button that loads them. */
+.everything {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 4px 12px 8px;
+  color: var(--flo-muted);
+  font-size: 12px;
+}
+.everything .text-button {
+  margin-top: 0;
+}
+.everything-error {
+  flex-basis: 100%;
+  color: var(--flo-danger);
+}
+.everything-more {
+  color: var(--flo-accent);
+}

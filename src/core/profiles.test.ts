@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Inbox, InboxGroup, InboxPull } from "./inbox";
-import { assignEntry, DEFAULT_PROFILES, knownEntries, profileInbox, profileOf, type Profiles, readProfiles, showsRepo } from "./profiles";
+import { assignEntry, DEFAULT_PROFILES, knownEntries, profileGroups, profileInbox, profileOf, type Profiles, readProfiles, searchScopes, showsRepo } from "./profiles";
 
 const WORK: Profiles = { names: ["Work", "Personal"], active: 0, entries: { "octo-org": 0, mona: 1, "octo-org/party": 1, "mona/notes": 0 } };
 
@@ -11,7 +11,7 @@ function group(repo: string, whose: "you" | "them" = "you"): InboxGroup {
 
 function inbox(groups: Partial<Pick<Inbox, "review" | "mine" | "waiting">>): Inbox {
   const review = groups.review ?? [];
-  return { viewer: "mona", fetchedAt: 0, review, mine: groups.mine ?? [], waiting: groups.waiting ?? [], reviewCount: review.length, turnCount: 99 };
+  return { viewer: "mona", fetchedAt: 0, review, mine: groups.mine ?? [], waiting: groups.waiting ?? [], other: [], reviewCount: review.length, turnCount: 99 };
 }
 
 describe("readProfiles", () => {
@@ -52,7 +52,9 @@ describe("profileInbox", () => {
       mine: [group("mona/site")],
       waiting: [group("hubot/scripts", "them")],
     });
+    whole.other = [group("mona/notes"), group("octo-org/party"), group("mona/blog")];
     const shown = profileInbox(whole, WORK);
+    expect(shown.other?.map((entry) => entry.repo)).toEqual(["mona/notes"]);
     expect(shown.review.map((entry) => entry.repo)).toEqual(["octo-org/api"]);
     expect(shown.mine).toEqual([]);
     expect(shown.waiting?.map((entry) => entry.repo)).toEqual(["hubot/scripts"]);
@@ -94,5 +96,24 @@ describe("assignEntry", () => {
   test("moves an owner or a repository to a profile, and to both with null", () => {
     expect(assignEntry(WORK, "Hubot", 1).entries).toEqual({ ...WORK.entries, hubot: 1 });
     expect(assignEntry(WORK, "Octo-Org/Party", null).entries).toEqual({ "octo-org": 0, mona: 1, "mona/notes": 0 });
+  });
+});
+
+describe("searchScopes", () => {
+  const whole = inbox({ review: [group("octo-org/api"), group("hubot/scripts")], mine: [group("mona/site")] });
+
+  test("searches the active profile's owners, those on neither list, and its repositories whose owner it doesn't show", () => {
+    expect(searchScopes(whole, WORK)).toEqual(["hubot", "mona/notes", "octo-org"]);
+    expect(searchScopes(whole, { ...WORK, active: 1 })).toEqual(["hubot", "mona", "octo-org/party"]);
+  });
+
+  test("searches every known owner while no profile is active", () => {
+    expect(searchScopes(whole, { ...WORK, active: null })).toEqual(["hubot", "mona", "octo-org"]);
+  });
+});
+
+describe("profileGroups", () => {
+  test("keeps the groups the active profile shows", () => {
+    expect(profileGroups([group("octo-org/api"), group("mona/site")], WORK).map((entry) => entry.repo)).toEqual(["octo-org/api"]);
   });
 });

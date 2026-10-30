@@ -71,20 +71,49 @@ export function showsRepo(profiles: Profiles, repo: string): boolean {
  */
 export function profileInbox(inbox: Inbox, profiles: Profiles): Inbox {
   if (profiles.active === null) return inbox;
-  const keep = (groups: InboxGroup[]) => groups.filter((entry) => showsRepo(profiles, entry.repo));
+  const keep = (groups: InboxGroup[]) => profileGroups(groups, profiles);
   const review = keep(inbox.review);
   const mine = keep(inbox.mine);
   const waiting = inbox.waiting && keep(inbox.waiting);
-  if (review.length === inbox.review.length && mine.length === inbox.mine.length && waiting?.length === inbox.waiting?.length) return inbox;
+  const other = inbox.other && keep(inbox.other);
+  const same = review.length === inbox.review.length && mine.length === inbox.mine.length;
+  if (same && waiting?.length === inbox.waiting?.length && other?.length === inbox.other?.length) return inbox;
   const pulls = [...review, ...mine, ...(waiting ?? [])].flatMap((entry) => entry.pulls);
   return {
     ...inbox,
     review,
     mine,
     ...(waiting && { waiting }),
+    ...(other && { other }),
     reviewCount: review.reduce((sum, entry) => sum + entry.pulls.length, 0),
     ...(inbox.turnCount !== undefined && { turnCount: pulls.filter((pull) => pull.turn?.whose === "you").length }),
   };
+}
+
+/**
+ * @param groups Groups of pull requests.
+ * @param profiles The profiles.
+ * @returns The groups in repositories the active profile shows.
+ */
+export function profileGroups(groups: InboxGroup[], profiles: Profiles): InboxGroup[] {
+  return profiles.active === null ? groups : groups.filter((entry) => showsRepo(profiles, entry.repo));
+}
+
+/**
+ * @param inbox The whole inbox.
+ * @param profiles The profiles.
+ * @returns What "Everything else" searches: every known owner the active profile shows, and each repository on the
+ *   active profile whose owner it doesn't show. A repository it hides under a shown owner is left out when drawn.
+ */
+export function searchScopes(inbox: Pick<Inbox, "review" | "mine" | "waiting"> | undefined, profiles: Profiles): string[] {
+  const shown = (entry: string) => {
+    const profile = profiles.entries[entry];
+    return profiles.active === null || profile === undefined || profile === profiles.active;
+  };
+  return knownEntries(inbox, profiles).filter((entry) => {
+    if (!entry.includes("/")) return shown(entry);
+    return profiles.active !== null && profiles.entries[entry] === profiles.active && !shown(ownerOf(entry));
+  });
 }
 
 /**

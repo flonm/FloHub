@@ -2,6 +2,8 @@ import { el, icon, iconButton } from "./ui/dom";
 import type { Inbox } from "./core/inbox";
 import {
   blocksInbox,
+  type EverythingState,
+  FOLDED_AT_FIRST,
   type InboxViewActions,
   moveSelection,
   type Problem,
@@ -15,7 +17,18 @@ import {
 import { send } from "./api/messages";
 import { writeReviewScope } from "./core/review-scope";
 import { type InboxMarks, isPinned, MARKS_KEY, NO_MARKS, readMarks, setSnooze, snoozeFor, togglePin } from "./core/inbox-marks";
-import { DEFAULT_PROFILES, loadProfiles, PROFILES_KEY, profileInbox, type Profiles, readProfiles, saveProfiles } from "./core/profiles";
+import {
+  DEFAULT_PROFILES,
+  loadProfiles,
+  PROFILES_KEY,
+  profileGroups,
+  profileInbox,
+  type Profiles,
+  readProfiles,
+  saveProfiles,
+  searchScopes,
+} from "./core/profiles";
+import { EVERYTHING_KEY, type Everything } from "./api/inbox-sync";
 import { renderProfileSwitch } from "./ui/profile-view";
 
 const TICK_MS = 15_000;
@@ -35,6 +48,12 @@ let selectedKey: string | null = null;
 let placedFocus = false;
 /** Sections the user folded away, kept across popups. */
 let collapsed = new Set<SectionKind>();
+/** Sections that start folded which the user opened, kept across popups. */
+let opened = new Set<SectionKind>();
+/** The open pull requests loaded for "Everything else", whether a load runs, and why the last one failed. */
+let everything: Everything | undefined;
+let loadingEverything = false;
+let everythingError: string | undefined;
 /** The pull requests the user pinned or snoozed, kept in storage for the service worker's notifications too. */
 let marks: InboxMarks = NO_MARKS;
 /** Which repositories the inbox shows, kept in sync storage. */
@@ -70,6 +89,7 @@ const actions: InboxViewActions = {
     else showSnoozed.add(kind);
     render();
   },
+  loadEverything: () => void fetchEverything(),
   retryRefresh: () => void refresh(true),
   openSettings: () => void openSettings(),
 };
@@ -87,6 +107,10 @@ if (app) {
     if (area !== "local") return;
     if (Object.hasOwn(changes, MARKS_KEY)) {
       marks = readMarks(changes[MARKS_KEY]?.newValue);
+      render();
+    }
+    if (Object.hasOwn(changes, EVERYTHING_KEY)) {
+      everything = changes[EVERYTHING_KEY]?.newValue as Everything | undefined;
       render();
     }
     if ("token" in changes) void refresh();
@@ -108,8 +132,13 @@ if (app) {
 
 /** Shows the inbox the service worker stored last, until the refresh answers. */
 async function showStored(): Promise<void> {
-  const [stored, saved] = await Promise.all([chrome.storage.local.get(["inbox", "inboxCollapsed", MARKS_KEY]), loadProfiles()]);
+  const [stored, saved] = await Promise.all([
+    chrome.storage.local.get(["inbox", "inboxCollapsed", "inboxOpened", EVERYTHING_KEY, MARKS_KEY]),
+    loadProfiles(),
+  ]);
   profiles = saved;
+  everything = stored[EVERYTHING_KEY] as Everything | undefined;
+  opened = new Set(stored.inboxOpened as SectionKind[] | undefined);
   inbox ??= (stored.inbox as Inbox | undefined) ?? null;
   collapsed = new Set(stored.inboxCollapsed as SectionKind[] | undefined);
   marks = readMarks(stored[MARKS_KEY]);
@@ -163,7 +192,18 @@ function render(): void {
   renderHeader();
   const shown = inbox && profileInbox(inbox, profiles);
   const scope = profiles.active === null ? undefined : profiles.names[profiles.active];
-  main.replaceChildren(...renderInbox({ inbox: shown, problem, collapsed, marks, showSnoozed, now: Date.now(), scope }, actions));
+  const folded = new Set(collapsed);
+  for (const kind of FOLDED_AT_FIRST) if (!opened.has(kind)) folded.add(kind);
+  const fetched = everything && { ...everything, groups: profileGroups(everything.groups, profiles) };
+  const more: EverythingState = {
+    loading: loadingEverything,
+    scopes: scopes(),
+    ...(everythingError && { error: everythingError }),
+    ...(fetched && { loaded: fetched }),
+  };
+  main.replaceChildren(
+    ...renderInbox({ inbox: shown, problem, collapsed: folded, marks, showSnoozed, now: Date.now(), scope, everything: more }, actions),
+  );
   main.setAttribute("aria-busy", String(refreshing && !inbox));
   updateTabStop();
   document.documentElement.style.scrollPaddingTop = `${top.offsetHeight}px`;
@@ -209,10 +249,32 @@ function renderHeader(): void {
 }
 
 async function toggleSection(kind: SectionKind): Promise<void> {
-  if (collapsed.has(kind)) collapsed.delete(kind);
-  else collapsed.add(kind);
+  const set = FOLDED_AT_FIRST.has(kind) ? opened : collapsed;
+  if (set.has(kind)) set.delete(kind);
+  else set.add(kind);
   render();
-  await chrome.storage.local.set({ inboxCollapsed: [...collapsed] });
+  await chrome.storage.local.set({ inboxCollapsed: [...collapsed], inboxOpened: [...opened] });
+}
+
+/** @returns The owners and repositories "Everything else" searches: those the active profile shows. */
+function scopes(): string[] {
+  return searchScopes(inbox ?? undefined, profiles);
+}
+
+async function fetchEverything(): Promise<void> {
+  if (loadingEverything) return;
+  loadingEverything = true;
+  everythingError = undefined;
+  render();
+  const reply = await send({ type: "everything", scopes: scopes() });
+  loadingEverything = false;
+  if (reply.ok) {
+    everything = reply.value;
+    live.textContent = "Loaded every open pull request";
+  } else {
+    everythingError = reply.message;
+  }
+  render();
 }
 
 /**

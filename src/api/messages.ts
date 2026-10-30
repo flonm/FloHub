@@ -3,6 +3,7 @@ import type { CommentLink, CommentPlace } from "../core/comment-jump";
 import type { ReviewAction, ReviewDiscussion } from "../core/threads";
 import type { PullRef } from "../core/pull-ref";
 import type { Inbox } from "../core/inbox";
+import type { Everything } from "./inbox-sync";
 import type { ViewedFiles } from "../core/viewed";
 import type { ReviewEvent } from "../core/shortcuts";
 import type { PullMove } from "../core/pull-state";
@@ -21,6 +22,8 @@ export type Message =
   | { type: "move-pull"; pullRequestId: string; move: PullMove }
   /** `maxAgeMs` lets a stored inbox that young answer without asking GitHub. */
   | { type: "inbox"; maxAgeMs?: number }
+  /** Every open pull request of these owners and `owner/name` repositories, for the inbox's "Everything else". */
+  | { type: "everything"; scopes: string[] }
   | { type: "versions"; ref: PullRef }
   | { type: "version-patch"; ref: PullRef; head: string; bases: string[] }
   | { type: "review-comment"; ref: PullRef; link: CommentLink }
@@ -42,6 +45,7 @@ export interface ReplyByType {
   "submit-review": null;
   "move-pull": null;
   inbox: Inbox;
+  everything: Everything;
   versions: VersionHistory;
   "version-patch": VersionPatch;
   "review-comment": CommentPlace;

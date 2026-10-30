@@ -9,8 +9,15 @@ import {
   type RawInbox,
   type RawInboxIds,
   type RawInboxPull,
+  categoryOf,
+  demoteReviewed,
+  groupOthers,
+  inboxCategories,
+  type InboxCategory,
+  type InboxPull,
+  type InboxSection,
+  sectionOf,
   STALE_AFTER_MS,
-  turnSections,
 } from "./inbox";
 
 function buildPull(number: number, overrides: Partial<RawInboxPull> = {}): RawInboxPull {
@@ -405,49 +412,154 @@ function before(submittedAt: string): Partial<RawInboxPull> {
   return { latestReviews: { nodes: [{ state: "CHANGES_REQUESTED", author: { login: "octocat" }, submittedAt }] } };
 }
 
-describe("turnSections", () => {
-  test("splits the searches by whose move each pull request waits for, newest first", () => {
+/** @returns Each non-empty category's pull request numbers, group by group. */
+function shapeOf(categories: Record<InboxCategory, { role: string; pulls: { number: number }[] }[]>): Partial<Record<InboxCategory, number[][]>> {
+  return Object.fromEntries(
+    Object.entries(categories)
+      .filter(([, groups]) => groups.length > 0)
+      .map(([category, groups]) => [category, groups.map((entry) => entry.pulls.map((pull) => pull.number))]),
+  );
+}
+
+/** @returns A pull request with one standing verdict. */
+function verdict(login: string, state: string, typename = "User"): Partial<RawInboxPull> {
+  return { latestOpinionatedReviews: { nodes: [{ state, author: { __typename: typename, login } }] } };
+}
+
+/** @returns A pull request in the inbox with only a turn of the given reasons. */
+function turnPull(codes: string[], whose: "you" | "them" | "none"): InboxPull {
+  return { label: "", rerequested: false, turn: { whose, reasons: codes.map((code) => ({ code })) } } as unknown as InboxPull;
+}
+
+describe("inboxCategories", () => {
+  test("puts each pull request under why it waits, splitting a stack between categories", () => {
     const own = { author: { login: "octocat", avatarUrl: "" }, reviewRequests: { nodes: [{ requestedReviewer: { login: "alice" } }] } };
     const stack = stackOf(7, [2, 3]);
     const inbox = buildInbox(
       buildRaw(
         [buildPull(1, { createdAt: "2026-10-12T09:00:00Z" })],
         [buildPull(2, { ...own, stack }), buildPull(3, { ...own, stack, statusCheckRollup: { state: "ERROR" } }), buildPull(4, { ...own, isDraft: true })],
+        [buildPull(5, reviewedBy("octocat", "CHANGES_REQUESTED", "CHANGES_REQUESTED"))],
       ),
       0,
     );
-    const sections = turnSections(inbox);
-    const shape = (whose: "you" | "them" | "none") => sections[whose].map((entry) => [entry.role, entry.pulls.map((pull) => pull.number)]);
-    expect(shape("you")).toEqual([
-      ["review", [1]],
-      ["mine", [3]],
-    ]);
-    expect(shape("them")).toEqual([["mine", [2]]]);
-    expect(shape("none")).toEqual([["mine", [4]]]);
+    expect(shapeOf(inboxCategories(inbox))).toEqual({ requested: [[1]], fix: [[3]], reviewers: [[2]], author: [[5]], draft: [[4]] });
   });
 
-  test("puts the review requests asked again first, the longest waiting first", () => {
+  test("orders the review requests asked again by the longest waiting, and the rest newest first", () => {
     const inbox = buildInbox(
       buildRaw([
         buildPull(1, { createdAt: "2026-10-12T09:00:00Z" }),
+        buildPull(4, { createdAt: "2026-10-13T09:00:00Z" }),
         buildPull(2, { ...before("2026-10-10T09:00:00Z"), createdAt: "2026-10-13T09:00:00Z" }),
         buildPull(3, { ...before("2026-10-10T09:00:00Z"), createdAt: "2026-10-11T09:00:00Z" }),
       ]),
       0,
     );
-    const sections = turnSections(inbox);
-    expect(sections.again.map((entry) => entry.pulls[0]?.number)).toEqual([3, 2]);
-    expect(sections.you.map((entry) => entry.pulls[0]?.number)).toEqual([1]);
+    expect(shapeOf(inboxCategories(inbox))).toEqual({ rerequested: [[3], [2]], requested: [[4], [1]] });
+    expect(inbox.turnCount).toBe(4);
+  });
+
+  test("moves a review request another person approved or rejected out of the viewer's turn and off the badge", () => {
+    const inbox = buildInbox(
+      buildRaw([
+        buildPull(1, verdict("alice", "APPROVED")),
+        buildPull(2, verdict("bob", "CHANGES_REQUESTED")),
+        buildPull(3, verdict("coderabbitai", "CHANGES_REQUESTED", "Bot")),
+        buildPull(4, verdict("hubot", "APPROVED")),
+        buildPull(5, { ...verdict("bob", "CHANGES_REQUESTED"), ...before("2026-10-10T09:00:00Z") }),
+      ]),
+      0,
+    );
+    expect(shapeOf(inboxCategories(inbox))).toEqual({
+      rerequested: [[5]],
+      requested: [[3], [4]],
+      "approved-by-other": [[1]],
+      "changes-by-other": [[2]],
+    });
+    expect(inbox.review.flatMap((entry) => entry.pulls).find((pull) => pull.number === 2)?.turn).toEqual({
+      whose: "them",
+      reasons: [{ code: "changes-by-other", who: ["bob"] }],
+    });
     expect(inbox.turnCount).toBe(3);
+  });
+
+  test("keeps the pull requests the searches found but nothing waits on under everything else", () => {
+    const inbox = buildInbox(
+      buildRaw(
+        [buildPull(1), buildPull(2, { isDraft: true })],
+        [],
+        [buildPull(3, reviewedBy("octocat", "APPROVED", "APPROVED")), buildPull(1)],
+      ),
+      0,
+    );
+    expect(inbox.other?.map((entry) => entry.pulls.map((pull) => [pull.number, pull.turn]))).toEqual([[[2, undefined]], [[3, undefined]]]);
+    expect(shapeOf(inboxCategories(inbox))).toEqual({ requested: [[1]], other: [[2], [3]] });
+  });
+
+  test("adds the pull requests loaded on request, leaving out those the inbox shows already", () => {
+    const inbox = buildInbox(buildRaw([buildPull(1)]), 0);
+    const more = groupOthers([buildPull(1), buildPull(8, { createdAt: "2026-10-12T09:00:00Z" }), buildPull(9)], "octocat");
+    expect(shapeOf(inboxCategories(inbox, more))).toEqual({ requested: [[1]], other: [[8], [9]] });
   });
 
   test("falls back to the searches for an inbox stored before turns", () => {
     const inbox = buildInbox(buildRaw([buildPull(1)], [buildPull(2, { isDraft: true })], [buildPull(3, reviewedBy("octocat", "COMMENTED", null))]), 0);
     for (const entry of [...inbox.review, ...inbox.mine, ...inbox.waiting!]) for (const pull of entry.pulls) delete pull.turn;
     inbox.review[0]!.pulls[0]!.rerequested = true;
-    expect(turnSections(inbox).again.map((entry) => entry.pulls[0]?.number)).toEqual([1]);
-    inbox.review[0]!.pulls[0]!.rerequested = false;
-    const sections = turnSections(inbox);
-    expect([sections.you, sections.them, sections.none].map((groups) => groups.map((entry) => entry.pulls[0]?.number))).toEqual([[1], [3], [2]]);
+    expect(shapeOf(inboxCategories(inbox))).toEqual({ rerequested: [[1]], author: [[3]], draft: [[2]] });
+  });
+});
+
+describe("demoteReviewed", () => {
+  const requested = { whose: "you" as const, reasons: [{ code: "requested" as const }] };
+
+  test("leaves the turn alone without another person's verdict", () => {
+    expect(demoteReviewed(requested, [])).toBe(requested);
+  });
+
+  test("names everyone who approved when nobody requested changes", () => {
+    expect(demoteReviewed(requested, [{ login: "alice", state: "APPROVED" }, { login: "bob", state: "APPROVED" }])).toEqual({
+      whose: "them",
+      reasons: [{ code: "approved-by-other", who: ["alice", "bob"] }],
+    });
+  });
+
+  test("keeps the viewer's turn for the replies they still owe", () => {
+    const turn = { whose: "you" as const, reasons: [{ code: "requested" as const }, { code: "replies" as const, count: 1 }] };
+    expect(demoteReviewed(turn, [{ login: "bob", state: "CHANGES_REQUESTED" }])).toEqual({ whose: "you", reasons: [{ code: "replies", count: 1 }] });
+  });
+
+  test("never demotes being asked again", () => {
+    const turn = { whose: "you" as const, reasons: [{ code: "rerequested" as const }] };
+    expect(demoteReviewed(turn, [{ login: "bob", state: "CHANGES_REQUESTED" }])).toBe(turn);
+  });
+});
+
+describe("categoryOf", () => {
+  test.each<[string[], "review" | "mine" | "waiting", InboxCategory]>([
+    [["rerequested", "replies"], "review", "rerequested"],
+    [["replies", "pushed-since-review"], "waiting", "replies"],
+    [["pushed-since-review"], "waiting", "pushed"],
+    [["checks-failed", "ready-to-merge"], "mine", "fix"],
+    [["changes-requested", "replies"], "mine", "fix"],
+    [["replies", "rerequested"], "review", "rerequested"],
+    [["ask-again"], "mine", "ask"],
+    [["ready-to-merge"], "mine", "merge"],
+    [["waiting-on-reviewers"], "mine", "reviewers"],
+    [["waiting-on-author"], "waiting", "author"],
+    [[], "mine", "reviewers"],
+  ])("%p found by the %s search goes under %s", (codes, role, category) => {
+    expect(categoryOf(turnPull(codes, codes.length === 0 || codes[0]!.startsWith("waiting") ? "them" : "you"), role)).toBe(category);
+  });
+
+  test.each<[InboxCategory, InboxSection]>([
+    ["merge", "you"],
+    ["reviewers", "them"],
+    ["approved-by-other", "reviewed"],
+    ["draft", "none"],
+    ["other", "other"],
+  ])("%s belongs to the %s section", (category, section) => {
+    expect(sectionOf(category)).toBe(section);
   });
 });

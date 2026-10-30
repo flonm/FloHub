@@ -1,11 +1,13 @@
-import { fetchInbox, GitHubError, readToken } from "./github";
-import { buildInbox, type Inbox, type RawInbox } from "../core/inbox";
+import { fetchInbox, fetchOpenPulls, GitHubError, OPEN_PULLS_SEARCH, readToken } from "./github";
+import { buildInbox, groupOthers, type Inbox, type InboxGroup, type RawInbox } from "../core/inbox";
 import { readDirectRepos } from "../core/review-scope";
 import { badgeCount, MARKS_KEY, pruneMarks, readMarks } from "../core/inbox-marks";
 import { loadProfiles, profileInbox } from "../core/profiles";
 
 
 const STORAGE_KEY = "inbox";
+/** Where the pull requests loaded for "Everything else" are kept, apart from the inbox the alarm refreshes. */
+export const EVERYTHING_KEY = "inboxEverything";
 export const INBOX_ALARM = "inbox";
 export const INBOX_PERIOD_MINUTES = 5;
 
@@ -105,11 +107,53 @@ export async function refreshBadge(): Promise<void> {
 
 /** Drops the stored inbox and the badge, for when the token changes. */
 export async function clearInbox(): Promise<void> {
-  await chrome.storage.local.remove(STORAGE_KEY);
+  await chrome.storage.local.remove([STORAGE_KEY, EVERYTHING_KEY]);
   await showBadge(0);
 }
 
 async function showBadge(count: number): Promise<void> {
   await chrome.action.setBadgeText({ text: count > 0 ? String(count) : "" });
   await chrome.action.setBadgeBackgroundColor({ color: "#0969da" });
+}
+
+/**
+ * @param scope An owner, or a repository as `owner/name`.
+ * @returns The search qualifier that finds its pull requests.
+ */
+export function scopeQualifier(scope: string): string {
+  return scope.includes("/") ? `repo:${scope}` : `user:${scope}`;
+}
+
+/** Every open pull request of some owners and repositories, loaded only when the viewer asks, since a busy organization has many. */
+export interface Everything {
+  /** Owners, and repositories as `owner/name`. */
+  scopes: string[];
+  fetchedAt: number;
+  groups: InboxGroup[];
+  /** Whether some owner had more than one search returns. */
+  capped: boolean;
+  /** The same search on GitHub. */
+  searchUrl: string;
+}
+
+/**
+ * @param scopes Owners, and repositories as `owner/name`.
+ * @returns The address of GitHub's own list of their open pull requests.
+ */
+export function everythingSearchUrl(scopes: string[]): string {
+  const query = [OPEN_PULLS_SEARCH, ...scopes.map((scope) => scopeQualifier(scope))].join(" ");
+  return `https://github.com/pulls?q=${encodeURIComponent(query)}`;
+}
+
+/**
+ * Loads every open pull request of the owners and repositories and keeps them for the popup.
+ * @param scopes Owners, and repositories as `owner/name`.
+ * @returns What was loaded.
+ */
+export async function loadEverything(scopes: string[]): Promise<Everything> {
+  if (scopes.length === 0) throw new GitHubError("failed", "No repository owner to search yet.");
+  const { viewer, pulls, capped } = await fetchOpenPulls(scopes.map((scope) => scopeQualifier(scope)));
+  const everything: Everything = { scopes, fetchedAt: Date.now(), groups: groupOthers(pulls, viewer), capped, searchUrl: everythingSearchUrl(scopes) };
+  await chrome.storage.local.set({ [EVERYTHING_KEY]: everything });
+  return everything;
 }

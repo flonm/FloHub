@@ -1,15 +1,71 @@
 import { formatAge } from "../core/age";
 import { INBOX_PERIOD_MINUTES } from "../api/inbox-sync";
 import type { FailureCode } from "../api/github";
-import { type Inbox, type InboxPull, type InboxRole, type InboxSection, isStale, type TurnGroup, turnSections } from "../core/inbox";
+import {
+  type Inbox,
+  type InboxCategory,
+  inboxCategories,
+  type InboxGroup,
+  type InboxPull,
+  type InboxRole,
+  type InboxSection,
+  isStale,
+  SECTION_CATEGORIES,
+  SECTIONS_IN_ORDER,
+  type TurnGroup,
+} from "../core/inbox";
 import { formatDiffStat } from "../core/viewed";
 import { el, icon } from "./dom";
 import { VERDICT_LOOK, verdictFace } from "./verdict-face";
 import { reasonWords, type ReasonTone } from "./turn-words";
 import { applyMarks, type InboxMarks, isPinned, isSnoozed, NO_MARKS, type SnoozePreset } from "../core/inbox-marks";
 
-/** The sections the popup draws: review requests asked again, then whose move each pull request waits for. */
+/** The sections the popup draws: whose move each pull request waits for, then the ones that wait for nobody in particular. */
 export type SectionKind = InboxSection;
+
+/** The sections that start folded, since what they hold rarely needs the viewer. */
+export const FOLDED_AT_FIRST: ReadonlySet<SectionKind> = new Set(["reviewed", "other"]);
+
+const SECTION_TITLES: Record<SectionKind, string> = {
+  you: "Your turn",
+  them: "Their turn",
+  reviewed: "Reviewed by someone else",
+  none: "Drafts",
+  other: "Everything else",
+};
+
+const CATEGORY_TITLES: Record<InboxCategory, string> = {
+  rerequested: "Re-requested",
+  requested: "New review requests",
+  replies: "Replies to you",
+  pushed: "New commits since your review",
+  fix: "Your pull requests: to fix",
+  ask: "Your pull requests: ask for a review",
+  merge: "Your pull requests: ready to merge",
+  author: "Waiting for the author",
+  reviewers: "Waiting for reviewers",
+  "changes-by-other": "Someone else requested changes",
+  "approved-by-other": "Someone else approved",
+  draft: "Drafts",
+  other: "Everything else",
+};
+
+/** The open pull requests loaded on request for "Everything else", beyond what the inbox's searches find. */
+export interface EverythingState {
+  loading: boolean;
+  /** Why the last load failed. */
+  error?: string;
+  loaded?: {
+    groups: InboxGroup[];
+    fetchedAt: number;
+    /** Whether some owner has more open pull requests than one search returns. */
+    capped: boolean;
+    /** The same search on GitHub, for what didn't fit. */
+    searchUrl: string;
+  };
+  /** The owners and repositories a load searches, for the button's words. */
+  scopes: string[];
+}
 
 /** What the popup shows instead of the inbox, or over it. */
 export interface Problem {
@@ -31,6 +87,7 @@ export interface InboxViewState {
   now?: number;
   /** The active profile's name, when the inbox shows only its repositories. */
   scope?: string;
+  everything?: EverythingState;
 }
 
 /** What the popup does when the user acts on the inbox. */
@@ -44,6 +101,8 @@ export interface InboxViewActions {
   /** Snoozes a pull request, or wakes it with null. */
   snooze: (pull: InboxPull, preset: SnoozePreset | null) => void;
   toggleSnoozed: (kind: SectionKind) => void;
+  /** Loads every open pull request of the owners and repositories the inbox shows. */
+  loadEverything: () => void;
   retryRefresh: () => void;
   openSettings: () => void;
 }
@@ -69,8 +128,8 @@ export function blocksInbox(problem: Problem | null): boolean {
  * @param inbox The inbox.
  * @returns Whether nothing waits for review and the viewer has no open pull requests.
  */
-export function isEmptyInbox(inbox: Pick<Inbox, "review" | "mine" | "waiting">): boolean {
-  return inbox.review.length === 0 && inbox.mine.length === 0 && (inbox.waiting?.length ?? 0) === 0;
+export function isEmptyInbox(inbox: Pick<Inbox, "review" | "mine" | "waiting" | "other">): boolean {
+  return [inbox.review, inbox.mine, inbox.waiting ?? [], inbox.other ?? []].every((groups) => groups.length === 0);
 }
 
 /**
@@ -150,13 +209,9 @@ export function renderInbox(state: InboxViewState, actions: InboxViewActions): H
       ),
     ];
   }
-  const sections = turnSections(inbox);
-  return [
-    ...(sections.again.length > 0 ? [renderSection("Re-requested", sections.again, "", "again", state, actions)] : []),
-    renderSection("Your turn", sections.you, "Nothing waits for you.", "you", state, actions),
-    renderSection("Their turn", sections.them, "Nobody else has a move to make.", "them", state, actions),
-    ...(sections.none.length > 0 ? [renderSection("Drafts", sections.none, "", "none", state, actions)] : []),
-  ];
+  const categories = inboxCategories(inbox, state.everything?.loaded?.groups);
+  const inInbox = new Set((inbox.other ?? []).flatMap((entry) => entry.pulls.map((pull) => pull.url)));
+  return SECTIONS_IN_ORDER.map((kind) => renderSection(kind, categories, inInbox, state, actions));
 }
 
 function renderProblem(current: Problem, actions: InboxViewActions): HTMLElement {
@@ -216,22 +271,27 @@ function renderSkeleton(): HTMLElement {
 }
 
 function renderSection(
-  title: string,
-  groups: TurnGroup[],
-  empty: string,
   kind: SectionKind,
+  categories: Record<InboxCategory, TurnGroup[]>,
+  inInbox: ReadonlySet<string>,
   state: InboxViewState,
   actions: InboxViewActions,
 ): HTMLElement {
   const marks = state.marks ?? NO_MARKS;
   const now = state.now ?? Date.now();
   const showing = state.showSnoozed?.has(kind) ?? false;
-  const marked = applyMarks(groups, marks, now, showing);
-  const count = groups.reduce((sum, entry) => sum + entry.pulls.length, 0) - marked.snoozed;
+  const parts = SECTION_CATEGORIES[kind].map((category) => {
+    const marked = applyMarks(categories[category], marks, now, showing);
+    return { category, groups: marked.groups, snoozed: marked.snoozed };
+  });
+  const snoozed = parts.reduce((sum, part) => sum + part.snoozed, 0);
+  // Snoozed pull requests never count, shown or not.
+  const count = (part: (typeof parts)[number]) => part.groups.reduce((sum, entry) => sum + entry.pulls.length, 0) - (showing ? part.snoozed : 0);
+  const total = parts.reduce((sum, part) => sum + count(part), 0);
   const id = `section-${kind}`;
   const bodyId = `section-body-${kind}`;
   const open = !state.collapsed.has(kind);
-  const section = el("section", { "aria-labelledby": id });
+  const section = el("section", { "aria-labelledby": id, "data-section": kind });
   const toggle = el("button", {
     type: "button",
     class: "section-toggle",
@@ -240,7 +300,7 @@ function renderSection(
     "aria-controls": bodyId,
     "data-focus-key": `section:${kind}`,
   });
-  toggle.append(icon("chevron"), el("span", { class: "section-title" }, title), el("span", { class: "count" }, String(count)));
+  toggle.append(icon("chevron"), el("span", { class: "section-title" }, SECTION_TITLES[kind]), el("span", { class: "count" }, String(total)));
   toggle.addEventListener("click", () => actions.toggleSection(kind));
   const heading = el("h2");
   heading.append(toggle);
@@ -248,34 +308,74 @@ function renderSection(
   body.hidden = !open;
   section.append(heading, body);
   if (!open) return section;
-  if (marked.groups.length === 0 && marked.snoozed === 0) {
-    body.append(el("p", { class: "empty" }, empty));
-    return section;
+  const marking = { marks, now, inInbox };
+  for (const part of parts) {
+    // A section of one category needs no heading of its own; the others name every category, empty ones too.
+    if (parts.length > 1) {
+      const subhead = el("h3", { class: "category", "data-category": part.category });
+      const number = String(count(part));
+      subhead.append(el("span", {}, CATEGORY_TITLES[part.category]), el("span", { class: "count" }, number));
+      if (part.groups.length === 0) subhead.dataset.empty = "";
+      body.append(subhead);
+    }
+    if (part.groups.length === 0) continue;
+    const list = el("ul", { class: "groups" });
+    for (const entry of part.groups) list.append(renderGroup(entry, part.category, actions, marking));
+    body.append(list);
   }
-  const list = el("ul", { class: "groups" });
-  for (const entry of marked.groups) list.append(renderGroup(entry, kind, actions, { marks, now }));
-  if (marked.groups.length > 0) body.append(list);
-  if (marked.snoozed > 0) {
-    const snoozed = `${marked.snoozed} snoozed`;
+  if (parts.length === 1 && total === 0 && snoozed === 0 && kind !== "other") body.append(el("p", { class: "empty" }, "Nothing here."));
+  if (snoozed > 0) {
+    const label = `${snoozed} snoozed`;
     const more = el(
       "button",
       { type: "button", class: "snoozed-toggle", "aria-expanded": String(showing), "data-focus-key": `snoozed:${kind}` },
-      showing ? `Hide ${snoozed}` : `Show ${snoozed}`,
+      showing ? `Hide ${label}` : `Show ${label}`,
     );
     more.prepend(icon("clock"));
     more.addEventListener("click", () => actions.toggleSnoozed(kind));
     body.append(more);
   }
+  if (kind === "other" && state.everything) body.append(renderEverything(state.everything, now, actions));
   return section;
+}
+
+/**
+ * @param everything What was loaded beyond the inbox's searches, or is loading.
+ * @param now The current time.
+ * @param actions What loading does.
+ * @returns The line under "Everything else" that loads every open pull request, says when it last did, or why it failed.
+ */
+function renderEverything(everything: EverythingState, now: number, actions: InboxViewActions): HTMLElement {
+  const box = el("div", { class: "everything" });
+  const where = everything.scopes.length > 0 ? ` in ${everything.scopes.join(", ")}` : "";
+  const label = everything.loaded ? "Load again" : `Load every open pull request${where}`;
+  const load = el(
+    "button",
+    { type: "button", class: "text-button", "data-focus-key": "load-everything", ...(everything.loading && { disabled: "" }) },
+    everything.loading ? "Loading…" : label,
+  );
+  load.addEventListener("click", () => actions.loadEverything());
+  if (everything.error) {
+    box.append(el("span", { class: "everything-error", role: "alert" }, everything.error));
+  } else if (everything.loaded) {
+    const { fetchedAt, capped, searchUrl } = everything.loaded;
+    const age = formatAge(new Date(fetchedAt).toISOString(), now);
+    box.append(el("span", { class: "everything-note" }, `Loaded ${age.spoken}`));
+    if (capped) box.append(el("a", { class: "everything-more", href: searchUrl, target: "_blank", rel: "noreferrer" }, "More on GitHub"));
+  }
+  box.append(load);
+  return box;
 }
 
 /** The marks the rows are drawn with, and when. */
 interface Marking {
   marks: InboxMarks;
   now: number;
+  /** The pull requests in the stored inbox, whose marks last; the others were loaded for "Everything else". */
+  inInbox: ReadonlySet<string>;
 }
 
-function renderGroup(entry: TurnGroup, kind: SectionKind, actions: InboxViewActions, marking: Marking): HTMLElement {
+function renderGroup(entry: TurnGroup, kind: InboxCategory, actions: InboxViewActions, marking: Marking): HTMLElement {
   // Layers of one stack stay adjacent; a rail joins them only when the inbox holds more than one.
   const joined = entry.stackNumber !== null && entry.pulls.length > 1;
   const item = el("li", { class: joined ? "group joined" : "group" });
@@ -286,7 +386,7 @@ function renderGroup(entry: TurnGroup, kind: SectionKind, actions: InboxViewActi
   return item;
 }
 
-function renderPull(pull: InboxPull, entry: TurnGroup, kind: SectionKind, actions: InboxViewActions, marking: Marking): HTMLElement {
+function renderPull(pull: InboxPull, entry: TurnGroup, kind: InboxCategory, actions: InboxViewActions, marking: Marking): HTMLElement {
   const pinned = isPinned(marking.marks, pull.url);
   const snoozed = isSnoozed(marking.marks, pull, marking.now);
   const item = el("li", { class: ["layer", ...(pinned ? ["pinned"] : []), ...(snoozed ? ["snoozed"] : [])].join(" ") });
@@ -349,7 +449,8 @@ function renderPull(pull: InboxPull, entry: TurnGroup, kind: SectionKind, action
     link.append(faces);
     meta.append(el("span", { class: "visually-hidden" }, `. Reviews: ${faces.title}`));
   }
-  item.append(link, renderRowTools(pull, entry, role, actions, { pinned, snoozed }));
+  // A pull request loaded for "Everything else" may be gone at the next refresh, and its marks with it.
+  item.append(link, ...(role === "other" && !marking.inInbox.has(pull.url) ? [] : [renderRowTools(pull, entry, role, actions, { pinned, snoozed })]));
   return item;
 }
 
@@ -435,10 +536,9 @@ function rowButton(label: string, name: "pin" | "clock", focusKey: string): HTML
  * @param role The search that found it.
  * @returns The chips that say why it waits for whom, with its status when no chip says it already.
  */
-function renderReasons(pull: InboxPull, role: InboxRole, kind: SectionKind): HTMLElement[] {
-  // A review request is what the "Your turn" section means by default, being asked again what "Re-requested" means,
-  // and the viewer's verdict says more than "waiting for author".
-  const said = new Set(["requested", "waiting-on-author", ...(kind === "again" ? ["rerequested"] : [])]);
+function renderReasons(pull: InboxPull, role: InboxRole, kind: InboxCategory): HTMLElement[] {
+  // The category's heading says the review request already, and the viewer's verdict says more than "waiting for author".
+  const said = new Set(["requested", "waiting-on-author", ...(kind === "rerequested" ? ["rerequested"] : [])]);
   const reasons = (pull.turn?.reasons ?? []).filter((reason) => !said.has(reason.code));
   const chips = reasons.map((reason) => {
     const words = reasonWords(reason);
@@ -449,7 +549,7 @@ function renderReasons(pull: InboxPull, role: InboxRole, kind: SectionKind): HTM
     const pushed = pull.pushedSinceReview && reasons.every((reason) => reason.code !== "pushed-since-review") ? [flag("New commits", "accent")] : [];
     return [...(verdict ? [verdict] : []), ...chips, ...pushed];
   }
-  if (!pull.turn && role === "review" && pull.rerequested && kind !== "again") chips.push(flag("Re-requested", "attention"));
+  if (!pull.turn && role === "review" && pull.rerequested && kind !== "rerequested") chips.push(flag("Re-requested", "attention"));
   const shown = new Set(chips.map((chip) => chip.textContent));
   const quiet = role === "review" && pull.tone === "accent";
   return quiet || shown.has(pull.label) || (pull.label === "Draft" && reasons.length > 0) ? chips : [renderStatus(pull), ...chips];

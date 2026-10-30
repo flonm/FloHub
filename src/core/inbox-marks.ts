@@ -154,7 +154,7 @@ export function pruneMarks(marks: InboxMarks, inbox: Inbox, now: number): InboxM
 }
 
 function allGroups(inbox: Inbox): InboxGroup[] {
-  return [...inbox.review, ...inbox.mine, ...(inbox.waiting ?? [])];
+  return [...inbox.review, ...inbox.mine, ...(inbox.waiting ?? []), ...(inbox.other ?? [])];
 }
 
 /** One section of the inbox with the viewer's marks applied. */
