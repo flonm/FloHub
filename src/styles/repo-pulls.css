@@ -1,0 +1,129 @@
+/*
+ * FloHub's views on a repository's pull request list: a group of links below GitHub's own sidebar lists, drawn like
+ * Primer's NavList beside it, and the list a view shows in place of GitHub's. The list takes the popup's row styles.
+ */
+:host {
+  display: block;
+  color: var(--flo-fg);
+  font: 14px/1.5 var(--flo-font);
+}
+
+.views {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--borderColor-muted, var(--flo-border));
+}
+.views-title {
+  margin: 0;
+  padding: 6px 8px;
+  color: var(--flo-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.views ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.view-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  margin: 1px 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--flo-fg);
+  text-decoration: none;
+}
+.view-link:hover {
+  background: var(--control-transparent-bgColor-hover, var(--flo-bg-muted));
+}
+.view-link[aria-current="page"] {
+  background: var(--control-transparent-bgColor-selected, var(--flo-bg-muted));
+  font-weight: 600;
+}
+/* Primer's mark beside the current item of a NavList. */
+.view-link[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  top: calc(50% - 12px);
+  left: -8px;
+  width: 4px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--borderColor-accent-emphasis, var(--flo-accent));
+}
+.view-link svg {
+  width: 16px;
+  height: 16px;
+  color: var(--flo-muted);
+}
+.view-name {
+  flex: 1;
+  min-width: 0;
+}
+.view-count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 2em;
+  background: var(--bgColor-neutral-muted, var(--flo-neutral-bg));
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  text-align: center;
+}
+.view-link[data-view="rerequested"] .view-count[data-some] {
+  background: var(--flo-attention-bg);
+  color: var(--flo-attention);
+}
+
+.list {
+  overflow: hidden;
+  border: 1px solid var(--flo-border);
+  border-radius: 6px;
+  background: var(--flo-bg);
+}
+.list-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 8px 16px;
+  border-bottom: 1px solid var(--flo-border);
+  background: var(--flo-bg-muted);
+}
+.list-title {
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.list-updated {
+  color: var(--flo-muted);
+  font-size: 12px;
+}
+.list-header a {
+  color: var(--flo-accent);
+  font-size: 12px;
+  text-decoration: none;
+}
+.list-header a:hover {
+  text-decoration: underline;
+}
+.list .view {
+  padding: 4px 0;
+}
+.list .pull {
+  padding: 8px 16px;
+}
+.list .category {
+  padding-left: 16px;
+}
+.list .category[data-category="rerequested"]:not([data-empty]) {
+  padding-left: 10px;
+}
+.list .joined .layer::before {
+  left: 25px;
+}

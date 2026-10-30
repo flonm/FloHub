@@ -2135,6 +2135,47 @@ for (const scheme of ["light", "dark"] as const) {
   await emptyContext.close();
 }
 
+// A repository's pull request list, as a signed-in viewer sees it: FloHub's views go below the sidebar's own lists,
+// and one that's open stands in for GitHub's list.
+const PULLS_PAGE = `<!doctype html><html><head><title>Pull requests</title></head><body>
+<nav aria-label="Pull request lists"><ul>
+<li><a href="/octo-org/api/pulls" aria-current="page">Pull requests</a></li>
+<li><a href="/octo-org/api/pulls/review-requested/octocat">Review requests</a></li>
+</ul></nav>
+<main><div id="_r_1_-list-view-container">GitHub's list</div></main></body></html>`;
+const pullsContext = await launch("light", async (route) => createFixture().handle(route));
+await pullsContext.route("https://github.com/octo-org/api/pulls**", async (route) => route.fulfill({ body: PULLS_PAGE, contentType: "text/html" }));
+const pullsPage = await pullsContext.newPage();
+await pullsPage.goto("https://github.com/octo-org/api/pulls");
+const viewLinks = pullsPage.locator('[data-flohub="repo-views"] .view-link');
+await viewLinks.locator(".view-count").first().waitFor();
+const viewCounts = await viewLinks.evaluateAll((links) => links.map((link) => link.textContent));
+check(
+  JSON.stringify(viewCounts) === JSON.stringify(["Your turn3", "Re-requested1", "Their turn1", "Reviewed by others0"]),
+  `the pull request list's sidebar counts the repository's pull requests in each of FloHub's views: ${JSON.stringify(viewCounts)}`,
+);
+await viewLinks.filter({ hasText: "Re-requested" }).click();
+await pullsPage.locator('[data-flohub="repo-list"] .pull').first().waitFor();
+check(
+  new URL(pullsPage.url()).hash === "#flohub=rerequested" &&
+    (await pullsPage.locator('[id$="-list-view-container"]').isHidden()) &&
+    (await pullsPage.locator('[data-flohub="repo-list"] .pull .title').allTextContents()).join("\n") ===
+      "#77 fix(auth): refresh tokens before they expire and retry the failed request once" &&
+    (await pullsPage.getByRole("link", { name: "Pull requests", exact: true }).getAttribute("aria-current")) === "false",
+  "a FloHub view opens in the address, stands in for GitHub's list and takes the current mark from GitHub's own",
+);
+await pullsPage.screenshot({ path: `${SCREENSHOTS}/repo-pulls-rerequested.png`, fullPage: true });
+await pullsPage.reload();
+await pullsPage.locator('[data-flohub="repo-list"] .pull').first().waitFor();
+check(true, "a reload keeps the open view");
+await pullsPage.getByRole("link", { name: "Pull requests", exact: true }).click();
+await pullsPage.locator('[id$="-list-view-container"]').waitFor();
+check(
+  (await pullsPage.locator('[data-flohub="repo-list"]').count()) === 0 && (await pullsPage.locator('[data-flohub="repo-views"] .view-link[aria-current="page"]').count()) === 0,
+  "GitHub's own list brings GitHub's list back and closes FloHub's view",
+);
+await pullsContext.close();
+
 const dark = await launch("dark");
 await dark.route("https://api.github.com/**", async (route) => createFixture().handle(route));
 const darkPage = await dark.newPage();
