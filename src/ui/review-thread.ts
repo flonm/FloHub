@@ -287,11 +287,11 @@ interface Submit {
  * @param options The box's title, placeholder, ways to post and how to cancel.
  * @returns A box to write a comment in. It keeps its text, and says why, when posting fails.
  */
-function writeBox(options: { title: string | null; placeholder: string; submits: Submit[]; note?: string; cancel: () => void }): HTMLElement {
+function writeBox(options: { title: string | null; placeholder: string; submits: Submit[]; cancel: () => void }): HTMLElement {
   const box = el("div", { class: "box" });
   if (options.title) box.append(el("p", { class: "title" }, options.title));
   const text = el("textarea", { placeholder: options.placeholder, "aria-label": options.title ?? options.placeholder });
-  const problem = el("p", { class: "problem", role: "alert" }, options.note ?? "");
+  const problem = el("p", { class: "problem", role: "alert" });
   const buttons = el("div", { class: "buttons" });
   const cancel = el("button", { type: "button", class: "btn" }, "Cancel");
   cancel.addEventListener("click", () => options.cancel());
@@ -335,7 +335,7 @@ function writeBox(options: { title: string | null; placeholder: string; submits:
 
 /**
  * A box for a new comment on lines of the head, with GitHub's choices for how it goes out: on its own or starting a
- * review, or into the pending review. While the viewer's pending review sits on an older version, it only says so.
+ * review, or into the pending review.
  * @param options What the comment is on, how it can be posted, and how to post or cancel it.
  * @returns The box.
  */
@@ -352,11 +352,7 @@ export function renderComposer(options: {
           { label: "Start a review", run: async (body) => options.post("review", body) },
           { label: "Add single comment", primary: true, run: async (body) => options.post("single", body) },
         ]
-      : (options.mode === "review"
-        ? [{ label: "Add review comment", primary: true, run: async (body) => options.post("review", body) }]
-        : []);
-  const note =
-    options.mode === "blocked" ? "Your pending review is on an older version. Submit it, then comment on the current one." : undefined;
-  composer.append(writeBox({ title: options.title, placeholder: "Leave a comment", submits, ...(note && { note }), cancel: options.cancel }));
+      : [{ label: "Add review comment", primary: true, run: async (body) => options.post("review", body) }];
+  composer.append(writeBox({ title: options.title, placeholder: "Leave a comment", submits, cancel: options.cancel }));
   return composer;
 }

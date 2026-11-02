@@ -915,7 +915,7 @@ export class VersionsView {
             pullAuthor: () => discussion?.author ?? null,
             progress: progressOf,
             show: (target) => this.goTo(target.range, target.line),
-            comment: commentable ? { mode: () => postingMode(discussion?.pending ?? null, newer.oid), post, released: release } : null,
+            comment: commentable ? { mode: () => postingMode(discussion?.pending ?? null), post, released: release } : null,
           };
           const show = renderResult({ main, review, summary, legend, files, signal: tracking.signal }, diff, {
             split,

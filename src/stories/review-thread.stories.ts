@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
-import type { ReviewThread, ThreadComment } from "../core/threads";
+import type { PostingMode, ReviewThread, ThreadComment } from "../core/threads";
 import type { ThreadProgress } from "../core/addressed";
 import { renderComposer, renderThread, THREAD_STYLES, type ThreadActions } from "../ui/review-thread";
 import { NOW } from "./shadow";
@@ -95,7 +95,7 @@ function render(shown: ReviewThread, actions?: ThreadActions, progress?: { progr
  * @param mode How the comment can be posted.
  * @returns A box for a new comment.
  */
-function composer(mode: "fresh" | "review" | "blocked"): HTMLElement {
+function composer(mode: PostingMode): HTMLElement {
   return inRow(renderComposer({ title: "Comment on lines 12–13 of src/core/retry.ts", mode, post: failLater, cancel: () => undefined }), "composer-row");
 }
 
@@ -194,8 +194,5 @@ export const Unresolve: Story = { render: () => render(thread({ resolved: true, 
 /** A new comment without a pending review: on its own, or starting a review. ⌘↵ posts, Escape cancels. */
 export const NewComment: Story = { render: () => composer("fresh") };
 
-/** A new comment while the viewer has a pending review on the head: it joins the review. */
+/** A new comment while the viewer has a pending review, on the head or an older version: it joins the review. */
 export const NewCommentInAReview: Story = { render: () => composer("review") };
-
-/** The viewer's pending review is on an older version, whose lines a comment here can't name: it says to submit it. */
-export const PendingReviewOnAnOlderVersion: Story = { render: () => composer("blocked") };

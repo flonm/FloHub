@@ -121,12 +121,12 @@ describe("commenting", () => {
     expect(commentRange(plain.lines, 0, at(plain.lines, " keep"), true)).toBeNull();
   });
 
-  test.each([
-    [null, "fresh"],
-    [{ commit: "head" }, "review"],
-    [{ commit: "older" }, "blocked"],
-  ] as const)("with pending review %p a comment is posted %p", (pending, mode) => {
-    expect(postingMode(pending, "head")).toBe(mode);
+  test("without a pending review a comment goes out on its own or starts one", () => {
+    expect(postingMode(null)).toBe("fresh");
+  });
+
+  test("a pending review takes a new comment, whichever commit it was started on", () => {
+    expect(postingMode({ id: "review" })).toBe("review");
   });
 });
 

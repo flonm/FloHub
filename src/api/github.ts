@@ -603,7 +603,7 @@ query ($owner: String!, $name: String!, $number: Int!) {
       id
       headRefOid
       author { login }
-      reviews(states: PENDING, first: 1) { nodes { id commit { oid } } }
+      reviews(states: PENDING, first: 1) { nodes { id } }
       reviewThreads(last: 100) {
         nodes {
           id isResolved isOutdated path line startLine originalLine originalStartLine diffSide resolvedBy { login }
@@ -654,7 +654,7 @@ export async function fetchReviewDiscussion(ref: PullRef): Promise<ReviewDiscuss
         id: string;
         headRefOid: string;
         author: { login: string } | null;
-        reviews: { nodes: ({ id: string; commit: { oid: string } | null } | null)[] };
+        reviews: { nodes: ({ id: string } | null)[] };
         reviewThreads: { nodes: (RawReviewThread | null)[] };
       } | null;
     } | null;
@@ -692,13 +692,14 @@ export async function fetchReviewDiscussion(ref: PullRef): Promise<ReviewDiscuss
     pullRequestId: pull.id,
     head: pull.headRefOid,
     author: pull.author?.login ?? null,
-    pending: pending?.commit ? { id: pending.id, commit: pending.commit.oid } : null,
+    pending: pending ? { id: pending.id } : null,
   };
 }
 
 /**
  * Does what the viewer asked for in the versions view. A new comment goes out on its own (REST, on the head) or into
- * the viewer's pending review, started on the head when there is none. A reply joins the pending review when there
+ * the viewer's pending review, started on the head when there is none. GitHub anchors a comment added to a pending
+ * review to the head, even when the review was started on a commit the author has since pushed past. A reply joins the pending review when there
  * is one, as GitHub's own reply does, and else goes out at once. The pending review is looked up again here, since
  * the viewer may have submitted or started one since the view loaded.
  * @param ref The pull request.
@@ -735,9 +736,6 @@ export async function runReviewAction(ref: PullRef, action: ReviewAction): Promi
       body: JSON.stringify({ body: action.body, commit_id: action.head, path: action.path, ...lines }),
     });
     return;
-  }
-  if (pending && pending.commit !== action.head) {
-    throw new GitHubError("failed", "Your pending review is on an older version. Submit it before commenting on the current one.");
   }
   const review = pending?.id ?? (await startReview(pullRequestId, action.head));
   await mutate(

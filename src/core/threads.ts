@@ -187,20 +187,18 @@ export function commentRange(lines: InterdiffLine[], from: number, to: number, p
   return { ...endAt, startLine: startAt.line, startSide: startAt.side };
 }
 
-/** How a new comment can be posted: on its own or starting a review, into the pending review, or not here at all. */
-export type PostingMode = "fresh" | "review" | "blocked";
+/** How a new comment can be posted: on its own or starting a review, or into the pending review. */
+export type PostingMode = "fresh" | "review";
 
 /**
  * Mirrors GitHub's own choice: without a pending review a comment goes out on its own or starts one; with one, it
- * joins it. A pending review on an older commit would pin the comment's lines to that commit, so it has to be
- * submitted first.
+ * joins it. That holds for a pending review started on an older commit too, since GitHub anchors each new comment to
+ * the head, whichever commit the review was started on.
  * @param pending The viewer's pending review, if any.
- * @param head The pull request's head commit.
  * @returns How a new comment can be posted.
  */
-export function postingMode(pending: { commit: string } | null, head: string): PostingMode {
-  if (!pending) return "fresh";
-  return pending.commit === head ? "review" : "blocked";
+export function postingMode(pending: { id: string } | null): PostingMode {
+  return pending ? "review" : "fresh";
 }
 
 /** The review threads, and what posting to them needs: the pull request's id and the viewer's pending review. */
@@ -212,8 +210,8 @@ export interface ReviewDiscussion {
   head: string;
   /** The pull request's author, whose comments GitHub labels Author. */
   author: string | null;
-  /** The viewer's pending review, which only the viewer sees, and the commit it was started on. */
-  pending: { id: string; commit: string } | null;
+  /** The viewer's pending review, which only the viewer sees. */
+  pending: { id: string } | null;
 }
 
 /** Something the viewer does to the review from the versions view. */
