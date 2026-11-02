@@ -1,9 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
 import type { VersionPatch } from "../api/github";
 import type { ReviewThread } from "../core/threads";
+import type { ViewedState } from "../core/viewed";
 import { BASE, type SavedRange, type Version, type VersionHistory } from "../core/versions";
 import { el } from "../ui/dom";
-import { type CommentLine, VersionsView } from "../ui/versions-view";
+import { type CommentLine, type ViewedMarks, VersionsView } from "../ui/versions-view";
 import { NOW } from "./shadow";
 
 const HOUR = 3_600_000;
@@ -265,6 +266,7 @@ function githubPage(): HTMLElement {
  * @param docked Whether the page has GitHub's split layout to dock in.
  * @param target A range to show and a commented line to scroll to, as a comment's menu asks for them.
  * @param threads The pull request's review threads.
+ * @param marks The viewer's Viewed mark on each file of the current version, which the boxes change in memory.
  * @returns The page.
  */
 function view(
@@ -274,6 +276,7 @@ function view(
   docked = true,
   target?: { range: SavedRange; line?: CommentLine },
   threads: ReviewThread[] = [],
+  marks?: Record<string, ViewedState>,
 ): HTMLElement {
   for (const previous of document.querySelectorAll("flohub-versions")) previous.remove();
   const page = docked ? githubPage() : el("p", {}, "A page without GitHub's split layout: the view floats over it.");
@@ -311,10 +314,32 @@ function view(
         await settle();
         return stored.split ?? false;
       },
+      ...(marks && { viewed: viewedMarks(marks) }),
     });
     if (target) versions.goTo(target.range, target.line);
   });
   return page;
+}
+
+/**
+ * @param marks Each file's mark to start with.
+ * @returns Viewed marks kept in memory, set after a moment as the API would.
+ */
+function viewedMarks(marks: Record<string, ViewedState>): ViewedMarks {
+  const states = new Map(Object.entries(marks));
+  const listeners = new Set<() => void>();
+  return {
+    states: () => states,
+    set: async (path, viewed) => {
+      await settle();
+      states.set(path, viewed ? "VIEWED" : "UNVIEWED");
+      for (const listener of listeners) listener();
+    },
+    watch: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
 }
 
 /**
@@ -527,4 +552,38 @@ export const ManyVersions: Story = {
 
 export const Rebased: Story = {
   render: () => view(3, { ...PATCHES, "2222222": { ...PATCHES["2222222"]!, mergeBase: "9999999" } }),
+};
+
+/** The viewer's marks on the current version's files, as GitHub's own diff has them. */
+const MARKS: Record<string, ViewedState> = {
+  "src/ui/bar.ts": "VIEWED",
+  "db/migrations/0042_inbox_pulls.sql": "DISMISSED",
+  "src/core/retry-policy.ts": "UNVIEWED",
+  "src/ui/stack-view.ts": "DISMISSED",
+};
+
+/**
+ * Comparing up to the current version, each file's header and its row in the tree have GitHub's Viewed box, and
+ * ticking either marks the file in GitHub's diff too. A viewed file starts folded and dimmed in the tree. A box with an amber dot is a file that changed
+ * since it was viewed. The deleted file has no box: GitHub keeps no mark for a file the pull request no longer changes.
+ * `src/ui/stack-view.ts` makes the same change in both versions, but the push reset its mark: the button in the
+ * summary under the toolbar marks it as viewed again.
+ */
+export const ViewedMarksOnTheCurrentVersion: Story = { render: () => view(3, PATCHES, {}, true, undefined, [], MARKS) };
+
+/**
+ * From a version other than the viewer's last review (here v2, which only tizian reviewed), the view doesn't offer to mark the unchanged files as viewed
+ * again: GitHub doesn't say which version a mark was set on, so the files' change may be one the viewer never saw.
+ */
+export const ViewedMarksFromAnotherVersion: Story = {
+  render: () => {
+    // Someone else's v2: the history stays on these versions, as the refresh never arrives.
+    const cached = { ...history(3), versions: [V1, { ...V2, viewerLatestReview: false }, V3] };
+    return view("loading", PATCHES, { cached }, true, undefined, [], MARKS);
+  },
+};
+
+/** Ending at an older version, the view shows no Viewed boxes: GitHub keeps the marks for the current version only. */
+export const ViewedMarksOnAnOlderVersion: Story = {
+  render: () => view(3, PATCHES, { saved: { from: V1.oid, to: V2.oid, toCurrent: false, at: NOW } }, true, undefined, [], MARKS),
 };
