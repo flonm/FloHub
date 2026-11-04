@@ -290,7 +290,8 @@ interface Submit {
 function writeBox(options: { title: string | null; placeholder: string; submits: Submit[]; cancel: () => void }): HTMLElement {
   const box = el("div", { class: "box" });
   if (options.title) box.append(el("p", { class: "title" }, options.title));
-  const text = el("textarea", { placeholder: options.placeholder, "aria-label": options.title ?? options.placeholder });
+  // Off, so Safari's AutoFill doesn't take the box for a verification code field (docs/github-quirks.md).
+  const text = el("textarea", { placeholder: options.placeholder, "aria-label": options.title ?? options.placeholder, autocomplete: "off" });
   const problem = el("p", { class: "problem", role: "alert" });
   const buttons = el("div", { class: "buttons" });
   const cancel = el("button", { type: "button", class: "btn" }, "Cancel");

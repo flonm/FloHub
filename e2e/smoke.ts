@@ -1515,6 +1515,10 @@ check(
 );
 const readmeThread = docked.locator(".thread-row", { hasText: "Is this still true" });
 await readmeThread.getByRole("button", { name: "Write a reply" }).click();
+check(
+  (await readmeThread.getByRole("textbox").getAttribute("autocomplete")) === "off",
+  "the reply box turns autocomplete off, so Safari offers no verification code in it",
+);
 await readmeThread.getByRole("textbox").fill("Yes, still true.");
 await readmeThread.locator(".box").getByRole("button", { name: "Reply" }).click();
 await readmeThread.locator(".box").waitFor({ state: "detached" });

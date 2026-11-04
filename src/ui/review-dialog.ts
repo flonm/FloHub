@@ -217,6 +217,7 @@ export class ReviewDialog {
     if (!required) label.append(el("span", { class: "optional" }, "(optional)"));
     const body = el("textarea", {
       id: "review-body",
+      autocomplete: "off",
       rows: nudging ? "8" : "6",
       placeholder: dismissing ? "Why the review no longer applies" : "Leave a comment",
       ...(required && { required: "" }),

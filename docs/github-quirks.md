@@ -74,3 +74,20 @@ alone (`viewedBeforeUnchanged` in `src/core/viewed.ts`).
 **How to tell it's fixed.** Mark a file as viewed, rebase the pull request onto a newer base that doesn't touch that
 file's lines, and push. If the file is still marked as viewed, GitHub compares the change rather than the content, and
 the button never shows. It can then go.
+
+## Safari offers a verification code in a comment box
+
+*Seen 2026-11-04 in Safari on the Files changed page, in a FloHub reply box under a thread marked "Code changed since
+the comment". Not a GitHub bug: Safari's AutoFill guessing, on a site it holds a saved verification code for.*
+
+**What Safari does.** Safari's AutoFill guesses from a field and the words around it whether it wants a one-time code.
+On github.com, where iCloud Passwords keeps a verification code, it offered that code under a focused FloHub comment
+box, a `<textarea>` outside any form with nothing saying what it's for.
+
+**What FloHub does.** Its comment boxes, the reply and new-comment box (`writeBox` in `src/ui/review-thread.ts`) and
+the review dialog's comment (`src/ui/review-dialog.ts`), set `autocomplete="off"`. If Safari still offers the code,
+the words nearby are the next suspect: the thread's "Code changed since the comment" badge.
+
+**How to tell it's fixed.** Remove the attribute, and focus a reply box in Safari with a verification code saved for
+github.com. If the popup no longer shows, Safari stopped guessing there and the attribute can go, though it costs
+nothing to keep.
