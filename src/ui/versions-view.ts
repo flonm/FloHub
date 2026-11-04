@@ -1047,7 +1047,7 @@ export class VersionsView {
             pullAuthor: () => discussion?.author ?? null,
             progress: progressOf,
             show: (target) => this.goTo(target.range, target.line),
-            comment: commentable ? { mode: () => postingMode(discussion?.pending ?? null, newer.oid), post, released: release } : null,
+            comment: commentable ? { mode: () => postingMode(discussion?.pending ?? null), post, released: release } : null,
           };
           // GitHub keeps one Viewed mark per file, for the current version only.
           const viewed = newer.current ? (request.viewed ?? null) : null;

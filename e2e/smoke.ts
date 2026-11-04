@@ -1542,11 +1542,16 @@ await readmeThread.locator(".box").getByRole("button", { name: "Add review comme
 await readmeThread.locator(".box").waitFor({ state: "detached" });
 await addOn("log(branch)");
 check(
-  (await composer.locator(".problem").innerText()).includes("Your pending review is on an older version") &&
-    JSON.stringify(await composer.getByRole("button").allInnerTexts()) === JSON.stringify(["Cancel"]),
-  "a pending review on an older version has to be submitted before commenting on the head",
+  JSON.stringify(await composer.getByRole("button").allInnerTexts()) === JSON.stringify(["Cancel", "Add review comment"]),
+  "a pending review on an older version takes a comment on the head too",
 );
-await composer.getByRole("button", { name: "Cancel" }).click();
+await composer.getByRole("textbox").fill("Still part of my review.");
+await composer.getByRole("button", { name: "Add review comment" }).click();
+await composer.waitFor({ state: "detached" });
+check(
+  lastAction().startsWith('addPullRequestReviewThread {"review":"PRR_pending","path":"cmd/rebase.go","body":"Still part of my review.","line":44'),
+  `a comment joins a pending review on an older version, on the head's lines: ${lastAction()}`,
+);
 fixture.pendingReview = null;
 await splitPage.getByLabel("Reply").fill("Looks good now");
 check((await splitPage.getByLabel("Reply").inputValue()) === "Looks good now", "the comments beside the docked view stay usable");
