@@ -1,7 +1,7 @@
 import { el } from "./ui/dom";
 import { fetchViewerLogin, GitHubError, readToken, writeToken } from "./api/github";
 import type { Inbox } from "./core/inbox";
-import { parseRepo, readDirectRepos, REVIEW_SCOPES_KEY, type ReviewScope, writeReviewScope } from "./core/review-scope";
+import { IGNORED_REPOS_KEY, parseRepo, readReviewScopes, REVIEW_SCOPES_KEY, type ReviewScope, writeReviewScope } from "./core/review-scope";
 import { isMac, shortcutHelp } from "./core/shortcuts";
 import { renderShortcutList } from "./ui/shortcut-list";
 import { assignEntry, knownEntries, loadProfiles, PROFILES_KEY, type Profiles, saveProfiles } from "./core/profiles";
@@ -45,7 +45,8 @@ if (form && input && status && clear) {
 if (repoList && repoForm && repoInput && scopeStatus) {
   void renderRepos(repoList);
   chrome.storage.onChanged.addListener((changes, area) => {
-    if ((area === "sync" && Object.hasOwn(changes, REVIEW_SCOPES_KEY)) || (area === "local" && "inbox" in changes)) void renderRepos(repoList);
+    const scoped = Object.hasOwn(changes, REVIEW_SCOPES_KEY) || Object.hasOwn(changes, IGNORED_REPOS_KEY);
+    if ((area === "sync" && scoped) || (area === "local" && "inbox" in changes)) void renderRepos(repoList);
   });
   repoForm.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -152,25 +153,29 @@ async function addDirectRepo(field: HTMLInputElement, notice: HTMLElement): Prom
 }
 
 /**
- * Lists the repositories in the inbox and the ones set to count only direct requests, each with its setting.
+ * Lists the repositories in the inbox and the ones set to count only direct requests or none, each with its setting.
  * @param list The list to fill.
  */
 async function renderRepos(list: HTMLUListElement): Promise<void> {
-  const [direct, stored] = await Promise.all([readDirectRepos(), chrome.storage.local.get("inbox")]);
+  const [scopes, stored] = await Promise.all([readReviewScopes(), chrome.storage.local.get("inbox")]);
   const inbox = stored.inbox as Inbox | undefined;
   const names = new Map(added);
-  for (const repo of direct) if (!names.has(repo)) names.set(repo, repo);
+  for (const repo of scopes.keys()) if (!names.has(repo)) names.set(repo, repo);
   for (const entry of [...(inbox?.review ?? []), ...(inbox?.mine ?? [])]) names.set(entry.repo.toLowerCase(), entry.repo);
   const rows = [...names.values()].toSorted((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   const focused = list.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.repo : undefined;
-  list.replaceChildren(...rows.map((repo) => renderRepo(repo, direct.has(repo.toLowerCase()) ? "direct" : "teams")));
+  list.replaceChildren(...rows.map((repo) => renderRepo(repo, scopes.get(repo.toLowerCase()) ?? "teams")));
   if (focused) list.querySelector<HTMLSelectElement>(`select[data-repo="${CSS.escape(focused)}"]`)?.focus();
 }
 
 function renderRepo(repo: string, scope: ReviewScope): HTMLLIElement {
   const item = el("li");
   const select = el("select", { "aria-label": `Review requests in ${repo}`, "data-repo": repo.toLowerCase() });
-  select.append(el("option", { value: "teams" }, "Me and my teams"), el("option", { value: "direct" }, "Only me"));
+  select.append(
+    el("option", { value: "teams" }, "Me and my teams"),
+    el("option", { value: "direct" }, "Only me"),
+    el("option", { value: "none" }, "None"),
+  );
   select.value = scope;
   select.addEventListener("change", () => void writeReviewScope(repo, select.value as ReviewScope));
   item.append(el("span", { class: "name", title: repo }, repo), select);

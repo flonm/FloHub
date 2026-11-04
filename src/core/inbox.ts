@@ -1,3 +1,4 @@
+import type { ReviewScope } from "./review-scope";
 import type { Verdict } from "./reviewers";
 import { deriveStatus, lastActivity, type RawStackPull, type StackTone } from "./stack";
 import { isBot, pushTimes, type RawTurnThread, toTurnThread, type Turn, type TurnCode, type TurnReason, VIEWER_VERDICTS, whoseTurn } from "./turn";
@@ -143,22 +144,24 @@ const URGENCY: Record<StackTone, number> = { danger: 0, attention: 1, success: 2
  * Turns the inbox searches into groups: one per stack, or one per pull request outside any stack.
  * Review requests keep only non-draft pull requests that still wait for the viewer, see {@link requestedVia};
  * reviewed pull requests keep only those waiting for their author, see {@link waitingVerdict}.
- * In the repositories set to count only direct requests, a request that reaches the viewer through a team is dropped.
+ * In the repositories set to count only direct requests, a request that reaches the viewer through a team is dropped;
+ * in those set to count none, every review request is, from *Everything else* too.
  * Review requests and reviewed pull requests are ordered by their latest activity, the viewer's own pull requests
  * by what needs them first.
  * @param raw The search results.
  * @param fetchedAt When they were fetched.
- * @param directRepos Repositories, lowercase `owner/name`, that count only requests naming the viewer.
+ * @param scopes Each repository's review scope by lowercase `owner/name`; one left out counts team requests too.
  * @returns The inbox.
  */
-export function buildInbox(raw: RawInbox, fetchedAt: number, directRepos: ReadonlySet<string> = new Set()): Inbox {
+export function buildInbox(raw: RawInbox, fetchedAt: number, scopes: ReadonlyMap<string, ReviewScope> = new Map()): Inbox {
   const viewer = raw.viewer.login;
+  const requested = pullsOf(raw.review.nodes).filter((pull) => scopes.get(pull.repository.nameWithOwner.toLowerCase()) !== "none");
   // The search index lags behind a submitted review, so check the request is still open on the pull request itself.
   const review = group(
-    pullsOf(raw.review.nodes).filter((pull) => {
+    requested.filter((pull) => {
       if (pull.isDraft) return false;
       const via = requestedVia(pull, viewer);
-      return via === "user" || (via === "team" && !directRepos.has(pull.repository.nameWithOwner.toLowerCase()));
+      return via === "user" || (via === "team" && scopes.get(pull.repository.nameWithOwner.toLowerCase()) !== "direct");
     }),
     viewer,
     "review",
@@ -181,7 +184,7 @@ export function buildInbox(raw: RawInbox, fetchedAt: number, directRepos: Readon
   const yours = [...review, ...mine, ...waiting].flatMap((entry) => entry.pulls).filter((pull) => pull.turn?.whose === "you");
   const shown = new Set([...review, ...mine, ...waiting].flatMap((entry) => entry.pulls.map((pull) => pull.url)));
   const left = new Map<string, RawInboxPull>();
-  for (const pull of [...pullsOf(raw.review.nodes), ...pullsOf(raw.waiting?.nodes ?? [])]) if (!shown.has(pull.url)) left.set(pull.url, pull);
+  for (const pull of [...requested, ...pullsOf(raw.waiting?.nodes ?? [])]) if (!shown.has(pull.url)) left.set(pull.url, pull);
   const other = group([...left.values()], viewer, "other");
   other.sort((a, b) => newest(b) - newest(a));
   return {

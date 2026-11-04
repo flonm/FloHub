@@ -32,7 +32,7 @@ import {
   writeCachedPatch,
 } from "./api/version-cache";
 import type { PullRef } from "./core/pull-ref";
-import { REVIEW_SCOPES_KEY } from "./core/review-scope";
+import { IGNORED_REPOS_KEY, REVIEW_SCOPES_KEY } from "./core/review-scope";
 
 chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) => {
   void handle(message).then(sendResponse);
@@ -46,7 +46,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.runtime.onStartup.addListener(() => void refreshInbox().catch(() => undefined));
 chrome.runtime.onInstalled.addListener(() => void refreshInbox().catch(() => undefined));
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "sync" && Object.hasOwn(changes, REVIEW_SCOPES_KEY)) void refreshInboxAgain().catch(() => undefined);
+  if (area === "sync" && (Object.hasOwn(changes, REVIEW_SCOPES_KEY) || Object.hasOwn(changes, IGNORED_REPOS_KEY))) void refreshInboxAgain().catch(() => undefined);
   if ((area === "local" && Object.hasOwn(changes, MARKS_KEY)) || (area === "sync" && Object.hasOwn(changes, PROFILES_KEY))) {
     void refreshBadge().catch(() => undefined);
   }
