@@ -1,6 +1,6 @@
 import { fetchInbox, fetchOpenPulls, GitHubError, OPEN_PULLS_SEARCH, readToken } from "./github";
 import { buildInbox, groupOthers, type Inbox, type InboxGroup, type RawInbox } from "../core/inbox";
-import { readDirectRepos } from "../core/review-scope";
+import { readReviewScopes } from "../core/review-scope";
 import { badgeCount, MARKS_KEY, pruneMarks, readMarks } from "../core/inbox-marks";
 import { loadProfiles, profileInbox } from "../core/profiles";
 
@@ -84,7 +84,7 @@ async function fetchAndStore(): Promise<Inbox> {
     throw error;
   }
   const now = Date.now();
-  const inbox = buildInbox(raw, now, await readDirectRepos());
+  const inbox = buildInbox(raw, now, await readReviewScopes());
   if ((await readToken()) !== token) throw new GitHubError("failed", "The token changed. Try again.");
   const stored = await chrome.storage.local.get(MARKS_KEY);
   const marks = readMarks(stored[MARKS_KEY]);

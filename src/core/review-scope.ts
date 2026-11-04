@@ -1,8 +1,14 @@
-/** Which review requests count in a repository: any that reach the viewer through a team, or only those naming them. */
-export type ReviewScope = "teams" | "direct";
+/**
+ * Which review requests count in a repository: any that reach the viewer through a team, only those naming them,
+ * or none at all.
+ */
+export type ReviewScope = "teams" | "direct" | "none";
 
-/** Repositories that count only direct requests, by lowercase `owner/name`; every other one counts team requests too. */
+/** Repositories that count only direct requests, by lowercase `owner/name`. */
 export const REVIEW_SCOPES_KEY = "directReviewRepos";
+
+/** Repositories that count no review requests, by lowercase `owner/name`; one in neither list counts team requests too. */
+export const IGNORED_REPOS_KEY = "ignoredReviewRepos";
 
 const REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/u;
 
@@ -19,11 +25,20 @@ export function parseRepo(input: string): string | null {
   return REPO_PATTERN.test(repo) ? repo : null;
 }
 
-/** @returns The repositories that count only direct requests, lowercase. */
-export async function readDirectRepos(): Promise<Set<string>> {
-  const stored = await chrome.storage.sync.get(REVIEW_SCOPES_KEY);
-  const repos = stored[REVIEW_SCOPES_KEY];
-  return new Set(Array.isArray(repos) ? repos.filter((repo): repo is string => typeof repo === "string") : []);
+/**
+ * @param stored What sync storage holds under the two keys.
+ * @returns Each repository's scope, by lowercase `owner/name`; one left out counts team requests too.
+ * A repository in both lists, from two browsers writing at once, counts none.
+ */
+export function scopesFrom(stored: Record<string, unknown>): Map<string, ReviewScope> {
+  const direct = repoList(stored[REVIEW_SCOPES_KEY]).map((repo): [string, ReviewScope] => [repo, "direct"]);
+  const ignored = repoList(stored[IGNORED_REPOS_KEY]).map((repo): [string, ReviewScope] => [repo, "none"]);
+  return new Map([...direct, ...ignored]);
+}
+
+/** @returns Each repository's scope that isn't the default, by lowercase `owner/name`. */
+export async function readReviewScopes(): Promise<Map<string, ReviewScope>> {
+  return scopesFrom(await chrome.storage.sync.get([REVIEW_SCOPES_KEY, IGNORED_REPOS_KEY]));
 }
 
 /**
@@ -31,8 +46,14 @@ export async function readDirectRepos(): Promise<Set<string>> {
  * @param scope Which review requests count in it.
  */
 export async function writeReviewScope(repo: string, scope: ReviewScope): Promise<void> {
-  const repos = await readDirectRepos();
-  if (scope === "direct") repos.add(repo.toLowerCase());
-  else repos.delete(repo.toLowerCase());
-  await chrome.storage.sync.set({ [REVIEW_SCOPES_KEY]: [...repos].toSorted((a, b) => a.localeCompare(b)) });
+  const scopes = await readReviewScopes();
+  if (scope === "teams") scopes.delete(repo.toLowerCase());
+  else scopes.set(repo.toLowerCase(), scope);
+  const reposWith = (wanted: ReviewScope): string[] =>
+    [...scopes].filter(([, value]) => value === wanted).map(([name]) => name).toSorted((a, b) => a.localeCompare(b));
+  await chrome.storage.sync.set({ [REVIEW_SCOPES_KEY]: reposWith("direct"), [IGNORED_REPOS_KEY]: reposWith("none") });
+}
+
+function repoList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((repo): repo is string => typeof repo === "string") : [];
 }

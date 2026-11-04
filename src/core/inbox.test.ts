@@ -161,7 +161,7 @@ describe("buildInbox", () => {
     const inbox = buildInbox(
       buildRaw([buildPull(1, team), buildPull(2), buildPull(3, { ...team, ...elsewhere })]),
       0,
-      new Set(["octo-org/octo-repo"]),
+      new Map([["octo-org/octo-repo", "direct"]]),
     );
     const entries = inbox.review.map((entry) => [entry.repo, entry.pulls[0]?.number, entry.pulls[0]?.viaTeam] as const);
     expect(entries.toSorted(([a], [b]) => a.localeCompare(b))).toEqual([
@@ -169,6 +169,20 @@ describe("buildInbox", () => {
       ["octo-org/other", 3, true],
     ]);
     expect(inbox.reviewCount).toBe(2);
+  });
+
+  test("in a repository set to none, drops every review request, from everything else too, and keeps the viewer's own", () => {
+    const elsewhere = { repository: { nameWithOwner: "octo-org/other" } };
+    const approved: Partial<RawInboxPull> = { reviewDecision: "APPROVED", reviewRequests: { nodes: [] } };
+    const inbox = buildInbox(
+      buildRaw([buildPull(1), buildPull(2, approved), buildPull(3, elsewhere)], [buildPull(4, { author: { login: "octocat", avatarUrl: "https://avatars.githubusercontent.com/octocat" } })]),
+      0,
+      new Map([["octo-org/octo-repo", "none"]]),
+    );
+    expect(inbox.review.flatMap((entry) => entry.pulls.map((pull) => pull.number))).toEqual([3]);
+    expect(inbox.other?.flatMap((entry) => entry.pulls.map((pull) => pull.number))).toEqual([]);
+    expect(inbox.mine.flatMap((entry) => entry.pulls.map((pull) => pull.number))).toEqual([4]);
+    expect(inbox.reviewCount).toBe(1);
   });
 
   test("carries each pull request's added and deleted lines", () => {
