@@ -18,7 +18,9 @@
 
 Every change brings its unit tests and stories, as the `tests-and-stories` skill in `.claude/skills/` spells out. `src/test-gaps.test.ts` fails when a module that builds DOM appears in no story, or another module has no test of its own.
 
-ESLint runs typescript-eslint, which needs TypeScript's JavaScript API. TypeScript 7 no longer ships one, so inside ESLint `eslint-typescript.js` resolves `typescript` to TypeScript 6 (the `typescript-eslint-ts` alias). `tsc` and oxlint's type-aware rules use TypeScript 7.
+ESLint runs typescript-eslint, which needs TypeScript's JavaScript API. TypeScript 7 no longer ships one, so inside ESLint `eslint-typescript.js` resolves `typescript` to TypeScript 6 (the `typescript-eslint-ts` alias). `tsc` and oxlint's type-aware rules use TypeScript 7. Renovate holds the alias below 7.
+
+Renovate (`.github/renovate.json`) keeps the dependencies, the GitHub Actions and their digests current. An update waits 3 days after its release, except for security fixes. Packages that must move together share one pull request: Storybook, oxlint, ESLint, Bun and the `@types` packages. Digest bumps come together once a week, on Monday, and `bun.lock` is refreshed monthly. Minor, patch and digest updates merge on their own once CI passes and someone approves them. Major updates wait for a person to merge them.
 
 The smoke test runs logged out, so it exercises GitHub's classic PR markup. The bar anchors to the first page heading containing `#<number>` (see `src/ui/anchor.ts`). If a GitHub redesign breaks that, the floating pill still works. Fix the anchor there.
 
