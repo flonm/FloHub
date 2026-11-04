@@ -1,0 +1,72 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices",
+    ":semanticCommits",
+    ":semanticCommitTypeAll(chore)",
+    ":timezone(Europe/Berlin)"
+  ],
+  "ignorePresets": [":pinDevDependencies"],
+  "rangeStrategy": "bump",
+  "labels": ["dependencies"],
+  "rebaseWhen": "conflicted",
+  "minimumReleaseAge": "3 days",
+  "minimumReleaseAgeBehaviour": "timestamp-optional",
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "prHourlyLimit": 0
+  },
+  "lockFileMaintenance": {
+    "description": "Refresh bun.lock monthly",
+    "enabled": true,
+    "schedule": ["before 4am on the first day of the month"]
+  },
+  "packageRules": [
+    {
+      "description": "Scope dev dependency commits as deps-dev",
+      "matchDepTypes": ["devDependencies"],
+      "semanticCommitScope": "deps-dev"
+    },
+    {
+      "description": "Group Bun runtime updates, which release in lockstep",
+      "groupName": "bun",
+      "matchPackageNames": ["bun", "oven/bun", "oven-sh/bun", "@types/bun"]
+    },
+    {
+      "description": "Group all @types packages but @types/bun, which moves with the bun group",
+      "groupName": "types",
+      "matchPackageNames": ["@types/**", "!@types/bun"]
+    },
+    {
+      "description": "Group Storybook packages, which must share one version",
+      "groupName": "storybook",
+      "matchPackageNames": ["storybook", "@storybook/**", "eslint-plugin-storybook"]
+    },
+    {
+      "description": "Group oxlint with its type-aware backend and the ESLint plugin that turns off the rules oxlint covers, which tracks oxlint's rule set",
+      "groupName": "oxlint",
+      "matchPackageNames": ["oxlint", "oxlint-tsgolint", "eslint-plugin-oxlint"]
+    },
+    {
+      "description": "Group ESLint with its bundled rule configs",
+      "groupName": "eslint",
+      "matchPackageNames": ["eslint", "@eslint/js"]
+    },
+    {
+      "description": "Hold the typescript-eslint-ts alias on TypeScript 6: TypeScript 7 ships no JavaScript API, which typescript-eslint needs (see docs/development.md)",
+      "matchDepNames": ["typescript-eslint-ts"],
+      "allowedVersions": "<7"
+    },
+    {
+      "description": "Batch image and action digest bumps into one weekly PR",
+      "groupName": "digests",
+      "matchUpdateTypes": ["digest"],
+      "schedule": ["before 4am on monday"]
+    },
+    {
+      "description": "Auto-merge minor, patch and digest updates once CI passes; the main ruleset still requires a human approval",
+      "automerge": true,
+      "matchUpdateTypes": ["minor", "patch", "digest"]
+    }
+  ]
+}
