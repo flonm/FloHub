@@ -587,3 +587,46 @@ export const ViewedMarksFromAnotherVersion: Story = {
 export const ViewedMarksOnAnOlderVersion: Story = {
   render: () => view(3, PATCHES, { saved: { from: V1.oid, to: V2.oid, toCurrent: false, at: NOW } }, true, undefined, [], MARKS),
 };
+
+/**
+ * @param use What to do with the file tree's filter once the view has drawn its tree.
+ * @returns The page with the view on it.
+ */
+function filtered(use: (nav: HTMLElement) => void): HTMLElement {
+  const page = view(3, PATCHES, {}, true, undefined, [], MARKS);
+  const tryUse = () => {
+    const nav = document.querySelector("flohub-versions")?.shadowRoot?.querySelector<HTMLElement>("nav.files");
+    if (nav?.querySelector(".files-filter")) use(nav);
+    else setTimeout(tryUse, 50);
+  };
+  tryUse();
+  return page;
+}
+
+/**
+ * The search box above the tree narrows the tree and the diff to the paths that contain its text, as GitHub's own
+ * does: "retry" leaves the two retry files, and the head says how many of the files are left. Escape clears the text.
+ */
+export const FilteredFileTree: Story = {
+  render: () =>
+    filtered((nav) => {
+      const search = nav.querySelector("input");
+      if (!search) return;
+      search.value = "retry";
+      search.dispatchEvent(new Event("input"));
+    }),
+};
+
+/**
+ * The filter's menu, as GitHub's: a checkbox for each extension the files have, with how many have it, and one that
+ * hides the files marked as viewed. Here `.sql` is unticked, so the migration leaves the tree and the diff, and the
+ * dot on the menu's button says the menu hides files.
+ */
+export const FilterMenu: Story = {
+  render: () =>
+    filtered((nav) => {
+      nav.querySelector<HTMLButtonElement>(".filter-button")?.click();
+      const sql = [...nav.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')].find((item) => item.textContent.startsWith(".sql"));
+      sql?.click();
+    }),
+};

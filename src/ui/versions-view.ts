@@ -40,6 +40,7 @@ import { type JumpTarget, threadElsewhere } from "../core/comment-jump";
 import { type SplitSide, splitRows } from "../core/split";
 import { READING_LINE, type Stop } from "../core/steps";
 import { notViewed, viewedBeforeUnchanged, type ViewedState } from "../core/viewed";
+import { emptyFilter, extensionCounts, type FileFilter, narrowsMenu, showsFile } from "../core/file-filter";
 import { clampTreeWidth, MIN_TREE_WIDTH, TREE_WIDTH, treeWidthForKey } from "../core/tree-width";
 import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
 import {
@@ -194,7 +195,17 @@ const VIEW_STYLES = `
   --vd-mono: var(--fontStack-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
   --vd-focus: var(--focus-outlineColor, #0969da);
   --vd-shadow: var(--shadow-floating-xlarge, 0 12px 48px rgba(31, 35, 40, 0.3));
-  font: 14px/1.5 var(--fontStack-sansSerif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif);
+  --vd-sans: var(--fontStack-sansSerif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif);
+  /*
+   * The diff's geometry, as GitHub's own Files changed page draws it: its rows' height, its line numbers' columns, and
+   * where the code starts after the +/− beside it. The sign column in front of the numbers is the view's own.
+   */
+  --vd-line: var(--diff-line-height, 24px);
+  --vd-sign: 20px;
+  --vd-num: 52px;
+  --vd-marker: 24px;
+  --vd-gutter: calc(var(--vd-sign) + 2 * var(--vd-num));
+  font: 14px/1.5 var(--vd-sans);
   color: var(--vd-fg);
 }
 * { box-sizing: border-box; }
@@ -211,12 +222,13 @@ const VIEW_STYLES = `
 }
 :host([data-mode="docked"]) main, :host([data-mode="docked"]) nav.files { overscroll-behavior: auto; }
 :host([data-mode="floating"]) { position: fixed; z-index: 100; inset: 72px 16px 16px; box-shadow: var(--vd-shadow); border-radius: 12px; }
+:host([data-mode="floating"]) .surface { border-radius: 12px; }
 .surface {
   display: flex;
   flex-direction: column;
   height: 100%;
   border: 1px solid var(--vd-border);
-  border-radius: 12px;
+  border-radius: 6px;
   background: var(--vd-bg);
   color: var(--vd-fg);
   overflow: hidden;
@@ -226,20 +238,20 @@ const VIEW_STYLES = `
  * the view's switches. The summary and the legend share the line under it.
  */
 header { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--vd-border); font-size: 12px; container-type: inline-size; }
-@container (max-width: 900px) { .options .tool > span { display: none; } .options .tool { justify-content: center; width: 26px; padding: 0; } }
+@container (max-width: 900px) { .options .tool > span { display: none; } .options .tool { justify-content: center; width: 28px; padding: 0; } }
 .vbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .vbar h2 { display: inline-flex; align-items: center; gap: 6px; margin: 0 4px 0 0; font-size: 14px; }
 .vbar h2 svg { color: var(--vd-accent); }
 .controls, .options { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .options { margin-left: auto; }
-header .tool { min-height: 0; height: 26px; font-weight: 400; }
+header .tool { min-height: 0; height: 28px; font-weight: 500; }
 header .tool[aria-checked="true"] { font-weight: 600; }
 .version-pick {
   position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
+  height: 28px;
   padding: 0 6px 0 8px;
   border: 1px solid var(--vd-border);
   border-radius: 6px;
@@ -254,7 +266,7 @@ header .tool[aria-checked="true"] { font-weight: 600; }
 .version-pick .pick-tag { color: var(--vd-muted); }
 .version-pick .pick-tag.review { color: var(--vd-attention); }
 .version-pick svg { width: 12px; height: 12px; color: var(--vd-muted); transform: rotate(180deg); }
-.version-pick { min-height: 0; font-weight: 400; }
+.version-pick { min-height: 0; font-weight: 500; }
 .version-pick[aria-expanded="true"] { background: var(--vd-bg-muted); }
 .version-pick .verdict-face { width: 16px; height: 16px; }
 /* The pickers' lists: fixed, so the view's own scrolling and clipping never cut them off. */
@@ -308,7 +320,7 @@ header .tool[aria-checked="true"] { font-weight: 600; }
  * The timeline: a tick for each version, and a wider slot for each version someone reviewed, with their faces and
  * each one's verdict. The ticks share what the faces leave of 200px, so a long history still fits.
  */
-.timeline { display: flex; flex: none; align-items: center; gap: 2px; height: 26px; margin: 0; padding: 0 2px; list-style: none; }
+.timeline { display: flex; flex: none; align-items: center; gap: 2px; height: 28px; margin: 0; padding: 0 2px; list-style: none; }
 .timeline li { display: flex; align-items: center; width: var(--tick, 8px); height: 100%; }
 .timeline li.reviewed { width: calc(22px + (var(--faces, 1) - 1) * 10px); }
 .timeline button {
@@ -352,18 +364,18 @@ header .tool[aria-checked="true"] { font-weight: 600; }
 .line.target { box-shadow: inset 4px 0 0 var(--vd-attention); }
 .line.target .code { background: var(--vd-attention-bg); }
 .body { flex: 1; min-height: 0; display: flex; }
-main { position: relative; flex: 1; min-width: 0; overflow: auto; overscroll-behavior: contain; padding: 16px; display: flex; flex-direction: column; gap: 12px; container-type: inline-size; }
+main { position: relative; flex: 1; min-width: 0; overflow: auto; overscroll-behavior: contain; padding: 16px; display: flex; flex-direction: column; gap: 16px; container-type: inline-size; }
 main.hide-threads :is(.thread-row, .other-threads, .elsewhere) { display: none; }
 .line { position: relative; }
 .add-comment {
   position: absolute;
-  left: 20px;
-  top: 1px;
+  left: var(--vd-sign);
+  top: calc((var(--vd-line) - 20px) / 2);
   display: none;
   align-items: center;
   justify-content: center;
   width: 20px;
-  height: 18px;
+  height: 20px;
   /* The view's general button rule would make it 32px tall and swap its colour on hover. */
   min-height: 0;
   padding: 0;
@@ -403,22 +415,85 @@ details.unchanged .other-threads { margin: 4px 0 8px; border: 1px solid var(--vd
 .other-threads .where { flex: none; color: var(--vd-muted); font-size: 12px; }
 .other-threads .excerpt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .other-threads .go { flex: none; color: var(--vd-accent); font-size: 12px; }
-.files .comment-count { display: inline-flex; align-items: center; gap: 2px; color: var(--vd-muted); }
+.files .comment-count { display: inline-flex; align-items: center; gap: 2px; color: var(--vd-muted); font-size: 12px; }
 .files .comment-count svg { width: 12px; height: 12px; }
 .files.hide-threads .comment-count { display: none; }
 
-nav.files { position: relative; flex: none; width: var(--tree-width, ${TREE_WIDTH}px); overflow: auto; overscroll-behavior: contain; padding: 8px; border-right: 1px solid var(--vd-border); font-size: 12px; }
+nav.files { position: relative; flex: none; width: var(--tree-width, ${TREE_WIDTH}px); overflow: auto; overscroll-behavior: contain; padding: 8px; border-right: 1px solid var(--vd-border); font-size: 14px; }
 nav.files:empty { display: none; }
-.files-head { display: flex; align-items: center; gap: 8px; padding: 4px 8px 8px; color: var(--vd-muted); font-weight: 600; }
+.files-head { display: flex; align-items: center; gap: 8px; padding: 4px 8px 8px; color: var(--vd-muted); font-size: 12px; font-weight: 600; }
 .files-head .counts { margin-left: auto; }
+/* The filter above the tree, sized like GitHub's own: a 32px field and its menu's button beside it. */
+.files-filter { display: flex; gap: 8px; margin-bottom: 8px; }
+.files-filter .search {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--control-borderColor-rest, var(--vd-border));
+  border-radius: 6px;
+  background: var(--vd-bg);
+  color: var(--vd-muted);
+  cursor: text;
+}
+.files-filter .search:focus-within { outline: 2px solid var(--vd-focus); outline-offset: -1px; border-color: transparent; }
+.files-filter input { flex: 1; min-width: 0; padding: 0; border: 0; outline: none; background: none; color: var(--vd-fg); font: inherit; }
+.files-filter input::placeholder { color: var(--fgColor-placeholder, var(--vd-muted)); }
+.files .filter-button {
+  position: relative;
+  flex: none;
+  justify-content: center;
+  width: 32px;
+  padding: 0;
+  border: 1px solid var(--button-default-borderColor-rest, var(--vd-border));
+  background: var(--button-default-bgColor-rest, var(--vd-bg-muted));
+  color: var(--vd-muted);
+}
+.files .filter-button:hover { background: var(--button-default-bgColor-hover, var(--vd-bg-muted)); }
+.files .filter-button svg { width: 16px; height: 16px; }
+/* While the menu hides files, a dot on its button says so. */
+.files .filter-button[data-narrowed]::after { content: ""; position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--vd-accent); }
+.filter-menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 192px;
+  max-height: 60vh;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--vd-border);
+  border-radius: 12px;
+  background: var(--overlay-bgColor, var(--vd-bg));
+  box-shadow: var(--shadow-floating-large, 0 8px 24px rgba(140, 149, 159, 0.2));
+  list-style: none;
+  font-size: 14px;
+}
+.filter-menu[hidden] { display: none; }
+.filter-menu .heading { padding: 6px 8px; color: var(--vd-muted); font-size: 12px; font-weight: 600; }
+.filter-menu .divider { height: 1px; margin: 8px -8px; background: var(--vd-border); }
+.filter-menu [role="menuitemcheckbox"] { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 8px; border-radius: 6px; cursor: pointer; }
+.filter-menu [role="menuitemcheckbox"]:hover, .filter-menu [role="menuitemcheckbox"]:focus { background: var(--control-transparent-bgColor-hover, var(--vd-bg-muted)); outline: none; }
+.filter-menu [role="menuitemcheckbox"]:focus-visible { box-shadow: inset 0 0 0 2px var(--vd-focus); }
+.filter-menu .tick { width: 16px; height: 16px; }
+.filter-menu [aria-checked="false"] .tick { visibility: hidden; }
+.filter-menu .label { flex: 1; }
+.filter-menu .count { padding: 0 6px; border-radius: 999px; background: var(--bgColor-neutral-muted, rgba(175, 184, 193, 0.2)); color: var(--vd-fg); font-size: 12px; font-weight: 500; line-height: 18px; }
+.files li[hidden] { display: none; }
+.no-match { margin: 8px; color: var(--vd-muted); font-size: 12px; }
+.no-match[hidden] { display: none; }
+details.file[hidden] { display: none; }
 .files ul { margin: 0; padding: 0; list-style: none; }
 .files ul[hidden] { display: none; }
 .files button {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   width: 100%;
-  min-height: 28px;
+  min-height: 32px;
   padding: 0 8px 0 calc(8px + var(--depth, 0) * 16px);
   border: 0;
   border-radius: 6px;
@@ -429,9 +504,20 @@ nav.files:empty { display: none; }
 .files .folder { color: var(--vd-muted); }
 .files .folder svg { width: 12px; height: 12px; transform: rotate(180deg); transition: transform 120ms; }
 .files .folder[aria-expanded="false"] svg { transform: rotate(90deg); }
-.files .file[aria-current] { background: var(--vd-bg-muted); font-weight: 600; box-shadow: inset 2px 0 0 var(--vd-accent); }
+/* GitHub's tree marks the file in view with a tinted row and a bar in the gutter beside it. */
+.files .file[aria-current] { background: var(--control-transparent-bgColor-selected, rgba(129, 139, 152, 0.15)); }
+.files .file[aria-current]::after {
+  content: "";
+  position: absolute;
+  top: calc(50% - 12px);
+  left: -8px;
+  width: 4px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--borderColor-accent-emphasis, #0969da);
+}
 .files .mark { flex: none; width: 8px; height: 8px; border-radius: 2px; background: currentColor; }
-.counts { flex: none; display: inline-flex; gap: 4px; font: 600 11px var(--vd-mono); }
+.counts { flex: none; display: inline-flex; gap: 4px; font: 600 12px var(--vd-sans); }
 .counts .add { color: var(--vd-success); }
 .counts .del { color: var(--vd-danger); }
 @media (max-width: 760px) { nav.files, .resizer { display: none; } }
@@ -445,13 +531,13 @@ nav.files:empty + .resizer { display: none; }
 .message { color: var(--vd-muted); }
 button {
   min-height: 32px;
-  padding: 0 14px;
+  padding: 0 12px;
   border: 1px solid var(--vd-border);
   border-radius: 6px;
   background: transparent;
   color: inherit;
   font: inherit;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
 button:hover { background: var(--vd-bg-muted); }
@@ -467,6 +553,7 @@ details.file > summary {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  min-height: 42px;
   padding: 6px 8px;
   border-radius: 6px 6px 0 0;
   background: var(--vd-bg-muted);
@@ -479,15 +566,15 @@ details.file:not([open]) > summary { border-radius: 6px; }
 svg { flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 .chevron { color: var(--vd-muted); transform: rotate(90deg); transition: transform 120ms; }
 details.file[open] > summary .chevron { transform: rotate(180deg); }
-.path { font: 600 12px var(--vd-mono); word-break: break-all; }
+.path { font: 12px var(--vd-mono); word-break: break-all; }
 .old-path { color: var(--vd-muted); font-weight: 400; }
-.copy { display: inline-flex; align-items: center; justify-content: center; min-height: 24px; padding: 0 4px; border-color: transparent; color: var(--vd-muted); }
+.copy { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; min-height: 28px; padding: 0; border-color: transparent; color: var(--vd-muted); }
 .copy:hover { color: var(--vd-accent); }
 .badge { padding: 0 8px; border: 1px solid currentColor; border-radius: 999px; font-size: 12px; font-weight: 600; }
 .chip { padding: 0 6px; border-radius: 6px; background: var(--vd-bg); font-size: 12px; color: var(--vd-muted); }
 .chip[data-mark="+"] { background: var(--vd-add-word); color: var(--vd-fg); }
 .chip[data-mark="-"] { background: var(--vd-del-word); color: var(--vd-fg); }
-.stat { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font: 600 12px var(--vd-mono); }
+.stat { display: inline-flex; align-items: center; gap: 4px 8px; margin-left: auto; font: 600 12px var(--vd-sans); }
 .stat .add { color: var(--vd-success); }
 .stat .del { color: var(--vd-danger); }
 .squares { display: inline-flex; gap: 1px; }
@@ -512,24 +599,27 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 .legend .gone i { background: var(--vd-del-word); }
 .legend kbd { font: 600 12px var(--vd-mono); }
 
-.diff { overflow-x: auto; font: 12px/20px var(--vd-mono); }
+.diff { overflow-x: auto; font: 12px/var(--vd-line) var(--vd-mono); }
 .line { display: flex; min-width: max-content; }
 .line[hidden] { display: none; }
 .num {
   flex: none;
-  width: 48px;
+  width: var(--vd-num);
   padding: 0 8px;
-  text-align: right;
+  text-align: center;
   color: var(--vd-muted);
   user-select: none;
 }
-.sign { flex: none; width: 20px; text-align: center; user-select: none; }
-.marker { flex: none; width: 22px; padding-left: 8px; font-weight: 600; user-select: none; }
+.sign { flex: none; width: var(--vd-sign); text-align: center; user-select: none; }
+.marker { flex: none; width: var(--vd-marker); padding-left: 8px; user-select: none; }
 .marker { color: var(--vd-muted); }
 .diff[data-uniform] .marker, .diff[data-plain] .marker { display: none; }
+/* Without its marker the code still starts where GitHub's does, past the marker's place. */
+.diff:is([data-uniform], [data-plain]) .code { padding-left: var(--vd-marker); }
 .diff[data-uniform="+"] .num.left, .diff[data-uniform="-"] .num.right { display: none; }
-.diff[data-uniform] .expander .num { width: 68px; }
-.code { flex: 1; padding-right: 16px; white-space: pre; }
+.diff[data-uniform] .expander .num { width: calc(var(--vd-sign) + var(--vd-num)); }
+.diff[data-split] .expander .num { width: var(--vd-num); }
+.code { flex: 1; padding-right: 24px; white-space: pre; }
 .wrap .line { min-width: 0; }
 .wrap .code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .line[data-kind="hunk"] .code, .line[data-kind="\\\\"] .code { color: var(--vd-muted); }
@@ -545,12 +635,12 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
 .cell { position: relative; display: flex; min-width: 0; }
 .cell.right { border-left: 1px solid var(--vd-border); }
 .cell.empty { background: var(--vd-bg-muted); }
-.cell .num { width: 50px; }
+.cell .num { width: var(--vd-num); }
 .cell .code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .diff[data-split] .add-comment { left: 2px; }
 /* Side by side, a thread or comment box sits in its version's column, lined up with that column's code. */
-.diff[data-split] :is(.thread-row, .composer-row) { position: static; width: 50%; padding: 8px 12px 8px 72px; }
-.diff[data-split][data-plain] :is(.thread-row, .composer-row), .diff[data-split][data-uniform] :is(.thread-row, .composer-row) { padding-left: 50px; }
+.diff[data-split] :is(.thread-row, .composer-row) { position: static; width: 50%; padding: 8px 12px 8px calc(var(--vd-num) + var(--vd-marker)); }
+.diff[data-split][data-plain] :is(.thread-row, .composer-row), .diff[data-split][data-uniform] :is(.thread-row, .composer-row) { padding-left: var(--vd-num); }
 .diff[data-split] .column-newer { margin-left: 50%; }
 .tok-keyword { color: var(--vd-syntax-keyword); }
 .tok-string { color: var(--vd-syntax-string); }
@@ -572,12 +662,22 @@ details.file[open] > summary .chevron { transform: rotate(180deg); }
   font-weight: 400;
   text-align: left;
 }
-.expander .num { display: flex; justify-content: center; align-items: center; width: 116px; background: var(--vd-hunk-num-bg); }
-.expander .code { padding-left: 8px; }
+.expander .num { display: flex; justify-content: center; align-items: center; width: var(--vd-gutter); background: var(--vd-hunk-num-bg); }
+.expander .code { padding-left: var(--vd-marker); }
 .expander:hover, .expander:hover .num { background: var(--vd-accent); color: var(--vd-bg); }
 
 details.unchanged > summary { color: var(--vd-muted); cursor: pointer; }
-.viewed-box { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 0 8px; font-size: 12px; font-weight: 400; }
+.viewed-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-color: var(--button-default-borderColor-rest, var(--vd-border));
+  background: var(--button-default-bgColor-rest, var(--vd-bg-muted));
+  font-size: 12px;
+}
+.viewed-box:hover { background: var(--button-default-bgColor-hover, var(--vd-bg-muted)); }
 .viewed-box[hidden], .mark-unchanged[hidden] { display: none; }
 .viewed-box .tick {
   display: inline-flex;
@@ -601,7 +701,7 @@ details.unchanged > summary { color: var(--vd-muted); cursor: pointer; }
 .files li:has(> .in-tree) { position: relative; }
 .files li:has(> .in-tree:not([hidden])) > .file { padding-right: 32px; }
 .files .viewed-box.in-tree { position: absolute; top: 50%; right: 8px; width: auto; min-height: 0; padding: 4px; border: 0; background: none; transform: translateY(-50%); }
-.mark-unchanged { min-height: 22px; margin-left: 4px; padding: 0 8px; color: var(--vd-fg); font-size: 12px; font-weight: 400; }
+.mark-unchanged { min-height: 28px; margin-left: 4px; padding: 0 8px; color: var(--vd-fg); font-size: 12px; }
 details.unchanged ul { margin: 6px 0 0; padding-left: 20px; font: 12px/20px var(--vd-mono); color: var(--vd-muted); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; user-select: none; }
 ${THREAD_STYLES}
@@ -667,6 +767,8 @@ export class VersionsView {
   /** Stops the Viewed marks' calls for the pull request shown before. */
   private unwatch: (() => void) | undefined;
   private readonly tooltip = new Tooltip();
+  /** The file tree's filter, kept while the viewer compares other versions of the pull request. */
+  private fileFilter = emptyFilter();
 
   constructor() {
     this.host = document.createElement("flohub-versions");
@@ -793,6 +895,8 @@ export class VersionsView {
     }
     this.shown = null;
     this.steps = null;
+    // Another pull request's files: what narrowed the last one's tree would only hide them.
+    this.fileFilter = emptyFilter();
     const run = ++this.generation;
     const live = () => run === this.generation;
 
@@ -1051,7 +1155,7 @@ export class VersionsView {
           };
           // GitHub keeps one Viewed mark per file, for the current version only.
           const viewed = newer.current ? (request.viewed ?? null) : null;
-          const show = renderResult({ main, review, summary, legend, files, viewed, signal: tracking.signal }, diff, {
+          const show = renderResult({ main, review, summary, legend, files, viewed, filter: this.fileFilter, signal: tracking.signal }, diff, {
             split,
             older,
             newer,
@@ -1571,6 +1675,8 @@ interface Slots {
   files: HTMLElement;
   /** The viewer's Viewed marks, or null when the diff doesn't end at the current version. */
   viewed: ViewedMarks | null;
+  /** The file tree's filter, which the tree changes as the viewer narrows it. */
+  filter: FileFilter;
   /** Aborts when another range replaces this result. */
   signal: AbortSignal;
 }
@@ -1583,7 +1689,7 @@ interface Slots {
  *   show the Viewed marks as they are now, and that give F and ⇧F their files.
  */
 function renderResult(
-  { main, review, summary, legend, files: nav, viewed, signal }: Slots,
+  { main, review, summary, legend, files: nav, viewed, filter, signal }: Slots,
   files: FileInterdiff[],
   context: Context,
 ): { reveal: Reveal; place: PlaceThreads; marks: () => void; steps: () => FileSteps | NoFileSteps } {
@@ -1680,7 +1786,11 @@ function renderResult(
     content.push(details);
   }
   main.replaceChildren(...content);
-  const treeRows = sections.size > 0 ? renderFileTree(nav, tree, sections, main, signal) : new Map<HTMLDetailsElement, HTMLButtonElement>();
+  const isViewed = (path: string) => viewed?.states()?.get(path) === "VIEWED";
+  const { rows: treeRows, refilter, clear: clearFilter } =
+    sections.size > 0
+      ? renderFileTree(nav, tree, sections, main, { filter, isViewed, canHideViewed: () => Boolean(viewed?.states()), signal })
+      : { rows: new Map<HTMLDetailsElement, HTMLButtonElement>(), refilter: () => undefined, clear: () => undefined };
 
   const byPath = new Map([...sections].map(([file, section]) => [file.path, section]));
   /** Each file's Viewed boxes, in its header and in the file tree, with what each one's label names. */
@@ -1717,6 +1827,8 @@ function renderResult(
         box.dataset.tip = VIEWED_TIP[state];
       }
     }
+    // Hiding viewed files hides a file the moment it's marked, as GitHub's filter does.
+    refilter();
     // Like GitHub's diff, the view opens with the viewed files folded.
     if (states && !folded) {
       folded = true;
@@ -1785,7 +1897,9 @@ function renderResult(
     const box = main.getBoundingClientRect();
     const line = box.top + FILE_LINE_PX;
     const topOf = (path: string) => byPath.get(path)?.getBoundingClientRect().top ?? 0;
-    const markable = [...byPath.keys()].filter((path) => states.has(path));
+    // The filter's hidden files are out of the way, as they are on GitHub's page.
+    const listed = [...byPath].filter(([, section]) => section.hidden !== true).map(([path]) => path);
+    const markable = listed.filter((path) => states.has(path));
     const reading = markable.findLast((path) => topOf(path) <= line) ?? markable.find((path) => topOf(path) < box.bottom) ?? null;
     const go = (path: string): number => {
       const section = byPath.get(path);
@@ -1795,7 +1909,7 @@ function renderResult(
       section.querySelector("summary")?.focus({ preventScroll: true });
       return section.getBoundingClientRect().top;
     };
-    return { stops: notViewed([...byPath.keys()], states).map((path) => ({ id: path, top: topOf(path) })), line, reading, go, markViewed: markRead };
+    return { stops: notViewed(listed, states).map((path) => ({ id: path, top: topOf(path) })), line, reading, go, markViewed: markRead };
   };
 
   /** Each thread's block, kept across placements so an open box or a thread the viewer opened stays as it is. */
@@ -1945,6 +2059,8 @@ function renderResult(
     const file = [...sections.keys()].find((each) => named(each));
     const section = file && sections.get(file);
     if (!file || !section) return "missing";
+    // Taken to a file the filter hides, the viewer sees every file again rather than nothing.
+    if (section.hidden === true) clearFilter();
     section.open = true;
     revealed.add(section);
     // A comment names its lines as the version it was written on numbers them, which the lines keep as their origin.
@@ -2005,8 +2121,8 @@ function renderFileTree(
   tree: PathNode<FileInterdiff>[],
   sections: Map<FileInterdiff, HTMLDetailsElement>,
   main: HTMLElement,
-  signal: AbortSignal,
-): Map<HTMLDetailsElement, HTMLButtonElement> {
+  { filter, isViewed, canHideViewed, signal }: TreeFilter,
+): { rows: Map<HTMLDetailsElement, HTMLButtonElement>; refilter: () => void; clear: () => void } {
   const rows = new Map<HTMLDetailsElement, HTMLButtonElement>();
   let current: HTMLButtonElement | null = null;
   let picked: HTMLDetailsElement | null = null;
@@ -2039,6 +2155,7 @@ function renderFileTree(
     for (const node of nodes) {
       const item = el("li");
       if (node.kind === "folder") {
+        item.className = "folder-item";
         const toggle = el("button", { type: "button", class: "folder", "aria-expanded": "true", title: node.path });
         toggle.style.setProperty("--depth", String(depth));
         toggle.append(icon("chevron"), el("span", { class: "name" }, node.name));
@@ -2064,9 +2181,55 @@ function renderFileTree(
   };
 
   const all = [...sections.keys()];
-  const head = el("div", { class: "files-head" }, `${all.length} ${all.length === 1 ? "file" : "files"}`);
-  head.append(counts(all.reduce((sum, file) => sum + file.added, 0), all.reduce((sum, file) => sum + file.removed, 0)));
-  nav.replaceChildren(head, list(tree, 0));
+  const total = el("span", { "aria-live": "polite" });
+  const head = el("div", { class: "files-head" });
+  head.append(total, counts(all.reduce((sum, file) => sum + file.added, 0), all.reduce((sum, file) => sum + file.removed, 0)));
+  const root = list(tree, 0);
+  const none = el("p", { class: "no-match", hidden: "" }, "No files match the filter.");
+  const refilter = () => {
+    let shown = 0;
+    for (const [file, section] of sections) {
+      const show = showsFile(file.path, filter, isViewed(file.path));
+      section.hidden = !show;
+      const item = rows.get(section)?.parentElement;
+      if (item) item.hidden = !show;
+      if (show) shown += 1;
+    }
+    // Deepest first, so a folder sees whether its subfolders kept any file.
+    for (const folder of [...root.querySelectorAll<HTMLLIElement>("li.folder-item")].toReversed()) {
+      folder.hidden = !folder.querySelector(":scope > ul > li:not([hidden])");
+    }
+    total.textContent = shown === all.length ? `${all.length} ${all.length === 1 ? "file" : "files"}` : `${shown} of ${all.length} files`;
+    none.hidden = shown > 0;
+    menu.mark();
+  };
+  const menu = filterMenu(all, filter, canHideViewed, refilter, signal);
+  const search = el("input", {
+    type: "search",
+    placeholder: "Filter files…",
+    "aria-label": "Filter files",
+    autocomplete: "off",
+    spellcheck: "false",
+  });
+  search.value = filter.query;
+  search.addEventListener("input", () => {
+    filter.query = search.value;
+    refilter();
+  });
+  search.addEventListener("keydown", (event) => {
+    // Escape clears the text before it closes the view.
+    if (event.key !== "Escape" || search.value === "") return;
+    event.preventDefault();
+    search.value = "";
+    filter.query = "";
+    refilter();
+  });
+  const field = el("label", { class: "search" });
+  field.append(icon("search"), search);
+  const tools = el("div", { class: "files-filter" });
+  tools.append(field, menu.button);
+  nav.replaceChildren(tools, head, root, none, menu.list);
+  refilter();
 
   let frame = 0;
   const follow = () => {
@@ -2080,6 +2243,7 @@ function renderFileTree(
     }
     let inView: HTMLDetailsElement | undefined;
     for (const section of rows.keys()) {
+      if (section.hidden === true) continue;
       inView ??= section;
       if (section.getBoundingClientRect().top > top + 24) break;
       inView = section;
@@ -2095,7 +2259,149 @@ function renderFileTree(
   );
   signal.addEventListener("abort", () => cancelAnimationFrame(frame));
   follow();
-  return rows;
+  const clear = () => {
+    filter.query = "";
+    filter.hiddenExtensions = new Set();
+    filter.hideViewed = false;
+    search.value = "";
+    refilter();
+  };
+  return { rows, refilter, clear };
+}
+
+/** What the file tree's filter needs from the result it narrows. */
+interface TreeFilter {
+  filter: FileFilter;
+  /** Whether the viewer marked a file as viewed. */
+  isViewed: (path: string) => boolean;
+  /** Whether the Viewed marks are known, without which the menu can't hide the viewed files. */
+  canHideViewed: () => boolean;
+  signal: AbortSignal;
+}
+
+/**
+ * The menu beside the file tree's filter, as GitHub's has it: a checkbox for each extension the files have, with how
+ * many have it, and one that shows or hides the files marked as viewed. Its choices apply at once and leave it open.
+ * @param files The files in the tree.
+ * @param filter The filter, which the menu changes.
+ * @param canHideViewed Whether the Viewed marks are known.
+ * @param changed Applies the filter after a change.
+ * @param signal Aborts when another result replaces the tree.
+ * @returns The menu's button, its list, and a function that marks the button while the menu hides any file.
+ */
+function filterMenu(
+  files: FileInterdiff[],
+  filter: FileFilter,
+  canHideViewed: () => boolean,
+  changed: () => void,
+  signal: AbortSignal,
+): { button: HTMLButtonElement; list: HTMLUListElement; mark: () => void } {
+  const button = el("button", {
+    type: "button",
+    class: "filter-button",
+    "aria-label": "Filter options",
+    "aria-haspopup": "menu",
+    "aria-expanded": "false",
+    "data-tip": "Filter options",
+  });
+  button.append(icon("filter"));
+  const list = el("ul", { class: "filter-menu", role: "menu", "aria-label": "Filter options", hidden: "" });
+  const extensions = extensionCounts(files.map((file) => file.path));
+
+  const choice = (label: string, checked: boolean, toggle: () => void, count?: number): HTMLLIElement => {
+    const item = el("li", { role: "menuitemcheckbox", "aria-checked": String(checked), tabindex: "-1" });
+    item.append(icon("check", "tick"), el("span", { class: "label" }, label));
+    if (count !== undefined) item.append(el("span", { class: "count" }, String(count)));
+    item.addEventListener("click", () => {
+      toggle();
+      item.setAttribute("aria-checked", String(item.getAttribute("aria-checked") !== "true"));
+      changed();
+    });
+    return item;
+  };
+  const fill = () => {
+    const items: HTMLElement[] = [el("li", { class: "heading", role: "presentation" }, "File extensions")];
+    for (const { extension, count } of extensions) {
+      items.push(
+        choice(extension, !filter.hiddenExtensions.has(extension), () => {
+          const hidden = new Set(filter.hiddenExtensions);
+          if (!hidden.delete(extension)) hidden.add(extension);
+          filter.hiddenExtensions = hidden;
+        }, count),
+      );
+    }
+    if (canHideViewed()) {
+      items.push(
+        el("li", { class: "divider", role: "separator" }),
+        choice("Viewed files", !filter.hideViewed, () => {
+          filter.hideViewed = !filter.hideViewed;
+        }),
+      );
+    }
+    list.replaceChildren(...items);
+  };
+  const options = () => [...list.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')];
+  /** Stops the listeners that close the open menu. */
+  let opened: AbortController | null = null;
+  const close = (refocus: boolean) => {
+    if (list.hidden === true) return;
+    opened?.abort();
+    list.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+    if (refocus) button.focus();
+  };
+  const open = () => {
+    fill();
+    // Fixed, like the version pickers' lists, so the tree's scrolling and its narrow width never cut it off.
+    const { left, bottom } = button.getBoundingClientRect();
+    list.style.left = `${Math.max(8, left)}px`;
+    list.style.top = `${bottom + 4}px`;
+    list.hidden = false;
+    button.setAttribute("aria-expanded", "true");
+    opened = new AbortController();
+    const listening = { signal: AbortSignal.any([signal, opened.signal]) };
+    // A click anywhere else in the view, or the tree scrolling the button away, closes the menu.
+    button.getRootNode().addEventListener(
+      "pointerdown",
+      (event) => {
+        const path = event.composedPath();
+        if (!path.includes(list) && !path.includes(button)) close(false);
+      },
+      listening,
+    );
+    button.closest("nav")?.addEventListener("scroll", () => close(false), { ...listening, passive: true });
+    options()[0]?.focus();
+  };
+  button.addEventListener("click", () => {
+    if (list.hidden === true) open();
+    else close(false);
+  });
+  list.addEventListener("keydown", (event) => {
+    const items = options();
+    const at = items.indexOf(event.target as HTMLElement);
+    if (event.key === "Escape" || event.key === "Tab") {
+      if (event.key === "Escape") event.preventDefault();
+      close(event.key === "Escape");
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      items[(at + step + items.length) % items.length]?.focus();
+    } else if ((event.key === "Enter" || event.key === " ") && at !== -1) {
+      event.preventDefault();
+      items[at]?.click();
+    }
+  });
+  // Only a choice the menu shows marks its button: one carried over from other versions may name nothing here.
+  const mark = () => {
+    const applies = {
+      ...filter,
+      hiddenExtensions: new Set(extensions.map(({ extension }) => extension).filter((extension) => filter.hiddenExtensions.has(extension))),
+      hideViewed: filter.hideViewed && canHideViewed(),
+    };
+    if (narrowsMenu(applies)) button.dataset.narrowed = "";
+    else delete button.dataset.narrowed;
+  };
+  return { button, list, mark };
 }
 
 function fileRow(file: FileInterdiff, name: string, depth: number): HTMLButtonElement {

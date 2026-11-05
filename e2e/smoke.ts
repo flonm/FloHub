@@ -994,11 +994,30 @@ check(
   `interdiff lists files whose change differs, ignoring moved hunks, folders first: ${JSON.stringify(fileRows)}`,
 );
 const treeRows = await versions
-  .locator("nav.files button:not(.viewed-box)")
+  .locator("nav.files button:not(.viewed-box, .filter-button)")
   .evaluateAll((buttons) => buttons.map((row) => [...row.querySelectorAll(":scope > .name, :scope > .counts > span")].map((part) => part.textContent).join(" ")));
 check(
   JSON.stringify(treeRows) === JSON.stringify(["cmd", "adopt_test.go +3", "legacy.go +1 −1", "rebase.go +2 −1", "README.md +1 −1"]),
   `the file tree lists the compared files by folder with their version-diff totals: ${JSON.stringify(treeRows)}`,
+);
+const treeSearch = versions.locator("nav.files input[type=search]");
+const submittedBefore = fixture.submissions.length;
+// Typed key by key, FloHub's own one-key shortcuts (V closes the view, D D drafts, P P pokes) must leave it alone.
+await treeSearch.click();
+await page.keyboard.type("vddpp");
+await treeSearch.fill("");
+await page.keyboard.type("legacy");
+const filteredTo = {
+  rows: await versions.locator("nav.files li:not([hidden]) > button.file .name").allTextContents(),
+  files: await versions.locator("main details.file:not([hidden]) .path").allTextContents(),
+};
+await treeSearch.press("Escape");
+check(
+  JSON.stringify(filteredTo) === JSON.stringify({ rows: ["legacy.go"], files: ["cmd/legacy.go"] }) &&
+    (await treeSearch.inputValue()) === "" &&
+    (await versions.locator("main details.file:not([hidden])").count()) === 4 &&
+    fixture.submissions.length === submittedBefore,
+  `the tree's filter narrows the tree and the diff to the matching paths, ignores FloHub's shortcut keys, and Escape clears it without closing the view: ${JSON.stringify(filteredTo)}`,
 );
 const treeWidthNow = async () => versions.locator("nav.files").evaluate((nav) => Math.round(nav.getBoundingClientRect().width));
 const treeEdge = versions.locator(".resizer");
