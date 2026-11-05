@@ -14,7 +14,7 @@ export const THREAD_STYLES = `
   position: sticky;
   left: 0;
   width: min(760px, calc(100cqw - 32px));
-  padding: 8px 12px 8px 116px;
+  padding: 8px 12px 8px var(--vd-gutter, 116px);
   font: 14px/1.5 var(--fontStack-sansSerif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif);
   white-space: normal;
 }
@@ -109,16 +109,16 @@ export const THREAD_STYLES = `
 .problem { margin: 0; color: var(--vd-danger, #d1242f); font-size: 12px; }
 .problem:empty { display: none; }
 .btn {
-  min-height: 28px;
+  min-height: 32px;
   padding: 0 12px;
-  border: 1px solid var(--vd-border);
+  border: 1px solid var(--button-default-borderColor-rest, var(--vd-border));
   border-radius: 6px;
-  background: var(--vd-bg-muted);
+  background: var(--button-default-bgColor-rest, var(--vd-bg-muted));
   color: var(--vd-fg);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 500;
-  line-height: 26px;
+  line-height: 30px;
   cursor: pointer;
 }
 .btn.primary { border-color: transparent; background: var(--button-primary-bgColor-rest, #1f883d); color: var(--button-primary-fgColor-rest, #ffffff); }
