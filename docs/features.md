@@ -45,6 +45,7 @@ Graphite's shortcuts, on every pull request tab. They never fire while you type 
 | <kbd>R</kbd> then <kbd>Y</kbd> | Approve right away, without a comment |
 | <kbd>R</kbd> then <kbd>A</kbd> | Open the approve dialog to add a comment |
 | <kbd>R</kbd> then <kbd>N</kbd> | Open the request-changes dialog; the comment is optional |
+| <kbd>R</kbd> then <kbd>C</kbd> | Send your draft comments as a comment review, on your own pull request too; without drafts, open the comment dialog |
 | <kbd>C</kbd> then <kbd>C</kbd> | Copy `gh pr checkout <number>` |
 | <kbd>C</kbd> then <kbd>G</kbd> | Copy the pull request's link |
 | <kbd>C</kbd> then <kbd>B</kbd> | Copy the pull request's branch |
@@ -61,7 +62,7 @@ Graphite's shortcuts, on every pull request tab. They never fire while you type 
 | <kbd>?</kbd> | Show the list of shortcuts; <kbd>?</kbd> or <kbd>Esc</kbd> puts it away |
 | <kbd>Esc</kbd> | Close a menu, a dialog or the versions view |
 
-If you have a pending review with draft comments, every review shortcut submits it, so the drafts go out with your verdict, as with GitHub's "Submit review". In the dialog, <kbd>⌘</kbd><kbd>↵</kbd> submits and <kbd>Esc</kbd> cancels. GitHub refuses a change request without a comment, so an empty one is sent with an invisible zero-width space as its comment, which shows as an empty review.
+If you have a pending review with draft comments, every review shortcut submits it, so the drafts go out with your verdict, as with GitHub's "Submit review". In the dialog, <kbd>⌘</kbd><kbd>↵</kbd> submits and <kbd>Esc</kbd> cancels. GitHub refuses a change request without a comment, so an empty one is sent with an invisible zero-width space as its comment, which shows as an empty review. GitHub doesn't let you approve or request changes on your own pull request, but <kbd>R</kbd> then <kbd>C</kbd> works there, so a self-review's notes go out in one go. With no draft comments, GitHub needs a comment, so the dialog waits for one.
 
 Closing, reopening and the draft toggle act at once, without asking, and the message that confirms each one names the key that undoes it. A shortcut that has nothing to do, such as closing a closed pull request, says so instead. Windows keeps <kbd>Ctrl</kbd><kbd>Esc</kbd> and <kbd>Ctrl</kbd><kbd>⇧</kbd><kbd>Esc</kbd> for itself, so outside macOS closing and reopening go through the state button in the toolbar. GitHub binds no <kbd>D</kbd>, so both of the chord's keys are kept from the page.
 

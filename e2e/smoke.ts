@@ -856,7 +856,7 @@ await inlineBar(page).getByRole("button", { name: "Keyboard shortcuts" }).click(
 const shortcutRows = await inlineBar(page).getByRole("dialog", { name: "Keyboard shortcuts" }).locator("dd").count();
 await page.keyboard.press("Escape");
 check(
-  shortcutRows === (MAC ? 19 : 17) && (await inlineBar(page).getByRole("dialog", { name: "Keyboard shortcuts" }).count()) === 0,
+  shortcutRows === (MAC ? 20 : 18) && (await inlineBar(page).getByRole("dialog", { name: "Keyboard shortcuts" }).count()) === 0,
   `the toolbar's keyboard button lists every shortcut, and Escape closes the list: ${shortcutRows} rows`,
 );
 const favicons = async () =>
@@ -2425,6 +2425,29 @@ check(
   "R→N with draft comments submits the pending review, comment optional",
 );
 
+await keyPage.keyboard.press("r");
+await keyPage.keyboard.press("c");
+await toast.getByText(`Sent your 2 draft comments on #${CURRENT}.`).waitFor();
+check(
+  JSON.stringify(keyFixture.submissions[4]) === JSON.stringify({ path: "/reviews/9/events", body: { event: "COMMENT" } }),
+  `R→C sends the pending review's draft comments as a comment review, without a dialog: ${JSON.stringify(keyFixture.submissions[4])}`,
+);
+
+keyFixture.reviewState.pendingComments = null;
+await keyPage.keyboard.press("r");
+await keyPage.keyboard.press("c");
+await keyPage.getByRole("dialog", { name: `Comment on #${CURRENT}` }).waitFor();
+await reviewDialog.getByText("No pending review comments.").waitFor();
+const commentDisabled = await reviewDialog.getByRole("button", { name: "Comment" }).isDisabled();
+await keyPage.keyboard.type("Self-review done");
+await keyPage.keyboard.press("Meta+Enter");
+await toast.getByText(`Commented on #${CURRENT}.`).waitFor();
+check(
+  commentDisabled &&
+    JSON.stringify(keyFixture.submissions[5]) === JSON.stringify({ path: "/reviews", body: { event: "COMMENT", body: "Self-review done" } }),
+  `R→C without drafts opens the comment dialog, which waits for a comment and posts it as a comment review: ${JSON.stringify(keyFixture.submissions[5])}`,
+);
+
 // A chord's first key alone shows, after a pause, what may follow, and waits past the chord's timeout for it.
 const chordHint = keyPage.locator("flohub-chord-hint");
 await keyPage.keyboard.press("c");
@@ -2455,7 +2478,7 @@ const listedRows = await chordHint.locator("dt").count();
 await keyPage.keyboard.press("Shift+Slash");
 await keyPage.waitForTimeout(100);
 check(
-  listedRows === (MAC ? 19 : 17) && (await chordHint.count()) === 0,
+  listedRows === (MAC ? 20 : 18) && (await chordHint.count()) === 0,
   `? lists every shortcut and ? again puts the list away: ${listedRows} rows`,
 );
 
@@ -2544,7 +2567,7 @@ await filter.click();
 await keyPage.keyboard.type("ry");
 await keyPage.keyboard.press("Escape");
 await filter.blur();
-check(keyFixture.submissions.length === 4, "keys typed into GitHub's own text fields are ignored");
+check(keyFixture.submissions.length === 6, "keys typed into GitHub's own text fields are ignored");
 
 const pullState = inlineBar(keyPage).locator(".pull-state > summary");
 await keyPage.keyboard.press("d");

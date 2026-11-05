@@ -580,7 +580,7 @@ const EMPTY_CHANGE_REQUEST = "\u{200B}";
  * the way GitHub's own "Submit review" does; otherwise a new review is created. A change request
  * may be empty, see {@link EMPTY_CHANGE_REQUEST}.
  * @param ref The pull request.
- * @param event Approve or request changes.
+ * @param event Approve, request changes, or comment.
  * @param body The review comment; may be empty.
  */
 export async function submitReview(ref: PullRef, event: ReviewEvent, body: string): Promise<void> {
