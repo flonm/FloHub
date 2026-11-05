@@ -767,8 +767,8 @@ export class VersionsView {
   /** Stops the Viewed marks' calls for the pull request shown before. */
   private unwatch: (() => void) | undefined;
   private readonly tooltip = new Tooltip();
-  /** The file tree's filter, kept while the viewer compares other versions. */
-  private readonly fileFilter = emptyFilter();
+  /** The file tree's filter, kept while the viewer compares other versions of the pull request. */
+  private fileFilter = emptyFilter();
 
   constructor() {
     this.host = document.createElement("flohub-versions");
@@ -895,6 +895,8 @@ export class VersionsView {
     }
     this.shown = null;
     this.steps = null;
+    // Another pull request's files: what narrowed the last one's tree would only hide them.
+    this.fileFilter = emptyFilter();
     const run = ++this.generation;
     const live = () => run === this.generation;
 
@@ -1785,10 +1787,10 @@ function renderResult(
   }
   main.replaceChildren(...content);
   const isViewed = (path: string) => viewed?.states()?.get(path) === "VIEWED";
-  const { rows: treeRows, refilter } =
+  const { rows: treeRows, refilter, clear: clearFilter } =
     sections.size > 0
       ? renderFileTree(nav, tree, sections, main, { filter, isViewed, canHideViewed: () => Boolean(viewed?.states()), signal })
-      : { rows: new Map<HTMLDetailsElement, HTMLButtonElement>(), refilter: () => undefined };
+      : { rows: new Map<HTMLDetailsElement, HTMLButtonElement>(), refilter: () => undefined, clear: () => undefined };
 
   const byPath = new Map([...sections].map(([file, section]) => [file.path, section]));
   /** Each file's Viewed boxes, in its header and in the file tree, with what each one's label names. */
@@ -2057,6 +2059,8 @@ function renderResult(
     const file = [...sections.keys()].find((each) => named(each));
     const section = file && sections.get(file);
     if (!file || !section) return "missing";
+    // Taken to a file the filter hides, the viewer sees every file again rather than nothing.
+    if (section.hidden === true) clearFilter();
     section.open = true;
     revealed.add(section);
     // A comment names its lines as the version it was written on numbers them, which the lines keep as their origin.
@@ -2118,7 +2122,7 @@ function renderFileTree(
   sections: Map<FileInterdiff, HTMLDetailsElement>,
   main: HTMLElement,
   { filter, isViewed, canHideViewed, signal }: TreeFilter,
-): { rows: Map<HTMLDetailsElement, HTMLButtonElement>; refilter: () => void } {
+): { rows: Map<HTMLDetailsElement, HTMLButtonElement>; refilter: () => void; clear: () => void } {
   const rows = new Map<HTMLDetailsElement, HTMLButtonElement>();
   let current: HTMLButtonElement | null = null;
   let picked: HTMLDetailsElement | null = null;
@@ -2255,7 +2259,14 @@ function renderFileTree(
   );
   signal.addEventListener("abort", () => cancelAnimationFrame(frame));
   follow();
-  return { rows, refilter };
+  const clear = () => {
+    filter.query = "";
+    filter.hiddenExtensions = new Set();
+    filter.hideViewed = false;
+    search.value = "";
+    refilter();
+  };
+  return { rows, refilter, clear };
 }
 
 /** What the file tree's filter needs from the result it narrows. */
@@ -2380,8 +2391,14 @@ function filterMenu(
       items[at]?.click();
     }
   });
+  // Only a choice the menu shows marks its button: one carried over from other versions may name nothing here.
   const mark = () => {
-    if (narrowsMenu(filter)) button.dataset.narrowed = "";
+    const applies = {
+      ...filter,
+      hiddenExtensions: new Set(extensions.map(({ extension }) => extension).filter((extension) => filter.hiddenExtensions.has(extension))),
+      hideViewed: filter.hideViewed && canHideViewed(),
+    };
+    if (narrowsMenu(applies)) button.dataset.narrowed = "";
     else delete button.dataset.narrowed;
   };
   return { button, list, mark };
