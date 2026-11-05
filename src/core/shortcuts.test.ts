@@ -29,6 +29,10 @@ describe("createShortcutMatcher", () => {
     expect(run([press("r", 0), press(second, 300)])).toEqual([null, action]);
   });
 
+  test("R then C sends the draft comments as a comment, and the C starts no copy chord", () => {
+    expect(run([press("r", 0), press("c", 300), press("c", 400)])).toEqual([null, { type: "comment" }, null]);
+  });
+
   test("accepts a capital R from caps lock", () => {
     expect(run([press("R", 0), press("Y", 100)])[1]).toMatchObject({ event: "APPROVE" });
   });
@@ -107,7 +111,6 @@ describe("createShortcutMatcher", () => {
     expect(run([press("c", 0), press("c", CHORD_TIMEOUT_MS + 1)])).toEqual([null, null]);
     expect(run([press("c", 0), press("y", 10)])).toEqual([null, null]);
     expect(run([press("c", 0), press("g", 10)])).toEqual([null, { type: "copy", what: "link" }]);
-    expect(run([press("r", 0), press("c", 10), press("c", 20)])[2]).toEqual({ type: "copy", what: "checkout" });
   });
 
   test("C then B copies the branch, and P then P pokes the waiting reviewers, claiming both keys", () => {
@@ -197,7 +200,7 @@ describe("chordHints", () => {
       { key: "G", action: "Copy the pull request's link" },
       { key: "B", action: "Copy the pull request's branch" },
     ]);
-    expect(chordHints("r", true).map((hint) => hint.key)).toEqual(["Y", "A", "N", "R"]);
+    expect(chordHints("r", true).map((hint) => hint.key)).toEqual(["Y", "A", "N", "C", "R"]);
     expect(chordHints("v", true)).toEqual([]);
   });
 

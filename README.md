@@ -93,6 +93,7 @@ On every pull request tab, never while you type. The keyboard button at the end 
 | <kbd>R</kbd> <kbd>Y</kbd> | Approve |
 | <kbd>R</kbd> <kbd>A</kbd> | Approve with a comment |
 | <kbd>R</kbd> <kbd>N</kbd> | Request changes |
+| <kbd>R</kbd> <kbd>C</kbd> | Send your draft comments as a comment, on your own pull request too |
 | <kbd>C</kbd> <kbd>C</kbd> | Copy `gh pr checkout <number>` |
 | <kbd>C</kbd> <kbd>G</kbd> | Copy the pull request's link |
 | <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> | Pick a choice in a comment's menu |

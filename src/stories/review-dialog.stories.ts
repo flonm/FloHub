@@ -58,7 +58,7 @@ const meta = {
     docs: {
       description: {
         component:
-          "Approving or requesting changes from the bar, dismissing someone's review with the reason GitHub requires, or asking a reviewer to look again at what changed since their verdict. An empty change request is sent with a zero-width space, since GitHub refuses a bodyless one; a pending review with draft comments is submitted along with it.",
+          "Approving, requesting changes or commenting from the bar, dismissing someone's review with the reason GitHub requires, or asking a reviewer to look again at what changed since their verdict. An empty change request is sent with a zero-width space, since GitHub refuses a bodyless one; a pending review with draft comments is submitted along with it.",
       },
     },
   },
@@ -72,6 +72,9 @@ export const Approve: Story = { render: () => dialog("APPROVE") };
 
 /** Requesting changes: the comment is still optional. */
 export const RequestChanges: Story = { render: () => dialog("REQUEST_CHANGES") };
+
+/** Commenting, which R then C opens when there are no draft comments to send: GitHub needs a comment then, so Comment waits for one. */
+export const Comment: Story = { render: () => dialog("COMMENT") };
 
 /** A pending review is about to be submitted with its draft comments. */
 export const PendingReview: Story = { render: () => dialog("APPROVE", { pending: Promise.resolve(2) }) };

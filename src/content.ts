@@ -738,6 +738,10 @@ function onKeydown(event: KeyboardEvent): void {
       else void approveNow();
       break;
     }
+    case "comment": {
+      void commentNow();
+      break;
+    }
     case "thread": {
       void stepThread(action.direction);
       break;
@@ -893,16 +897,47 @@ async function approveNow(): Promise<void> {
   toast.show(failure ?? `Approved #${ref.number}.`, failure ? "danger" : "success");
 }
 
+/**
+ * R then C submits the pending review as a plain comment, with its draft comments, on the viewer's own pull request
+ * too, since GitHub only keeps its author from approving or requesting changes. Without drafts, GitHub would refuse an
+ * empty comment review, so it opens the dialog for a comment instead.
+ */
+async function commentNow(): Promise<void> {
+  const ref = current;
+  if (!ref || dialog.isOpen) return;
+  let drafts: number | null;
+  try {
+    drafts = await pendingComments(ref);
+  } catch (error) {
+    toast.show(`Could not check for draft comments: ${error instanceof Error ? error.message : String(error)}`, "danger");
+    return;
+  }
+  if (drafts === null || drafts === 0) {
+    openReview("COMMENT");
+    return;
+  }
+  const comments = `${drafts} draft ${drafts === 1 ? "comment" : "comments"}`;
+  toast.show(`Sending your ${comments} on #${ref.number}…`, "info");
+  const failure = await submitReview(ref, "COMMENT", "");
+  toast.show(failure ?? `Sent your ${comments} on #${ref.number}.`, failure ? "danger" : "success");
+}
+
+const REVIEWED: Record<ReviewEvent, string> = {
+  APPROVE: "Approved",
+  REQUEST_CHANGES: "Requested changes on",
+  COMMENT: "Commented on",
+};
+
 function openReview(event: ReviewEvent): void {
   const ref = current;
-  if (!ref || isOwnPull()) return;
+  if (!ref || (event !== "COMMENT" && isOwnPull())) return;
   dialog.open({
     event,
     number: ref.number,
     pendingComments: pendingComments(ref),
     submit: async (body) => {
       const failure = await submitReview(ref, event, body);
-      if (!failure) toast.show(event === "APPROVE" ? `Approved #${ref.number}.` : `Requested changes on #${ref.number}.`, "success");
+      if (!failure) toast.show(`${REVIEWED[event]} #${ref.number}.`, "success");
       return failure;
     },
   });

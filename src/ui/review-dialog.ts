@@ -48,6 +48,7 @@ const COPY: Record<DialogEvent, { title: string; action: string; busy: string }>
   REQUEST_CHANGES: { title: "Request changes on", action: "Request changes", busy: "Requesting changes…" },
   DISMISS: { title: "Dismiss", action: "Dismiss review", busy: "Dismissing…" },
   NUDGE: { title: "Ask", action: "Post and ask", busy: "Posting…" },
+  COMMENT: { title: "Comment on", action: "Comment", busy: "Commenting…" },
 };
 
 const GLYPH: Record<DialogEvent, "check" | "changes" | "slash" | "comment"> = {
@@ -55,6 +56,7 @@ const GLYPH: Record<DialogEvent, "check" | "changes" | "slash" | "comment"> = {
   REQUEST_CHANGES: "changes",
   DISMISS: "slash",
   NUDGE: "comment",
+  COMMENT: "comment",
 };
 
 const DISMISSED_NAME: Record<DismissedVerdict, string> = { approved: "approval", changes_requested: "change request" };
@@ -98,7 +100,7 @@ h2 { margin: 0; font-size: 16px; }
 .glyph svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 .glyph[data-event="APPROVE"] { background: var(--bgColor-success-muted, #dafbe1); color: var(--fgColor-success, #1a7f37); }
 .glyph[data-event="REQUEST_CHANGES"] { background: var(--bgColor-attention-muted, #fff8c5); color: var(--fgColor-attention, #9a6700); }
-.glyph[data-event="NUDGE"] { background: var(--bgColor-accent-muted, #ddf4ff); color: var(--fgColor-accent, #0969da); }
+.glyph:is([data-event="NUDGE"], [data-event="COMMENT"]) { background: var(--bgColor-accent-muted, #ddf4ff); color: var(--fgColor-accent, #0969da); }
 .glyph[data-event="DISMISS"] { background: var(--bgColor-neutral-muted, #818b981f); color: var(--rd-muted); }
 kbd { padding: 0 5px; border: 1px solid var(--rd-border); border-bottom-width: 2px; border-radius: 4px; font: 11px/16px var(--fontStack-monospace, ui-monospace, monospace); }
 label { font-weight: 600; }
@@ -131,7 +133,7 @@ button {
   cursor: pointer;
 }
 button.submit[data-event="APPROVE"] { border-color: transparent; background: var(--rd-approve-bg); color: var(--rd-approve-fg); }
-button.submit[data-event="NUDGE"] { border-color: transparent; background: var(--rd-nudge-bg); color: var(--rd-nudge-fg); }
+button.submit:is([data-event="NUDGE"], [data-event="COMMENT"]) { border-color: transparent; background: var(--rd-nudge-bg); color: var(--rd-nudge-fg); }
 button.submit:is([data-event="REQUEST_CHANGES"], [data-event="DISMISS"]) { border-color: transparent; background: var(--rd-changes-bg); color: var(--rd-changes-fg); }
 button:disabled { cursor: not-allowed; opacity: 0.6; }
 :focus-visible { outline: 2px solid var(--rd-focus); outline-offset: 2px; }
@@ -151,7 +153,8 @@ function titleFor(request: ReviewDialogRequest): string {
       return `Ask ${request.reviewer} to look again`;
     }
     case "APPROVE":
-    case "REQUEST_CHANGES": {
+    case "REQUEST_CHANGES":
+    case "COMMENT": {
       return `${COPY[request.event].title} #${request.number}`;
     }
   }
@@ -170,14 +173,15 @@ function hintFor(request: ReviewDialogRequest): string {
       return `Posts this comment on the pull request, which notifies ${request.reviewer}${request.rerequest ? ", and asks them to review again" : ""}.`;
     }
     case "APPROVE":
-    case "REQUEST_CHANGES": {
+    case "REQUEST_CHANGES":
+    case "COMMENT": {
       return "Checking for pending comments…";
     }
   }
 }
 
 /**
- * A modal for approving or requesting changes with a comment, submitting any pending review, or for dismissing
+ * A modal for approving, requesting changes or commenting, submitting any pending review, or for dismissing
  * someone's review with the reason GitHub requires.
  */
 export class ReviewDialog {
@@ -211,8 +215,9 @@ export class ReviewDialog {
     const form = el("form", { method: "dialog" });
     const dismissing = request.event === "DISMISS";
     const nudging = request.event === "NUDGE";
-    // A dismissal needs its reason and a nudge its comment; a review's comment is optional.
-    const required = dismissing || nudging;
+    // A dismissal needs its reason and a nudge its comment. GitHub refuses a comment review with neither text nor
+    // draft comments, and R then C opens the dialog only when there are no drafts, so its comment is required too.
+    const required = dismissing || nudging || request.event === "COMMENT";
     const label = el("label", { for: "review-body" }, dismissing ? "Reason" : "Comment ");
     if (!required) label.append(el("span", { class: "optional" }, "(optional)"));
     const body = el("textarea", {

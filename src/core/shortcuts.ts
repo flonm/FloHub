@@ -1,10 +1,11 @@
 import type { StateIntent } from "./pull-state";
 
-export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES";
+export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
 
 type ShortcutAction =
   | { type: "navigate"; direction: 1 | -1 }
-  | { type: "review"; event: ReviewEvent; withComment: boolean }
+  | { type: "review"; event: Exclude<ReviewEvent, "COMMENT">; withComment: boolean }
+  | { type: "comment" }
   | { type: "copy"; what: CopyTarget }
   | { type: "state"; intent: StateIntent }
   | { type: "thread"; direction: 1 | -1 }
@@ -46,6 +47,7 @@ const REVIEW_CHORDS: Record<string, ShortcutAction> = {
   y: { type: "review", event: "APPROVE", withComment: false },
   a: { type: "review", event: "APPROVE", withComment: true },
   n: { type: "review", event: "REQUEST_CHANGES", withComment: true },
+  c: { type: "comment" },
 };
 
 const NAVIGATION: Record<string, ShortcutAction> = {
@@ -87,7 +89,8 @@ const NO_MATCH: ShortcutMatch = { action: null, claim: false };
 
 /**
  * Creates a matcher for Graphite's shortcuts: ⌘⇧↑/↓ (Ctrl⇧↑/↓ elsewhere) move through the stack,
- * R followed within {@link CHORD_TIMEOUT_MS} by Y, A or N reviews the pull request, C then C
+ * R followed within {@link CHORD_TIMEOUT_MS} by Y, A or N reviews the pull request, R then C sends the draft comments
+ * as a comment review, C then C
  * copies the checkout command and C then G the pull request's link. GitHub binds a plain C itself, so the C that starts a chord is claimed;
  * the R is not, so quote-reply on selected text keeps working. On macOS, ⌘Esc closes the pull request, as on Graphite,
  * and ⌘⇧Esc reopens it; Windows keeps Ctrl+Esc and Ctrl+⇧Esc for itself, so elsewhere they have no key. D then D
@@ -199,6 +202,7 @@ export function shortcutHelp(mac: boolean): ShortcutHelp[] {
     { keys: ["R", "Y"], join: "then", action: "Approve right away, without a comment" },
     { keys: ["R", "A"], join: "then", action: "Approve with a comment" },
     { keys: ["R", "N"], join: "then", action: "Request changes, with or without a comment" },
+    { keys: ["R", "C"], join: "then", action: "Send your draft comments as a comment, on your own pull request too" },
     { keys: ["C", "C"], join: "then", action: "Copy gh pr checkout <number>" },
     { keys: ["C", "G"], join: "then", action: "Copy the pull request's link" },
     { keys: ["C", "B"], join: "then", action: "Copy the pull request's branch" },
