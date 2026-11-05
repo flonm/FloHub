@@ -40,6 +40,7 @@ import { type JumpTarget, threadElsewhere } from "../core/comment-jump";
 import { type SplitSide, splitRows } from "../core/split";
 import { READING_LINE, type Stop } from "../core/steps";
 import { notViewed, viewedBeforeUnchanged, type ViewedState } from "../core/viewed";
+import { emptyFilter, extensionCounts, type FileFilter, narrowsMenu, showsFile } from "../core/file-filter";
 import { clampTreeWidth, MIN_TREE_WIDTH, TREE_WIDTH, treeWidthForKey } from "../core/tree-width";
 import { highlightLines, languageFor, overlay, type Token } from "../core/syntax";
 import {
@@ -422,6 +423,68 @@ nav.files { position: relative; flex: none; width: var(--tree-width, ${TREE_WIDT
 nav.files:empty { display: none; }
 .files-head { display: flex; align-items: center; gap: 8px; padding: 4px 8px 8px; color: var(--vd-muted); font-size: 12px; font-weight: 600; }
 .files-head .counts { margin-left: auto; }
+/* The filter above the tree, sized like GitHub's own: a 32px field and its menu's button beside it. */
+.files-filter { display: flex; gap: 8px; margin-bottom: 8px; }
+.files-filter .search {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--control-borderColor-rest, var(--vd-border));
+  border-radius: 6px;
+  background: var(--vd-bg);
+  color: var(--vd-muted);
+  cursor: text;
+}
+.files-filter .search:focus-within { outline: 2px solid var(--vd-focus); outline-offset: -1px; border-color: transparent; }
+.files-filter input { flex: 1; min-width: 0; padding: 0; border: 0; outline: none; background: none; color: var(--vd-fg); font: inherit; }
+.files-filter input::placeholder { color: var(--fgColor-placeholder, var(--vd-muted)); }
+.files .filter-button {
+  position: relative;
+  flex: none;
+  justify-content: center;
+  width: 32px;
+  padding: 0;
+  border: 1px solid var(--button-default-borderColor-rest, var(--vd-border));
+  background: var(--button-default-bgColor-rest, var(--vd-bg-muted));
+  color: var(--vd-muted);
+}
+.files .filter-button:hover { background: var(--button-default-bgColor-hover, var(--vd-bg-muted)); }
+.files .filter-button svg { width: 16px; height: 16px; }
+/* While the menu hides files, a dot on its button says so. */
+.files .filter-button[data-narrowed]::after { content: ""; position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--vd-accent); }
+.filter-menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 192px;
+  max-height: 60vh;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--vd-border);
+  border-radius: 12px;
+  background: var(--overlay-bgColor, var(--vd-bg));
+  box-shadow: var(--shadow-floating-large, 0 8px 24px rgba(140, 149, 159, 0.2));
+  list-style: none;
+  font-size: 14px;
+}
+.filter-menu[hidden] { display: none; }
+.filter-menu .heading { padding: 6px 8px; color: var(--vd-muted); font-size: 12px; font-weight: 600; }
+.filter-menu .divider { height: 1px; margin: 8px -8px; background: var(--vd-border); }
+.filter-menu [role="menuitemcheckbox"] { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 8px; border-radius: 6px; cursor: pointer; }
+.filter-menu [role="menuitemcheckbox"]:hover, .filter-menu [role="menuitemcheckbox"]:focus { background: var(--control-transparent-bgColor-hover, var(--vd-bg-muted)); outline: none; }
+.filter-menu [role="menuitemcheckbox"]:focus-visible { box-shadow: inset 0 0 0 2px var(--vd-focus); }
+.filter-menu .tick { width: 16px; height: 16px; }
+.filter-menu [aria-checked="false"] .tick { visibility: hidden; }
+.filter-menu .label { flex: 1; }
+.filter-menu .count { padding: 0 6px; border-radius: 999px; background: var(--bgColor-neutral-muted, rgba(175, 184, 193, 0.2)); color: var(--vd-fg); font-size: 12px; font-weight: 500; line-height: 18px; }
+.files li[hidden] { display: none; }
+.no-match { margin: 8px; color: var(--vd-muted); font-size: 12px; }
+.no-match[hidden] { display: none; }
+details.file[hidden] { display: none; }
 .files ul { margin: 0; padding: 0; list-style: none; }
 .files ul[hidden] { display: none; }
 .files button {
@@ -704,6 +767,8 @@ export class VersionsView {
   /** Stops the Viewed marks' calls for the pull request shown before. */
   private unwatch: (() => void) | undefined;
   private readonly tooltip = new Tooltip();
+  /** The file tree's filter, kept while the viewer compares other versions. */
+  private readonly fileFilter = emptyFilter();
 
   constructor() {
     this.host = document.createElement("flohub-versions");
@@ -1088,7 +1153,7 @@ export class VersionsView {
           };
           // GitHub keeps one Viewed mark per file, for the current version only.
           const viewed = newer.current ? (request.viewed ?? null) : null;
-          const show = renderResult({ main, review, summary, legend, files, viewed, signal: tracking.signal }, diff, {
+          const show = renderResult({ main, review, summary, legend, files, viewed, filter: this.fileFilter, signal: tracking.signal }, diff, {
             split,
             older,
             newer,
@@ -1608,6 +1673,8 @@ interface Slots {
   files: HTMLElement;
   /** The viewer's Viewed marks, or null when the diff doesn't end at the current version. */
   viewed: ViewedMarks | null;
+  /** The file tree's filter, which the tree changes as the viewer narrows it. */
+  filter: FileFilter;
   /** Aborts when another range replaces this result. */
   signal: AbortSignal;
 }
@@ -1620,7 +1687,7 @@ interface Slots {
  *   show the Viewed marks as they are now, and that give F and ⇧F their files.
  */
 function renderResult(
-  { main, review, summary, legend, files: nav, viewed, signal }: Slots,
+  { main, review, summary, legend, files: nav, viewed, filter, signal }: Slots,
   files: FileInterdiff[],
   context: Context,
 ): { reveal: Reveal; place: PlaceThreads; marks: () => void; steps: () => FileSteps | NoFileSteps } {
@@ -1717,7 +1784,11 @@ function renderResult(
     content.push(details);
   }
   main.replaceChildren(...content);
-  const treeRows = sections.size > 0 ? renderFileTree(nav, tree, sections, main, signal) : new Map<HTMLDetailsElement, HTMLButtonElement>();
+  const isViewed = (path: string) => viewed?.states()?.get(path) === "VIEWED";
+  const { rows: treeRows, refilter } =
+    sections.size > 0
+      ? renderFileTree(nav, tree, sections, main, { filter, isViewed, canHideViewed: () => Boolean(viewed?.states()), signal })
+      : { rows: new Map<HTMLDetailsElement, HTMLButtonElement>(), refilter: () => undefined };
 
   const byPath = new Map([...sections].map(([file, section]) => [file.path, section]));
   /** Each file's Viewed boxes, in its header and in the file tree, with what each one's label names. */
@@ -1754,6 +1825,8 @@ function renderResult(
         box.dataset.tip = VIEWED_TIP[state];
       }
     }
+    // Hiding viewed files hides a file the moment it's marked, as GitHub's filter does.
+    refilter();
     // Like GitHub's diff, the view opens with the viewed files folded.
     if (states && !folded) {
       folded = true;
@@ -1822,7 +1895,9 @@ function renderResult(
     const box = main.getBoundingClientRect();
     const line = box.top + FILE_LINE_PX;
     const topOf = (path: string) => byPath.get(path)?.getBoundingClientRect().top ?? 0;
-    const markable = [...byPath.keys()].filter((path) => states.has(path));
+    // The filter's hidden files are out of the way, as they are on GitHub's page.
+    const listed = [...byPath].filter(([, section]) => section.hidden !== true).map(([path]) => path);
+    const markable = listed.filter((path) => states.has(path));
     const reading = markable.findLast((path) => topOf(path) <= line) ?? markable.find((path) => topOf(path) < box.bottom) ?? null;
     const go = (path: string): number => {
       const section = byPath.get(path);
@@ -1832,7 +1907,7 @@ function renderResult(
       section.querySelector("summary")?.focus({ preventScroll: true });
       return section.getBoundingClientRect().top;
     };
-    return { stops: notViewed([...byPath.keys()], states).map((path) => ({ id: path, top: topOf(path) })), line, reading, go, markViewed: markRead };
+    return { stops: notViewed(listed, states).map((path) => ({ id: path, top: topOf(path) })), line, reading, go, markViewed: markRead };
   };
 
   /** Each thread's block, kept across placements so an open box or a thread the viewer opened stays as it is. */
@@ -2042,8 +2117,8 @@ function renderFileTree(
   tree: PathNode<FileInterdiff>[],
   sections: Map<FileInterdiff, HTMLDetailsElement>,
   main: HTMLElement,
-  signal: AbortSignal,
-): Map<HTMLDetailsElement, HTMLButtonElement> {
+  { filter, isViewed, canHideViewed, signal }: TreeFilter,
+): { rows: Map<HTMLDetailsElement, HTMLButtonElement>; refilter: () => void } {
   const rows = new Map<HTMLDetailsElement, HTMLButtonElement>();
   let current: HTMLButtonElement | null = null;
   let picked: HTMLDetailsElement | null = null;
@@ -2076,6 +2151,7 @@ function renderFileTree(
     for (const node of nodes) {
       const item = el("li");
       if (node.kind === "folder") {
+        item.className = "folder-item";
         const toggle = el("button", { type: "button", class: "folder", "aria-expanded": "true", title: node.path });
         toggle.style.setProperty("--depth", String(depth));
         toggle.append(icon("chevron"), el("span", { class: "name" }, node.name));
@@ -2101,9 +2177,55 @@ function renderFileTree(
   };
 
   const all = [...sections.keys()];
-  const head = el("div", { class: "files-head" }, `${all.length} ${all.length === 1 ? "file" : "files"}`);
-  head.append(counts(all.reduce((sum, file) => sum + file.added, 0), all.reduce((sum, file) => sum + file.removed, 0)));
-  nav.replaceChildren(head, list(tree, 0));
+  const total = el("span", { "aria-live": "polite" });
+  const head = el("div", { class: "files-head" });
+  head.append(total, counts(all.reduce((sum, file) => sum + file.added, 0), all.reduce((sum, file) => sum + file.removed, 0)));
+  const root = list(tree, 0);
+  const none = el("p", { class: "no-match", hidden: "" }, "No files match the filter.");
+  const refilter = () => {
+    let shown = 0;
+    for (const [file, section] of sections) {
+      const show = showsFile(file.path, filter, isViewed(file.path));
+      section.hidden = !show;
+      const item = rows.get(section)?.parentElement;
+      if (item) item.hidden = !show;
+      if (show) shown += 1;
+    }
+    // Deepest first, so a folder sees whether its subfolders kept any file.
+    for (const folder of [...root.querySelectorAll<HTMLLIElement>("li.folder-item")].toReversed()) {
+      folder.hidden = !folder.querySelector(":scope > ul > li:not([hidden])");
+    }
+    total.textContent = shown === all.length ? `${all.length} ${all.length === 1 ? "file" : "files"}` : `${shown} of ${all.length} files`;
+    none.hidden = shown > 0;
+    menu.mark();
+  };
+  const menu = filterMenu(all, filter, canHideViewed, refilter, signal);
+  const search = el("input", {
+    type: "search",
+    placeholder: "Filter files…",
+    "aria-label": "Filter files",
+    autocomplete: "off",
+    spellcheck: "false",
+  });
+  search.value = filter.query;
+  search.addEventListener("input", () => {
+    filter.query = search.value;
+    refilter();
+  });
+  search.addEventListener("keydown", (event) => {
+    // Escape clears the text before it closes the view.
+    if (event.key !== "Escape" || search.value === "") return;
+    event.preventDefault();
+    search.value = "";
+    filter.query = "";
+    refilter();
+  });
+  const field = el("label", { class: "search" });
+  field.append(icon("search"), search);
+  const tools = el("div", { class: "files-filter" });
+  tools.append(field, menu.button);
+  nav.replaceChildren(tools, head, root, none, menu.list);
+  refilter();
 
   let frame = 0;
   const follow = () => {
@@ -2117,6 +2239,7 @@ function renderFileTree(
     }
     let inView: HTMLDetailsElement | undefined;
     for (const section of rows.keys()) {
+      if (section.hidden === true) continue;
       inView ??= section;
       if (section.getBoundingClientRect().top > top + 24) break;
       inView = section;
@@ -2132,7 +2255,136 @@ function renderFileTree(
   );
   signal.addEventListener("abort", () => cancelAnimationFrame(frame));
   follow();
-  return rows;
+  return { rows, refilter };
+}
+
+/** What the file tree's filter needs from the result it narrows. */
+interface TreeFilter {
+  filter: FileFilter;
+  /** Whether the viewer marked a file as viewed. */
+  isViewed: (path: string) => boolean;
+  /** Whether the Viewed marks are known, without which the menu can't hide the viewed files. */
+  canHideViewed: () => boolean;
+  signal: AbortSignal;
+}
+
+/**
+ * The menu beside the file tree's filter, as GitHub's has it: a checkbox for each extension the files have, with how
+ * many have it, and one that shows or hides the files marked as viewed. Its choices apply at once and leave it open.
+ * @param files The files in the tree.
+ * @param filter The filter, which the menu changes.
+ * @param canHideViewed Whether the Viewed marks are known.
+ * @param changed Applies the filter after a change.
+ * @param signal Aborts when another result replaces the tree.
+ * @returns The menu's button, its list, and a function that marks the button while the menu hides any file.
+ */
+function filterMenu(
+  files: FileInterdiff[],
+  filter: FileFilter,
+  canHideViewed: () => boolean,
+  changed: () => void,
+  signal: AbortSignal,
+): { button: HTMLButtonElement; list: HTMLUListElement; mark: () => void } {
+  const button = el("button", {
+    type: "button",
+    class: "filter-button",
+    "aria-label": "Filter options",
+    "aria-haspopup": "menu",
+    "aria-expanded": "false",
+    "data-tip": "Filter options",
+  });
+  button.append(icon("filter"));
+  const list = el("ul", { class: "filter-menu", role: "menu", "aria-label": "Filter options", hidden: "" });
+  const extensions = extensionCounts(files.map((file) => file.path));
+
+  const choice = (label: string, checked: boolean, toggle: () => void, count?: number): HTMLLIElement => {
+    const item = el("li", { role: "menuitemcheckbox", "aria-checked": String(checked), tabindex: "-1" });
+    item.append(icon("check", "tick"), el("span", { class: "label" }, label));
+    if (count !== undefined) item.append(el("span", { class: "count" }, String(count)));
+    item.addEventListener("click", () => {
+      toggle();
+      item.setAttribute("aria-checked", String(item.getAttribute("aria-checked") !== "true"));
+      changed();
+    });
+    return item;
+  };
+  const fill = () => {
+    const items: HTMLElement[] = [el("li", { class: "heading", role: "presentation" }, "File extensions")];
+    for (const { extension, count } of extensions) {
+      items.push(
+        choice(extension, !filter.hiddenExtensions.has(extension), () => {
+          const hidden = new Set(filter.hiddenExtensions);
+          if (!hidden.delete(extension)) hidden.add(extension);
+          filter.hiddenExtensions = hidden;
+        }, count),
+      );
+    }
+    if (canHideViewed()) {
+      items.push(
+        el("li", { class: "divider", role: "separator" }),
+        choice("Viewed files", !filter.hideViewed, () => {
+          filter.hideViewed = !filter.hideViewed;
+        }),
+      );
+    }
+    list.replaceChildren(...items);
+  };
+  const options = () => [...list.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')];
+  /** Stops the listeners that close the open menu. */
+  let opened: AbortController | null = null;
+  const close = (refocus: boolean) => {
+    if (list.hidden === true) return;
+    opened?.abort();
+    list.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+    if (refocus) button.focus();
+  };
+  const open = () => {
+    fill();
+    // Fixed, like the version pickers' lists, so the tree's scrolling and its narrow width never cut it off.
+    const { left, bottom } = button.getBoundingClientRect();
+    list.style.left = `${Math.max(8, left)}px`;
+    list.style.top = `${bottom + 4}px`;
+    list.hidden = false;
+    button.setAttribute("aria-expanded", "true");
+    opened = new AbortController();
+    const listening = { signal: AbortSignal.any([signal, opened.signal]) };
+    // A click anywhere else in the view, or the tree scrolling the button away, closes the menu.
+    button.getRootNode().addEventListener(
+      "pointerdown",
+      (event) => {
+        const path = event.composedPath();
+        if (!path.includes(list) && !path.includes(button)) close(false);
+      },
+      listening,
+    );
+    button.closest("nav")?.addEventListener("scroll", () => close(false), { ...listening, passive: true });
+    options()[0]?.focus();
+  };
+  button.addEventListener("click", () => {
+    if (list.hidden === true) open();
+    else close(false);
+  });
+  list.addEventListener("keydown", (event) => {
+    const items = options();
+    const at = items.indexOf(event.target as HTMLElement);
+    if (event.key === "Escape" || event.key === "Tab") {
+      if (event.key === "Escape") event.preventDefault();
+      close(event.key === "Escape");
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      items[(at + step + items.length) % items.length]?.focus();
+    } else if ((event.key === "Enter" || event.key === " ") && at !== -1) {
+      event.preventDefault();
+      items[at]?.click();
+    }
+  });
+  const mark = () => {
+    if (narrowsMenu(filter)) button.dataset.narrowed = "";
+    else delete button.dataset.narrowed;
+  };
+  return { button, list, mark };
 }
 
 function fileRow(file: FileInterdiff, name: string, depth: number): HTMLButtonElement {
