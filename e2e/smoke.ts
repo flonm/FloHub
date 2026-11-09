@@ -713,6 +713,8 @@ async function launch(colorScheme: "light" | "dark", api?: (route: Route) => Pro
   if (api) await context.route("https://api.github.com/**", api);
   const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
   await worker.evaluate(async () => chrome.storage.local.set({ token: "test-token" }));
+  // The steps check FloHub's plain words, and the README's screenshots show them; fun mode is on for everyone else.
+  await worker.evaluate(async () => chrome.storage.sync.set({ funMode: false }));
   return context;
 }
 

@@ -17,7 +17,7 @@ import {
 import { formatDiffStat } from "../core/viewed";
 import { el, icon } from "./dom";
 import { VERDICT_LOOK, verdictFace } from "./verdict-face";
-import { reasonWords, type ReasonTone } from "./turn-words";
+import { reasonWords, type ReasonTone, turnOwner } from "./turn-words";
 import { applyMarks, type InboxMarks, isPinned, isSnoozed, NO_MARKS, type SnoozePreset } from "../core/inbox-marks";
 
 /** The sections the popup draws: whose move each pull request waits for, then the ones that wait for nobody in particular. */
@@ -33,6 +33,15 @@ const SECTION_TITLES: Record<SectionKind, string> = {
   none: "Drafts",
   other: "Everything else",
 };
+
+/**
+ * @param kind The section.
+ * @param fun Whether fun mode is on.
+ * @returns Its heading.
+ */
+function sectionTitle(kind: SectionKind, fun: boolean): string {
+  return fun && (kind === "you" || kind === "them") ? turnOwner(kind, true) : SECTION_TITLES[kind];
+}
 
 const CATEGORY_TITLES: Record<InboxCategory, string> = {
   rerequested: "Re-requested",
@@ -88,6 +97,8 @@ export interface InboxViewState {
   /** The active profile's name, when the inbox shows only its repositories. */
   scope?: string;
   everything?: EverythingState;
+  /** Whether fun mode is on, which words the chips, the sections and an empty inbox for laughs. */
+  fun?: boolean;
   /**
    * One view to draw on its own, without the sections around it, as the pull request list's sidebar opens it: the
    * section whose snoozed pull requests it shows, and its categories.
@@ -209,7 +220,7 @@ export function renderInbox(state: InboxViewState, actions: InboxViewActions): H
     return [
       blank(
         "check",
-        "Nothing to review",
+        state.fun ? "Inbox zero. The merge cow is proud of you." : "Nothing to review",
         `No review requests and no open pull requests${state.scope ? ` in ${state.scope}` : ""}. FloHub checks again every ${INBOX_PERIOD_MINUTES} minutes.`,
       ),
     ];
@@ -296,7 +307,7 @@ function renderSection(
     "aria-controls": bodyId,
     "data-focus-key": `section:${kind}`,
   });
-  toggle.append(icon("chevron"), el("span", { class: "section-title" }, SECTION_TITLES[kind]), el("span", { class: "count" }, String(parts.total)));
+  toggle.append(icon("chevron"), el("span", { class: "section-title" }, sectionTitle(kind, state.fun ?? false)), el("span", { class: "count" }, String(parts.total)));
   toggle.addEventListener("click", () => actions.toggleSection(kind));
   const heading = el("h2");
   heading.append(toggle);
@@ -355,7 +366,7 @@ function markParts(
 function renderParts(kind: SectionKind, marked: MarkedParts, inInbox: ReadonlySet<string>, state: InboxViewState, actions: InboxViewActions): HTMLElement[] {
   const { parts, total, snoozed, showing, marks, now } = marked;
   const nodes: HTMLElement[] = [];
-  const marking = { marks, now, inInbox };
+  const marking = { marks, now, inInbox, fun: state.fun ?? false };
   for (const part of parts) {
     // A section of one category needs no heading of its own; the others name every category, empty ones too.
     if (parts.length > 1) {
@@ -419,6 +430,7 @@ interface Marking {
   now: number;
   /** The pull requests in the stored inbox, whose marks last; the others were loaded for "Everything else". */
   inInbox: ReadonlySet<string>;
+  fun: boolean;
 }
 
 function renderGroup(entry: TurnGroup, kind: InboxCategory, actions: InboxViewActions, marking: Marking): HTMLElement {
@@ -471,7 +483,7 @@ function renderPull(pull: InboxPull, entry: TurnGroup, kind: InboxCategory, acti
 
   const meta = el("span", { class: "meta", id: ids.meta });
   if (snoozed) meta.append(flag("Snoozed", "neutral"));
-  meta.append(...renderReasons(pull, role, kind));
+  meta.append(...renderReasons(pull, role, kind, marking.fun));
   if (role !== "mine" && pull.author) meta.append(el("span", { class: "item author" }, pull.author));
   meta.append(el("span", { class: "item repo" }, entry.repo));
   if (entry.stackNumber !== null && pull.position !== null) {
@@ -582,12 +594,12 @@ function rowButton(label: string, name: "pin" | "clock", focusKey: string): HTML
  * @param role The search that found it.
  * @returns The chips that say why it waits for whom, with its status when no chip says it already.
  */
-function renderReasons(pull: InboxPull, role: InboxRole, kind: InboxCategory): HTMLElement[] {
+function renderReasons(pull: InboxPull, role: InboxRole, kind: InboxCategory, fun: boolean): HTMLElement[] {
   // The category's heading says the review request already, and the viewer's verdict says more than "waiting for author".
   const said = new Set(["requested", "waiting-on-author", ...(kind === "rerequested" ? ["rerequested"] : [])]);
   const reasons = (pull.turn?.reasons ?? []).filter((reason) => !said.has(reason.code));
   const chips = reasons.map((reason) => {
-    const words = reasonWords(reason);
+    const words = reasonWords(reason, fun);
     return flag(words.text, words.tone, words.detail);
   });
   if (role === "waiting") {

@@ -1,3 +1,4 @@
+import { withCheer } from "../core/fun";
 import { el, icon, type IconName } from "./dom";
 
 export type ToastTone = "info" | "success" | "danger";
@@ -59,6 +60,8 @@ export class Toast {
   private readonly assertive: HTMLElement;
   private active: HTMLElement | null = null;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  /** Whether fun mode is on, which cheers every success. */
+  fun = false;
 
   constructor() {
     this.host = document.createElement("flohub-toast");
@@ -91,7 +94,7 @@ export class Toast {
    * @param tone Info and success are announced politely, danger interrupts.
    */
   show(text: string, tone: ToastTone): void {
-    this.render(text, tone);
+    this.render(this.fun && tone === "success" ? withCheer(text, Math.random()) : text, tone);
     clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.active?.replaceChildren();

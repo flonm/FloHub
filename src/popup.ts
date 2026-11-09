@@ -30,6 +30,7 @@ import {
 } from "./core/profiles";
 import { EVERYTHING_KEY, type Everything } from "./api/inbox-sync";
 import { renderProfileSwitch } from "./ui/profile-view";
+import { FUN_KEY, funFrom, readFun } from "./core/fun";
 
 const TICK_MS = 15_000;
 /** How old the stored inbox may be for opening the popup to skip asking GitHub; the alarm refreshes it every few minutes. */
@@ -58,6 +59,8 @@ let everythingError: string | undefined;
 let marks: InboxMarks = NO_MARKS;
 /** Which repositories the inbox shows, kept in sync storage. */
 let profiles: Profiles = DEFAULT_PROFILES;
+/** Whether fun mode is on, kept in sync storage. */
+let fun = true;
 /** The sections whose snoozed pull requests are shown, for this popup only. */
 const showSnoozed = new Set<SectionKind>();
 
@@ -104,6 +107,10 @@ if (app) {
       profiles = readProfiles(changes[PROFILES_KEY]?.newValue);
       render();
     }
+    if (area === "sync" && Object.hasOwn(changes, FUN_KEY)) {
+      fun = funFrom(changes[FUN_KEY]?.newValue);
+      render();
+    }
     if (area !== "local") return;
     if (Object.hasOwn(changes, MARKS_KEY)) {
       marks = readMarks(changes[MARKS_KEY]?.newValue);
@@ -132,11 +139,13 @@ if (app) {
 
 /** Shows the inbox the service worker stored last, until the refresh answers. */
 async function showStored(): Promise<void> {
-  const [stored, saved] = await Promise.all([
+  const [stored, saved, funny] = await Promise.all([
     chrome.storage.local.get(["inbox", "inboxCollapsed", "inboxOpened", EVERYTHING_KEY, MARKS_KEY]),
     loadProfiles(),
+    readFun(),
   ]);
   profiles = saved;
+  fun = funny;
   everything = stored[EVERYTHING_KEY] as Everything | undefined;
   opened = new Set(stored.inboxOpened as SectionKind[] | undefined);
   inbox ??= (stored.inbox as Inbox | undefined) ?? null;
@@ -202,7 +211,7 @@ function render(): void {
     ...(fetched && { loaded: fetched }),
   };
   main.replaceChildren(
-    ...renderInbox({ inbox: shown, problem, collapsed: folded, marks, showSnoozed, now: Date.now(), scope, everything: more }, actions),
+    ...renderInbox({ inbox: shown, problem, collapsed: folded, marks, showSnoozed, now: Date.now(), scope, everything: more, fun }, actions),
   );
   main.setAttribute("aria-busy", String(refreshing && !inbox));
   updateTabStop();

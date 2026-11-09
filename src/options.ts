@@ -6,6 +6,7 @@ import { isMac, shortcutHelp } from "./core/shortcuts";
 import { renderShortcutList } from "./ui/shortcut-list";
 import { assignEntry, knownEntries, loadProfiles, PROFILES_KEY, type Profiles, saveProfiles } from "./core/profiles";
 import { type ProfileActions, renderProfileEditor } from "./ui/profile-view";
+import { FUN_KEY, funFrom, readFun, writeFun } from "./core/fun";
 
 const form = document.querySelector<HTMLFormElement>("#token-form");
 const input = document.querySelector<HTMLInputElement>("#token");
@@ -21,6 +22,7 @@ const profileBox = document.querySelector<HTMLDivElement>("#profiles");
 const entryForm = document.querySelector<HTMLFormElement>("#add-entry");
 const entryInput = document.querySelector<HTMLInputElement>("#entry");
 const entryStatus = document.querySelector<HTMLParagraphElement>("#entry-status");
+const funBox = document.querySelector<HTMLInputElement>("#fun");
 const origins = requiredOrigins();
 
 const shortcuts = shortcutHelp(isMac(navigator.platform));
@@ -62,6 +64,14 @@ if (profileBox && entryForm && entryInput && entryStatus) {
   entryForm.addEventListener("submit", (event) => {
     event.preventDefault();
     void addEntry(entryInput, entryStatus);
+  });
+}
+
+if (funBox) {
+  void readFun().then((on) => (funBox.checked = on));
+  funBox.addEventListener("change", () => void writeFun(funBox.checked));
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "sync" && Object.hasOwn(changes, FUN_KEY)) funBox.checked = funFrom(changes[FUN_KEY]?.newValue);
   });
 }
 

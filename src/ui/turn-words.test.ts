@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { TurnCode } from "../core/turn";
-import { listNames, reasonWords, turnSummary } from "./turn-words";
+import { listNames, reasonWords, turnOwner, turnSummary } from "./turn-words";
 
 describe("listNames", () => {
   test.each<[string[], string]>([
@@ -35,6 +35,40 @@ describe("reasonWords", () => {
     for (const code of codes) expect(reasonWords({ code, count: 2, who: ["alice"] }).text).not.toBe("");
   });
 
+  test.each<TurnCode>([
+    "requested",
+    "rerequested",
+    "replies",
+    "pushed-since-review",
+    "changes-requested",
+    "ask-again",
+    "checks-failed",
+    "conflict",
+    "ready-to-merge",
+    "ask-for-review",
+    "waiting-on-reviewers",
+    "waiting-on-author",
+    "changes-by-other",
+    "approved-by-other",
+    "draft",
+  ])("in fun mode, a %p chip jokes while its tone and tooltip stay as they are", (code) => {
+    const reason = { code, count: 2, who: ["alice"] };
+    const plain = reasonWords(reason);
+    const fun = reasonWords(reason, true);
+    expect(fun.text).not.toBe(plain.text);
+    expect(fun.text).not.toBe("");
+    expect(fun).toMatchObject({ tone: plain.tone, detail: plain.detail });
+  });
+
+  test("a fun chip still counts and names", () => {
+    expect(reasonWords({ code: "replies", count: 1 }, true).text).toBe("1 cliffhanger");
+    expect(reasonWords({ code: "replies", count: 4 }, true).text).toBe("4 cliffhangers");
+    expect(reasonWords({ code: "changes-requested", who: ["bob"] }, true).text).toBe("bob has notes 📝");
+    expect(reasonWords({ code: "waiting-on-reviewers", who: ["alice"] }, true).text).toBe("alice is thinking very hard");
+    expect(reasonWords({ code: "waiting-on-reviewers", who: ["alice", "bob"] }, true).text).toBe("2 reviewers, zero urgency");
+    expect(reasonWords({ code: "ready-to-merge" }, true).text).toBe("🐄 Ready to moo-rge");
+  });
+
   test("counts replies and names who to wait for", () => {
     expect(reasonWords({ code: "replies", count: 1 }).text).toBe("1 reply");
     expect(reasonWords({ code: "replies", count: 3 })).toMatchObject({ text: "3 replies", tone: "attention" });
@@ -46,6 +80,17 @@ describe("reasonWords", () => {
     expect(reasonWords({ code: "ask-again", who: ["bob"] }).text).toBe("Ask bob again");
     expect(reasonWords({ code: "changes-by-other", who: ["bob"] }).text).toBe("bob requested changes");
     expect(reasonWords({ code: "approved-by-other", who: ["alice", "bob"] }).text).toBe("alice and bob approved");
+  });
+});
+
+describe("turnOwner", () => {
+  test.each<["you" | "them", boolean, string]>([
+    ["you", false, "Your turn"],
+    ["them", false, "Their turn"],
+    ["you", true, "Your move, champ"],
+    ["them", true, "Not your problem"],
+  ])("%p with fun mode %p reads %p", (whose, fun, words) => {
+    expect(turnOwner(whose, fun)).toBe(words);
   });
 });
 

@@ -75,6 +75,16 @@ label {
   margin: 0 0 6px;
   font-weight: 600;
 }
+label.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+label.check input {
+  width: auto;
+  height: auto;
+  margin: 0;
+}
 input {
   width: 100%;
   min-width: 0;

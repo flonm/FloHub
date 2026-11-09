@@ -14,7 +14,7 @@ import { renderShortcutList } from "./shortcut-list";
 import type { Turn } from "../core/turn";
 import type { ProgressCounts } from "../core/addressed";
 import { type StandingVerdict, staleLabel } from "../core/since-review";
-import { reasonWords } from "./turn-words";
+import { reasonWords, turnOwner } from "./turn-words";
 import { MOVE_WORDS, moveKeys, type PullMove, type PullState, type PullStatus, pullMoves, STATE_WORDS } from "../core/pull-state";
 
 /** The busy key of a change to the pull request's state. */
@@ -67,6 +67,8 @@ export type BarState =
       standings?: ReadonlyMap<string, StandingVerdict>;
       /** The pull request's state and who may change it; null while only a cached stack from another layer is shown. */
       pull?: PullStatus | null;
+      /** Whether fun mode is on, which words the turn's chips for laughs. */
+      fun?: boolean;
     };
 
 /** What Files changed shows: GitHub's diff, the same with what changed since the viewer's review highlighted, or the versions view. */
@@ -237,7 +239,7 @@ export class ReviewBar {
         }
       : null;
     const toolbar = el("div", { class: "toolbar area-tools", role: "toolbar", "aria-label": "Pull request" });
-    const turn = state.turn ? renderTurn(state.turn) : null;
+    const turn = state.turn ? renderTurn(state.turn, state.fun ?? false) : null;
     if (turn) toolbar.append(turn);
     const progress = state.progress ? renderProgress(state.progress) : null;
     if (progress) toolbar.append(progress);
@@ -629,14 +631,15 @@ export class ReviewBar {
 
 /**
  * @param turn Whose move the pull request waits for.
+ * @param fun Whether fun mode is on: the chips joke, the tooltip keeps the facts.
  * @returns The toolbar's first item: "Your turn" or "Their turn" and why, each reason explained in its tooltip;
  *   nothing for a draft or for someone else's turn without a reason.
  */
-function renderTurn(turn: Turn): HTMLElement | null {
+function renderTurn(turn: Turn, fun: boolean): HTMLElement | null {
   // Someone else's turn with nothing to say, like after the viewer approved, isn't worth the room.
   if (turn.whose === "none" || (turn.whose === "them" && turn.reasons.length === 0)) return null;
-  const words = turn.reasons.map((reason) => reasonWords(reason));
-  const owner = turn.whose === "you" ? "Your turn" : "Their turn";
+  const words = turn.reasons.map((reason) => reasonWords(reason, fun));
+  const owner = turnOwner(turn.whose, fun);
   const detail = words.length > 0 ? words.map((word) => word.detail).join(" ") : "Nothing waits for you.";
   const box = el("span", { class: "turn", "data-whose": turn.whose, "data-tip": `${owner}. ${detail}`.trim(), tabindex: "0" });
   box.append(el("strong", {}, owner));

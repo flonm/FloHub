@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
 import { el } from "../ui/dom";
+import { CHEERS, withCheer } from "../core/fun";
 import { Toast, type ToastTone } from "../ui/toast";
 
 /**
@@ -33,6 +34,9 @@ export const Info: Story = { render: () => toast("Copied gh pr checkout 344", "i
 
 /** A confirmation, like a re-requested review. */
 export const Success: Story = { render: () => toast("Copied https://github.com/octo-org/api/pull/121", "success") };
+
+/** A confirmation in fun mode, with a cheer after it; `show` picks the cheer at random. */
+export const SuccessFun: Story = { render: () => toast(withCheer("Approved #121.", 1 / CHEERS.length), "success") };
 
 /** An error, announced immediately and kept on screen longer. */
 export const Danger: Story = { render: () => toast("Could not mark src/ui/bar.ts as viewed: Resource not accessible", "danger") };
