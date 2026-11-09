@@ -150,6 +150,7 @@ function ready(overrides: Partial<Extract<BarState, { kind: "ready" }>> = {}): E
     pokedAt: new Map(),
     notice: null,
     forcePushes: { count: 0, lastAt: null },
+    reviewedOlder: false,
     highlight: null,
     discussion: null,
     discussionSeenAt: null,
@@ -420,6 +421,9 @@ export const InlineVersions: Story = {
       }),
     ),
 };
+
+/** Never force-pushed, but someone reviewed an earlier commit: the switch offers Versions, without a force push count. */
+export const InlineVersionsWithoutForcePush: Story = { render: () => interactive(ready({ reviewedOlder: true })) };
 
 /** The same, with files the pull request no longer changes and GitHub's file-list cut-off. */
 export const InlineVersionsWithDroppedFiles: Story = {

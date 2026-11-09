@@ -19,6 +19,7 @@ import {
   rangeToSave,
   type RawVersionPull,
   restoreRange,
+  reviewedOlderCommit,
   reviewPath,
   reviewsShown,
   type SavedRange,
@@ -527,5 +528,20 @@ describe("forcePushSummary", () => {
 
   test.each([null, undefined])("an overview without force pushes (%p) has none", (forcePushes) => {
     expect(forcePushSummary(forcePushes)).toEqual({ count: 0, lastAt: null });
+  });
+});
+
+describe("reviewedOlderCommit", () => {
+  test("a review on an earlier commit makes an older version, without any force push", () => {
+    expect(reviewedOlderCommit([{ state: "COMMENTED", commit: { oid: "a" } }], "b")).toBe(true);
+  });
+
+  test.each([
+    ["every review is on the head", [{ state: "APPROVED", commit: { oid: "b" } }]],
+    ["only the viewer's unsubmitted review is on an earlier commit", [{ state: "PENDING", commit: { oid: "a" } }]],
+    ["the review's commit is gone", [{ state: "APPROVED", commit: null }]],
+    ["there is no review", []],
+  ])("none when %s", (_, reviews) => {
+    expect(reviewedOlderCommit(reviews, "b")).toBe(false);
   });
 });

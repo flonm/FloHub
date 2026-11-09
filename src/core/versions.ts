@@ -493,3 +493,14 @@ export function forcePushSummary(forcePushes: RawForcePushes): { count: number; 
   const pushes = (forcePushes?.nodes ?? []).filter((node) => node !== null);
   return { count: pushes.length, lastAt: pushes.at(-1)?.createdAt ?? null };
 }
+
+/**
+ * Whether someone reviewed a commit that is no longer the head. Each reviewed commit is a version, so the pull request
+ * then has an older version to compare with even when its branch was never force-pushed, only pushed to.
+ * @param reviews The pull request's reviews, with the commit each was given on.
+ * @param head The head commit.
+ * @returns Whether a submitted review is on another commit than the head.
+ */
+export function reviewedOlderCommit(reviews: { state: string; commit?: { oid: string } | null }[], head: string): boolean {
+  return reviews.some((review) => review.state !== "PENDING" && review.commit !== null && review.commit !== undefined && review.commit.oid !== head);
+}

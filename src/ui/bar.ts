@@ -42,6 +42,8 @@ export type BarState =
       notice: string | null;
       /** How often the head branch was force-pushed, and when last. */
       forcePushes: { count: number; lastAt: string | null };
+      /** Whether someone reviewed a commit that is no longer the head, which makes an older version without a force push. */
+      reviewedOlder: boolean;
       /** What the Files changed diff highlights, or null when the viewer has not reviewed an older version. */
       highlight: HighlightStatus | null;
       /** Review texts and general comments, newest first; null while only a cached stack from another layer is shown. */
@@ -239,7 +241,7 @@ export class ReviewBar {
     if (turn) toolbar.append(turn);
     const progress = state.progress ? renderProgress(state.progress) : null;
     if (progress) toolbar.append(progress);
-    if (state.forcePushes.count > 0 || state.highlight) toolbar.append(...this.renderDiff(state));
+    if (state.forcePushes.count > 0 || state.reviewedOlder || state.highlight) toolbar.append(...this.renderDiff(state));
     const talk = discussion ? renderDiscussionControls(discussion) : [];
     const group = el("div", { class: "tool-group end" });
     const pull = state.pull ? this.renderPullState(state.pull, state.busy.has(PULL_STATE_BUSY)) : null;
