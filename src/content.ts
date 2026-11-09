@@ -1,5 +1,5 @@
 import { type BarState, type DiffMode, PULL_STATE_BUSY, ReviewBar } from "./ui/bar";
-import { moveDone, moveFor, MOVE_WORDS, noMoveReason, type PullMove, pullStateOf, type StateIntent, stateAfter } from "./core/pull-state";
+import { moveDone, moveFor, MOVE_WORDS, noMoveReason, type PullMove, type PullState, pullStateOf, type StateIntent, stateAfter } from "./core/pull-state";
 import { findInlineAnchor, inlineBox } from "./ui/anchor";
 import { POKE_COOLDOWN_MS } from "./ui/reviewer-look";
 import { DiffHighlights, type HighlightStatus } from "./ui/diff-highlights";
@@ -25,6 +25,8 @@ import { nameList, pokeMessage, rangeFileStats, type StandingVerdict, staleRevie
 import { interdiff } from "./core/interdiff";
 import { deriveStack } from "./core/stack";
 import { Toast } from "./ui/toast";
+import { cowDue, FUN_KEY, funFrom, readFun } from "./core/fun";
+import { MergeCow } from "./ui/merge-cow";
 import { ChordHint } from "./ui/chord-hint";
 import { type Landed, nextStop, READING_LINE, type Stop, stopToast } from "./core/steps";
 import type { ReviewThread } from "./core/threads";
@@ -107,6 +109,11 @@ const dialog = new ReviewDialog();
 const versionsView = new VersionsView();
 const jumpMenu = new JumpMenu();
 const toast = new Toast();
+const cow = new MergeCow();
+/** Whether fun mode is on, kept in sync storage. */
+let fun = true;
+/** The state of the pull request the bar last drew, for the merge cow's cue. */
+let lastPull: { key: string; state: PullState } | null = null;
 const favicon = new Favicon();
 const MAC = isMac(navigator.platform);
 const matchShortcut = createShortcutMatcher(MAC);
@@ -198,6 +205,7 @@ const repoActions: InboxViewActions = {
 const repoViews = new RepoPullsViews(repoActions);
 
 chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "sync" && Object.hasOwn(changes, FUN_KEY)) setFun(funFrom(changes[FUN_KEY]?.newValue));
   if (area !== "local" || !repoPulls) return;
   if (Object.hasOwn(changes, MARKS_KEY)) repoPulls.marks = readMarks(changes[MARKS_KEY]?.newValue);
   if (Object.hasOwn(changes, "inbox")) {
@@ -249,7 +257,8 @@ function schedule(): void {
 }
 
 async function restoreSettings(): Promise<void> {
-  const stored = await chrome.storage.local.get(["stackCollapsed", "floatingMinimized", "pokes"]);
+  const [stored, funny] = await Promise.all([chrome.storage.local.get(["stackCollapsed", "floatingMinimized", "pokes"]), readFun()]);
+  setFun(funny);
   stackCollapsed = stored.stackCollapsed === true;
   floatingMinimized = stored.floatingMinimized === true;
   floating.setMinimized(floatingMinimized);
@@ -372,12 +381,31 @@ function isInlineInView(): boolean {
   return rect.height > 0 && rect.bottom > STICKY_HEADER_HEIGHT && rect.top < innerHeight;
 }
 
+function setFun(on: boolean): void {
+  fun = on;
+  toast.fun = on;
+  render();
+}
+
 function render(): void {
-  const shown = state.kind === "ready" ? { ...state, versionsOpen: versionsView.isOpen } : state;
+  const shown = state.kind === "ready" ? { ...state, versionsOpen: versionsView.isOpen, fun } : state;
+  if (fun) moo();
   inline.render(shown);
   floating.render(shown);
   const tone = state.kind === "ready" ? (state.stack.entries.find((entry) => entry.current)?.tone ?? null) : null;
   favicon.set(faviconUrl(tone));
+}
+
+/** Sends the merge cow across the page when the pull request on screen was just merged while the viewer watched. */
+function moo(): void {
+  const pull = state.kind === "ready" ? state.pull : null;
+  if (!current || !pull) return;
+  const key = pullKey(current);
+  const previous = lastPull?.key === key ? lastPull.state : undefined;
+  lastPull = { key, state: pull.state };
+  if (!cowDue(previous, pull.state)) return;
+  cow.cross();
+  toast.show(`#${current.number} is merged.`, "success");
 }
 
 /** @param message A notice to show in the bar, kept until the bar has loaded. */

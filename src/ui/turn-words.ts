@@ -21,9 +21,15 @@ export function listNames(names: readonly string[]): string {
 
 /**
  * @param reason Why a pull request waits for someone.
+ * @param fun Whether fun mode is on: the chip jokes, its tooltip still says what is going on.
  * @returns How a chip says it.
  */
-export function reasonWords(reason: TurnReason): ReasonWords {
+export function reasonWords(reason: TurnReason, fun = false): ReasonWords {
+  const words = plainWords(reason);
+  return fun ? { ...words, text: funText(reason) } : words;
+}
+
+function plainWords(reason: TurnReason): ReasonWords {
   const who = listNames(reason.who ?? []);
   switch (reason.code) {
     case "requested": {
@@ -82,6 +88,70 @@ export function reasonWords(reason: TurnReason): ReasonWords {
       return { text: "Draft", tone: "neutral", detail: "A draft waits for nobody." };
     }
   }
+}
+
+/** @returns A chip's text in fun mode. Every joke still names the person it is about. */
+function funText(reason: TurnReason): string {
+  const who = listNames(reason.who ?? []);
+  switch (reason.code) {
+    case "requested": {
+      return "You have been summoned";
+    }
+    case "rerequested": {
+      return "Summoned again (they missed you)";
+    }
+    case "replies": {
+      const count = reason.count ?? 0;
+      return count === 1 ? "1 cliffhanger" : `${count} cliffhangers`;
+    }
+    case "pushed-since-review": {
+      return "Fresh commits, still warm";
+    }
+    case "changes-requested": {
+      return `${who} has notes 📝`;
+    }
+    case "ask-again": {
+      return `Grovel before ${who}`;
+    }
+    case "checks-failed": {
+      return "CI is on fire 🔥";
+    }
+    case "conflict": {
+      return "The branches are fighting";
+    }
+    case "ready-to-merge": {
+      return "🐄 Ready to moo-rge";
+    }
+    case "ask-for-review": {
+      return "Nobody loves it yet";
+    }
+    case "waiting-on-reviewers": {
+      const names = reason.who ?? [];
+      return names.length === 1 ? `${who} is thinking very hard` : `${names.length} reviewers, zero urgency`;
+    }
+    case "waiting-on-author": {
+      return "Ball's in their court 🎾";
+    }
+    case "changes-by-other": {
+      return `${who} already roasted it`;
+    }
+    case "approved-by-other": {
+      return `${who} already blessed it`;
+    }
+    case "draft": {
+      return "Still in the oven";
+    }
+  }
+}
+
+/**
+ * @param whose Whose move it is.
+ * @param fun Whether fun mode is on.
+ * @returns How the toolbar and the popup's sections name it.
+ */
+export function turnOwner(whose: "you" | "them", fun = false): string {
+  if (whose === "you") return fun ? "Your move, champ" : "Your turn";
+  return fun ? "Not your problem" : "Their turn";
 }
 
 /**

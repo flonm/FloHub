@@ -248,6 +248,18 @@ export const Inline: Story = {
     ),
 };
 
+/** Fun mode: the same toolbar, its chips joking, their tooltips still saying what is going on. */
+export const InlineFun: Story = {
+  render: () =>
+    interactive(
+      ready({
+        fun: true,
+        turn: { whose: "you", reasons: [{ code: "checks-failed" }, { code: "replies", count: 2 }, { code: "ask-again", who: ["ada"] }] },
+        repliesFor: new Map([["mona", 2]]),
+      }),
+    ),
+};
+
 /** The viewer's own pull request waits for them: the toolbar says why, and mona has an answer of theirs to read. */
 export const InlineYourTurn: Story = {
   render: () =>

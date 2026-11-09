@@ -124,6 +124,14 @@ export const EverythingFailed: Story = {
 /** The skeleton the popup shows until the stored inbox or the refresh arrives. */
 export const Loading: Story = { render: () => mount({ inbox: null, problem: null }) };
 
+/** Fun mode: the sections and the chips joke, the tooltips keep the facts. */
+export const EverySectionFun: Story = { render: () => mount({ inbox: ready(), problem: null, fun: true }, []) };
+
+/** Fun mode with nothing to do: the merge cow is proud. */
+export const EmptyFun: Story = {
+  render: () => mount({ inbox: ready({ review: [], waiting: [], mine: [], other: [] }), problem: null, fun: true }),
+};
+
 /** One combined empty state when nothing waits for the viewer. */
 export const Empty: Story = {
   render: () => mount({ inbox: ready({ review: [], waiting: [], mine: [], other: [] }), problem: null }),
