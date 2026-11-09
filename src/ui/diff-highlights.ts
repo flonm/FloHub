@@ -185,6 +185,8 @@ export class DiffHighlights {
     this.wanted = key;
     if (this.loaded?.key !== loaded?.key) this.clear();
     this.loaded = loaded;
+    // A page GitHub has finished drawing changes no more, so nothing would call sync() for the marks just loaded.
+    if (loaded && !this.hidden && isWholeFilesTab(location.pathname)) this.decorate(loaded);
     this.report();
   }
 

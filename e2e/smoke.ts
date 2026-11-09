@@ -578,7 +578,7 @@ function createFixture(
                   },
                   author: { login: "hubot" },
                   viewerCanUpdate: true,
-                  forcePushes: { totalCount: 2, nodes: [{ createdAt: ago(3) }] },
+                  forcePushes: { nodes: [{ createdAt: ago(5) }, { createdAt: ago(3) }] },
                   reviewRequests: { nodes: requested.map((requestedReviewer) => ({ requestedReviewer })) },
                   dismissals: { nodes: [{ previousReviewState: "APPROVED", review: { url: `${PULL_URL}#pullrequestreview-pjhyett` } }] },
                   reviews: {
@@ -811,6 +811,29 @@ const page = await light.newPage();
 
 await page.goto(`${PULL_URL}/files`);
 await inlineBar(page).locator(".reviewer").first().waitFor();
+
+// GitHub's Overview page caps its header's width and centres it, and the bar lines up with it rather than with the page.
+const edges = async () =>
+  page.evaluate(() => {
+    const bar = document.querySelector('flohub-bar[data-mode="inline"]')!.getBoundingClientRect();
+    const header = document.querySelector('flohub-bar[data-mode="inline"]')!.previousElementSibling!.getBoundingClientRect();
+    return [bar.left - header.left, bar.right - header.right].map((edge) => Math.round(edge));
+  });
+check(JSON.stringify(await edges()) === "[0,0]", `the bar spans the header it follows: ${JSON.stringify(await edges())}`);
+await page.evaluate(() => {
+  const header = document.querySelector('flohub-bar[data-mode="inline"]')!.previousElementSibling as HTMLElement;
+  Object.assign(header.style, { maxWidth: "600px", marginInline: "auto" });
+  document.body.append(document.createElement("div"));
+});
+await page.waitForFunction(() => document.querySelector<HTMLElement>('flohub-bar[data-mode="inline"]')!.style.maxWidth === "600px");
+check(JSON.stringify(await edges()) === "[0,0]", `beside a capped, centred header the bar lines up with it: ${JSON.stringify(await edges())}`);
+await page.evaluate(() => {
+  const header = document.querySelector('flohub-bar[data-mode="inline"]')!.previousElementSibling as HTMLElement;
+  Object.assign(header.style, { maxWidth: "", marginInline: "" });
+  document.body.append(document.createElement("div"));
+});
+await page.waitForFunction(() => document.querySelector<HTMLElement>('flohub-bar[data-mode="inline"]')!.style.maxWidth === "");
+
 const turnText = await inlineBar(page).locator(".turn").textContent();
 const defunktRow = inlineBar(page).locator(".reviewer", { hasText: "defunkt" });
 check(
@@ -2502,26 +2525,22 @@ check(
 );
 
 // ] in GitHub's own diff goes to the one unresolved thread with lines in it, below the fold, and counts the rest.
-// GitHub folds it on its line while the comments panel is open: only a "View comments" button, which GitHub adds to the
-// line's cell while the mouse is over it, unfolds it. The panel lists the thread as a card.
+// GitHub folds it under its line, as it does when the viewer collapsed it: a bar whose "Expand comment" button, named by
+// a label it points to, unfolds it. The comments panel lists the thread as a card.
 await keyPage.evaluate(() => {
   const table = document.createElement("table");
   table.setAttribute("aria-label", "Diff for: cmd/rebase.go");
   table.style.margin = "3000px 0";
-  table.innerHTML = '<tbody><tr class="diff-line-row"><td class="diff-text-cell" data-diff-side="right" data-line-number="44">log(branch)</td></tr></tbody>';
+  table.innerHTML =
+    '<tbody><tr class="diff-line-row"><td class="diff-text-cell" data-diff-side="right" data-line-number="44">log(branch)' +
+    '<span id="expand-label" hidden>Expand comment</span><button type="button" aria-hidden="true" tabindex="-1" aria-labelledby="expand-label"></button>' +
+    "</td></tr></tbody>";
   const cell = table.querySelector("td")!;
-  cell.addEventListener("mouseover", () => {
-    if (cell.querySelector("button")) return;
-    const button = Object.assign(document.createElement("button"), { type: "button", textContent: "2" });
-    button.setAttribute("aria-label", "View comments");
-    button.addEventListener("click", () => {
-      const drawn = document.getElementById("r1");
-      if (drawn) drawn.remove();
-      else cell.append(Object.assign(document.createElement("div"), { id: "r1", textContent: "Log at debug level?" }));
-    });
-    cell.append(button);
+  cell.querySelector("button")!.addEventListener("click", () => {
+    const drawn = document.getElementById("r1");
+    if (drawn) drawn.remove();
+    else cell.append(Object.assign(document.createElement("div"), { id: "r1", textContent: "Log at debug level?" }));
   });
-  cell.addEventListener("mouseout", () => cell.querySelector("button")?.remove());
   const panel = Object.assign(document.createElement("div"), { id: "docked-side-panel-content" });
   panel.innerHTML = '<div style="height: 200px; overflow: auto"><div style="height: 900px"></div><article><div id="paneldiscussion_r1">Log at debug level?</div></article><div style="height: 900px"></div></div>';
   document.body.append(table, panel);
@@ -2538,11 +2557,10 @@ const landedThread = await keyPage.evaluate(() => {
     off: Math.round(row.getBoundingClientRect().top - innerHeight * 0.3),
     marked: card.matches("[data-flohub-current-thread]"),
     cardTop: Math.round(card.getBoundingClientRect().top - list.getBoundingClientRect().top),
-    buttonLeft: document.querySelectorAll('button[aria-label="View comments"]').length,
   };
 });
 check(
-  Math.abs(landedThread.off) <= 2 && landedThread.marked && landedThread.cardTop === 12 && landedThread.buttonLeft === 0,
+  Math.abs(landedThread.off) <= 2 && landedThread.marked && landedThread.cardTop === 12,
   `] scrolls GitHub's diff to the thread's line, unfolds it, and scrolls the comments panel to its card and marks it: ${JSON.stringify(landedThread)}`,
 );
 await keyPage.keyboard.press("]");

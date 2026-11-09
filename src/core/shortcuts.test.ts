@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CHORD_TIMEOUT_MS, chordHints, createShortcutMatcher, isMac, type KeyInput, shortcutHelp } from "./shortcuts";
+import { CHORD_TIMEOUT_MS, chordHints, createShortcutMatcher, githubStackKey, isMac, type KeyInput, shortcutHelp } from "./shortcuts";
 
 function press(key: string, time: number, overrides: Partial<KeyInput> = {}): KeyInput {
   return { key, time, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, repeat: false, editable: false, ...overrides };
@@ -238,5 +238,12 @@ describe("the shortcut list", () => {
     ["Linux x86_64", false],
   ])("%s is macOS: %p", (platform, mac) => {
     expect(isMac(platform)).toBe(mac);
+  });
+});
+
+describe("githubStackKey", () => {
+  test("up the stack is GitHub's ⇧K, down is its ⇧J", () => {
+    expect(githubStackKey(1)).toEqual({ key: "K", code: "KeyK" });
+    expect(githubStackKey(-1)).toEqual({ key: "J", code: "KeyJ" });
   });
 });
