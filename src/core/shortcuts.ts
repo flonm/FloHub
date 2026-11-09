@@ -225,6 +225,16 @@ export function shortcutHelp(mac: boolean): ShortcutHelp[] {
   ];
 }
 
+/**
+ * GitHub's own keys for moving through a native stack, ⇧K up and ⇧J down, which it answers without reloading the page.
+ * ⌘⇧↑ and ⌘⇧↓ press them for the viewer.
+ * @param direction 1 for the pull request above, -1 for the one below.
+ * @returns The key and its physical code, as GitHub's handler reads them.
+ */
+export function githubStackKey(direction: 1 | -1): { key: string; code: string } {
+  return direction === 1 ? { key: "K", code: "KeyK" } : { key: "J", code: "KeyJ" };
+}
+
 /** @returns Whether the browser runs on macOS, from what it says of its platform. */
 export function isMac(platform: string): boolean {
   return /mac/iu.test(platform);

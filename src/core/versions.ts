@@ -478,3 +478,18 @@ export function reviewPath(versions: Version[], login: string): { version: numbe
   }
   return path;
 }
+
+/** The force pushes the overview asks for, the newest last; GitHub may leave an entry null. */
+export type RawForcePushes = { nodes: ({ createdAt?: string } | null)[] } | null | undefined;
+
+/**
+ * How often the head branch was force-pushed, and when last, for the bar's toolbar. It counts the events GitHub
+ * returns rather than the connection's `totalCount`, which GitHub fills with every timeline item of the pull request,
+ * whatever the type filter asks for (see docs/github-quirks.md).
+ * @param forcePushes The overview's force push events.
+ * @returns The count and the time of the newest, or null when there was none.
+ */
+export function forcePushSummary(forcePushes: RawForcePushes): { count: number; lastAt: string | null } {
+  const pushes = (forcePushes?.nodes ?? []).filter((node) => node !== null);
+  return { count: pushes.length, lastAt: pushes.at(-1)?.createdAt ?? null };
+}

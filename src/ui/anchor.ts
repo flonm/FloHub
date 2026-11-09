@@ -25,3 +25,15 @@ export function findInlineAnchor(root: ParentNode, number: number): Element | nu
   if (!heading) return null;
   return heading.closest(PAGE_HEADER) ?? heading.parentElement?.closest(HEADER_CONTAINERS) ?? heading.parentElement;
 }
+
+/**
+ * How wide the inline bar is beside the header it follows. GitHub's Overview page caps its header's width and centres
+ * it in a band as wide as the window, so a bar spanning the band would start left of the title. It takes the header's
+ * cap and centres the same way; beside an uncapped header, as on Files changed, it spans the band.
+ * @param headerMaxWidth The header's computed `max-width`.
+ * @returns The bar's `max-width` and `margin-inline`, empty when it spans the band.
+ */
+export function inlineBox(headerMaxWidth: string): { maxWidth: string; marginInline: string } {
+  if (headerMaxWidth === "" || headerMaxWidth === "none") return { maxWidth: "", marginInline: "" };
+  return { maxWidth: headerMaxWidth, marginInline: "auto" };
+}

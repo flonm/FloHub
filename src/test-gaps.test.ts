@@ -15,7 +15,6 @@ const WITHOUT_TEST = new Set([
   "background",
   "content",
   "core/rich-text",
-  "ui/anchor",
   "ui/bar-styles",
   "ui/diff-highlights",
 ]);

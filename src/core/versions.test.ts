@@ -7,6 +7,7 @@ import {
   commentVersion,
   defaultRange,
   deriveVersions,
+  forcePushSummary,
   formatRangeParam,
   keepRecentRanges,
   lastReviewedVersion,
@@ -510,5 +511,21 @@ describe("keeping the range in order", () => {
     ["to", 2, { from: 1, to: 3 }, false],
   ] as const)("%s v%i with the range %o is out of order: %p", (side, version, range, expected) => {
     expect(outOfOrder(side, version, range)).toBe(expected);
+  });
+});
+
+describe("forcePushSummary", () => {
+  test("counts the force pushes GitHub returns, not the total it claims for them", () => {
+    const claimed = { totalCount: 6, nodes: [] };
+    expect(forcePushSummary(claimed)).toEqual({ count: 0, lastAt: null });
+  });
+
+  test("the newest force push is the last one", () => {
+    const nodes = [{ createdAt: "2026-11-01T10:00:00Z" }, null, { createdAt: "2026-11-02T10:00:00Z" }];
+    expect(forcePushSummary({ nodes })).toEqual({ count: 2, lastAt: "2026-11-02T10:00:00Z" });
+  });
+
+  test.each([null, undefined])("an overview without force pushes (%p) has none", (forcePushes) => {
+    expect(forcePushSummary(forcePushes)).toEqual({ count: 0, lastAt: null });
   });
 });

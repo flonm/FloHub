@@ -10,7 +10,7 @@ import type { ViewedFile, ViewedFiles } from "../core/viewed";
 import { type CommentLink, type CommentPlace, threadNumber } from "../core/comment-jump";
 import type { ReviewAction, ReviewDiscussion } from "../core/threads";
 import type { VersionFile } from "../core/interdiff";
-import { baseBranches, deriveVersions, pickBase, type RawBasePull, type RawVersionPull, type VersionHistory } from "../core/versions";
+import { baseBranches, deriveVersions, pickBase, type RawBasePull, type RawForcePushes, type RawVersionPull, type VersionHistory } from "../core/versions";
 
 const API = "https://api.github.com";
 
@@ -71,8 +71,7 @@ query ($owner: String!, $name: String!, $number: Int!) {
       id
       author { login }
       viewerCanUpdate
-      forcePushes: timelineItems(last: 1, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
-        totalCount
+      forcePushes: timelineItems(last: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
         nodes { ... on HeadRefForcePushedEvent { createdAt } }
       }
       dismissals: timelineItems(last: 100, itemTypes: [REVIEW_DISMISSED_EVENT]) {
@@ -255,7 +254,7 @@ interface RawOverview {
             stack: RawStack | null;
             /** Missing from overviews cached before general comments were fetched. */
             comments?: { nodes: RawDiscussionComment[] };
-            forcePushes: { totalCount: number; nodes: ({ createdAt?: string } | null)[] } | null;
+            forcePushes: RawForcePushes;
             /** Missing from overviews cached before turns. */
             turnThreads?: { nodes: RawTurnThread[] };
           })

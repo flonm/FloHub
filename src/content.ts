@@ -1,6 +1,6 @@
 import { type BarState, type DiffMode, PULL_STATE_BUSY, ReviewBar } from "./ui/bar";
 import { moveDone, moveFor, MOVE_WORDS, noMoveReason, type PullMove, pullStateOf, type StateIntent, stateAfter } from "./core/pull-state";
-import { findInlineAnchor } from "./ui/anchor";
+import { findInlineAnchor, inlineBox } from "./ui/anchor";
 import { POKE_COOLDOWN_MS } from "./ui/reviewer-look";
 import { DiffHighlights, type HighlightStatus } from "./ui/diff-highlights";
 import { Favicon, faviconUrl } from "./ui/favicon";
@@ -16,7 +16,7 @@ import { RepoPullsViews } from "./ui/repo-pulls";
 import { ReviewDialog } from "./ui/review-dialog";
 import { deriveDiscussion, lastReviewBy } from "./core/discussion";
 import { deriveReviewers, type DismissedVerdict, type Reviewer } from "./core/reviewers";
-import { type AskTarget, chordHints, type CopyTarget, createShortcutMatcher, isMac, type ReviewEvent, shortcutHelp } from "./core/shortcuts";
+import { type AskTarget, chordHints, type CopyTarget, createShortcutMatcher, githubStackKey, isMac, type ReviewEvent, shortcutHelp } from "./core/shortcuts";
 import type { Overview, VersionPatch } from "./api/github";
 import { readCachedOverview } from "./api/overview-cache";
 import { overviewTurnInput, repliesAwaiting, type Turn, whoseTurn } from "./core/turn";
@@ -31,6 +31,7 @@ import type { ReviewThread } from "./core/threads";
 import {
   BASE,
   baseCandidates,
+  forcePushSummary,
   formatRangeParam,
   keepRecentRanges,
   parseRangeParam,
@@ -289,6 +290,7 @@ function sync(): void {
 
   if (!floating.host.isConnected) document.body.append(floating.host);
   if (!inline.host.isConnected) mountInline(ref);
+  alignInline();
   viewedTree.sync(ref);
   highlights.sync(ref);
   syncVersions(ref);
@@ -343,6 +345,18 @@ function mountInline(ref: PullRef): void {
   const anchor = findInlineAnchor(document, ref.number);
   lastAnchorSearch = anchor ? 0 : Date.now();
   anchor?.after(inline.host);
+}
+
+/** Lines the inline bar up with the header it follows, which GitHub's Overview page centres at a capped width. */
+function alignInline(): void {
+  const header = inline.host.isConnected ? inline.host.previousElementSibling : null;
+  const box = inlineBox(header ? getComputedStyle(header).maxWidth : "none");
+  const { style } = inline.host;
+  // A style the bar already has is left alone, so a pass over an unchanged page writes nothing.
+  if (style.maxWidth === box.maxWidth && style.marginInline === box.marginInline) return;
+  style.display = box.maxWidth ? "block" : "";
+  style.maxWidth = box.maxWidth;
+  style.marginInline = box.marginInline;
 }
 
 function updateVisibility(): void {
@@ -444,10 +458,7 @@ function readyState(overview: Overview, ref: PullRef, exact: boolean): Extract<B
     refreshing: false,
     busy,
     pokedAt: pokedAtFor(ref),
-    forcePushes: {
-      count: exact ? (pullRequest.forcePushes?.totalCount ?? 0) : 0,
-      lastAt: exact ? (pullRequest.forcePushes?.nodes.at(-1)?.createdAt ?? null) : null,
-    },
+    forcePushes: forcePushSummary(exact ? pullRequest.forcePushes : null),
     highlight,
     notice: null,
     discussion: exact ? deriveDiscussion(pullRequest) : null,
@@ -884,9 +895,26 @@ function navigateStack(direction: 1 | -1): void {
     toast.show(direction === 1 ? "Already at the top of the stack." : "Already at the bottom of the stack.", "info");
     return;
   }
-  // The versions view is a setting of the page, so the next layer opens on it too, on its own range.
-  const versions = versionsView.isOpen ? `?${VERSIONS_PARAM}=` : "";
-  location.assign(`${target.url}${pullTab(location.pathname)}${versions}`);
+  // The versions view is a setting of the page, so the next layer opens on it too, on its own range. Without it, GitHub's
+  // own stack keys move without reloading the page, where GitHub has them.
+  if (versionsView.isOpen) {
+    location.assign(`${target.url}${pullTab(location.pathname)}?${VERSIONS_PARAM}=`);
+    return;
+  }
+  if (!pressGitHubStackKey(direction)) location.assign(`${target.url}${pullTab(location.pathname)}`);
+}
+
+/**
+ * Presses GitHub's own key for the pull request above or below in its stack.
+ * @param direction 1 for the pull request above, -1 for the one below.
+ * @returns Whether GitHub took the key, which it says by preventing the key's default.
+ */
+function pressGitHubStackKey(direction: 1 | -1): boolean {
+  const init = { ...githubStackKey(direction), shiftKey: true, bubbles: true, cancelable: true, composed: true };
+  const down = new KeyboardEvent("keydown", init);
+  document.body.dispatchEvent(down);
+  document.body.dispatchEvent(new KeyboardEvent("keyup", init));
+  return down.defaultPrevented;
 }
 
 async function approveNow(): Promise<void> {
@@ -1223,9 +1251,9 @@ async function stepThread(direction: 1 | -1): Promise<void> {
 const UNFOLD_WAIT_MS = 1000;
 
 /**
- * Unfolds a thread GitHub draws folded on its line, as it does with the comments panel open. Its only way to unfold
- * is a "View comments" button GitHub puts in the line's cell while the mouse is over it (see docs/github-quirks.md),
- * so FloHub plays the mouse over the cell and presses that. The button toggles, so a thread already drawn is left.
+ * Unfolds a thread GitHub draws folded on its line, as it does with a resolved thread or one the viewer collapsed: a
+ * bar under the line with an "Expand comment" button (see docs/github-quirks.md). The button toggles, so a thread
+ * already drawn is left alone.
  * @param thread The thread.
  * @param row Its line's row in GitHub's diff.
  */
@@ -1238,12 +1266,23 @@ async function unfoldThread(thread: ReviewThread, row: HTMLTableRowElement): Pro
   };
   if (drawn()) return;
   const cell = row.querySelector(githubLineSelector({ path: thread.path, line: thread.line ?? 0, side: thread.side })) ?? row.querySelector("td.diff-text-cell");
-  if (!cell) return;
-  cell.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
-  const button = await waitFor(() => cell.querySelector<HTMLButtonElement>('button[aria-label="View comments"]'));
-  button?.click();
-  cell.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
-  if (button) await waitFor(() => (drawn() ? true : null));
+  const button = cell ? expandButton(cell) : null;
+  if (!button) return;
+  button.click();
+  await waitFor(() => (drawn() ? true : null));
+}
+
+/**
+ * @param cell A line's code cell in GitHub's diff.
+ * @returns The button that unfolds the thread folded under the line, named by the label it points to, or null.
+ */
+function expandButton(cell: Element): HTMLButtonElement | null {
+  return (
+    [...cell.querySelectorAll<HTMLButtonElement>("button[aria-labelledby]")].find((button) => {
+      const label = document.getElementById(button.getAttribute("aria-labelledby") ?? "");
+      return label?.textContent.trim() === "Expand comment";
+    }) ?? null
+  );
 }
 
 /**

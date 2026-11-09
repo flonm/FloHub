@@ -37,25 +37,44 @@ click a current comment's file link. If the page scrolls to the thread, GitHub f
 diff" with the view closed could then hand the click back to GitHub, but scrolling twice to the same thread is
 harmless. The menu itself stays, since GitHub has no versions view to offer.
 
-## A folded review thread only unfolds through a button that needs the mouse
+## A folded review thread unfolds only through its own button
 
-*Seen 2026-10-28 on the React Files changed page (`/pull/<n>/changes`), signed in.*
+*Seen 2026-10-28 on the React Files changed page (`/pull/<n>/changes`), signed in. Changed by 2026-11-09.*
 
-**What GitHub does.** GitHub folds review threads on their line, resolved ones always and every one while the comments
-panel is open: the line shows the commenters' avatars and a count, and the thread (`div#r<first comment id>`) isn't
-drawn. The avatars themselves take no click. A "View comments" button
-(`td.diff-text-cell button[aria-label="View comments"]`) sits under them, and GitHub only renders it in the line's cell
-while the mouse is over the cell. It toggles the thread. Its `aria-expanded` stays `false` either way.
+**What GitHub does.** GitHub draws some review threads folded on their line instead of in full: resolved ones always,
+and ones the viewer collapsed. The thread (`div#r<first comment id>`) isn't drawn then. Until early November 2026 the
+line showed the commenters' avatars, every thread was folded while the comments panel was open, and the only way to
+unfold one was a "View comments" button GitHub rendered in the line's cell while the mouse was over it. Now open
+threads stay drawn with the panel open, and a folded thread is a bar under its line ("Comment on lines R13 to R14",
+with *Resolved* on a resolved one). The bar's button sits in the line's code cell
+(`td.diff-text-cell button[aria-labelledby]`), is always there, and is named "Expand comment" by the element its
+`aria-labelledby` points to. It toggles the thread.
 
 **What FloHub does.** When <kbd>]</kbd> or <kbd>[</kbd> goes to a thread GitHub hasn't drawn, `unfoldThread` in
-`src/content.ts` sends the cell a `mouseover`, presses the button once it appears, sends a `mouseout`, and waits for
-`#r<first comment id>`. Since the button toggles, it does nothing to a thread already drawn. `markInPanel` then
-scrolls the comments panel (`#docked-side-panel-content`) to the thread's card, the `article` around
-`#paneldiscussion_r<first comment id>`, and outlines it.
+`src/content.ts` presses that button (`expandButton`) and waits for `#r<first comment id>`. Since the button toggles,
+it does nothing to a thread already drawn. `markInPanel` then scrolls the comments panel
+(`#docked-side-panel-content`) to the thread's card, the `article` around `#paneldiscussion_r<first comment id>`, and
+outlines it.
 
-**How to tell it's fixed.** Open a pull request's Files changed tab with the comments panel open. If the avatars on a
-commented line unfold the thread when clicked, or the button is there without the mouse over the line, the hover can go,
-and FloHub can press GitHub's control directly.
+**How to tell it's fixed.** Collapse an unresolved thread on a pull request's Files changed tab and reload. If GitHub
+draws it in full again, threads <kbd>]</kbd> and <kbd>[</kbd> visit are never folded, and the unfolding can go.
+
+## The count of a timeline filtered by type counts every item
+
+*Seen 2026-11-09 in the GraphQL API, on every pull request tried.*
+
+**What GitHub does.** `timelineItems(itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT])` returns only force pushes in `nodes`,
+but its `totalCount` is about the count of every timeline item: commits, reviews, review requests, labels. A pull
+request with one commit that was never force-pushed reported `totalCount: 6`, the number of its timeline items, and
+one force-pushed 13 times, as its own timeline and the REST API show, reported 65.
+
+**What FloHub does.** The bar's "Force-pushed N×" counts the force push events the overview returns
+(`forcePushSummary` in `src/core/versions.ts`), the last 100 of them, rather than reading `totalCount`. The versions
+were never affected: they come from the events themselves.
+
+**How to tell it's fixed.** Ask for `timelineItems(itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT], first: 100) { totalCount
+nodes { __typename } }` on a pull request with a few force pushes. If `totalCount` equals the number of nodes, it can be
+read again, which also counts past 100.
 
 ## A push resets the Viewed marks of files whose change stayed the same
 
