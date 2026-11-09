@@ -211,16 +211,14 @@ const VIEW_STYLES = `
 * { box-sizing: border-box; }
 :host { display: block; }
 :host([data-mode="docked"]) {
+  /* Where the diff is read: below the page's sticky header and the view's own. */
+  --vd-sticky-top: calc(var(--flohub-top, 0px) + var(--vd-header-height, 0px));
   box-sizing: border-box;
-  position: sticky;
-  top: var(--flohub-top, 0px);
   flex: 1 1 100%;
   width: 100%;
   min-width: 0;
-  height: calc(100vh - var(--flohub-top, 0px));
   padding: 16px 0 8px;
 }
-:host([data-mode="docked"]) main, :host([data-mode="docked"]) nav.files { overscroll-behavior: auto; }
 :host([data-mode="floating"]) { position: fixed; z-index: 100; inset: 72px 16px 16px; box-shadow: var(--vd-shadow); border-radius: 12px; }
 :host([data-mode="floating"]) .surface { border-radius: 12px; }
 .surface {
@@ -704,12 +702,22 @@ details.unchanged > summary { color: var(--vd-muted); cursor: pointer; }
 .mark-unchanged { min-height: 28px; margin-left: 4px; padding: 0 8px; color: var(--vd-fg); font-size: 12px; }
 details.unchanged ul { margin: 6px 0 0; padding-left: 20px; font: 12px/20px var(--vd-mono); color: var(--vd-muted); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; user-select: none; }
+/*
+ * Docked on GitHub's page, the page scrolls the diff as it scrolls GitHub's own: the view's header sticks under the
+ * page's, the file tree sticks below it and scrolls on its own when it's taller than the window, and the files'
+ * headers stick below the view's. Nothing between them and the page may scroll, or they would stick to that instead.
+ */
+:host([data-mode="docked"]) .surface { height: auto; overflow: clip; }
+:host([data-mode="docked"]) header { position: sticky; top: var(--flohub-top, 0px); z-index: 3; border-radius: 6px 6px 0 0; background: var(--vd-bg); }
+:host([data-mode="docked"]) main { overflow: visible; }
+:host([data-mode="docked"]) nav.files { position: sticky; top: var(--vd-sticky-top); align-self: flex-start; max-height: calc(100vh - var(--vd-sticky-top)); overscroll-behavior: auto; }
+:host([data-mode="docked"]) details.file > summary { top: var(--vd-sticky-top); }
+:host([data-mode="docked"]) details.file { scroll-margin-top: var(--vd-sticky-top); }
+:host([data-mode="docked"]) :is(.line, .thread-row) { scroll-margin-top: calc(var(--vd-sticky-top) + 48px); }
 ${THREAD_STYLES}
 @media (prefers-reduced-motion: reduce) { .chevron, .files .folder svg { transition: none; } }
 `;
 
-/** How long after docking the view keeps scrolling to its sticky place while the page above it grows. */
-const ALIGN_MS = 3000;
 /** Marks the element the view is docked in, so the page's own file tree and diff beside it hide. */
 const DOCKED = "data-flohub-versions";
 /** Hides GitHub's file tree and diff while the view takes their place. */
@@ -758,8 +766,6 @@ export class VersionsView {
   /** The pull request the view shows, and how to fetch its versions again when it opens on it once more. */
   private shown: { key: string; revalidate: () => Promise<void> } | null = null;
   private onClose: (() => void) | undefined;
-  /** Until when the view keeps scrolling the page to its sticky place, while the page above it still grows. */
-  private alignUntil = 0;
   /** Shows a range, and a line in it, once the view has its versions. */
   private target: ((range: SavedRange, line?: CommentLine) => void) | null = null;
   /** What F and ⇧F step through in the diff on screen, or null while none is drawn. */
@@ -805,18 +811,6 @@ export class VersionsView {
       }
       this.host.dataset.mode = "docked";
       this.host.style.setProperty("--flohub-top", `${dock.top}px`);
-      // Below the page's header the view would reach past the window; scrolled up to its sticky place, it fits. The
-      // header may still grow after the view docks (the bar mounts, GitHub renders lazily), so it keeps that place a
-      // little longer, until the viewer scrolls themselves.
-      if (moved) {
-        this.alignUntil = Date.now() + ALIGN_MS;
-        const stop = () => {
-          this.alignUntil = 0;
-        };
-        for (const type of ["wheel", "touchstart", "keydown"]) addEventListener(type, stop, { once: true, passive: true });
-      }
-      const below = this.host.getBoundingClientRect().top - dock.top;
-      if (Date.now() < this.alignUntil && below > 0) scrollBy({ top: below });
     } else if (!this.host.isConnected || this.host.dataset.mode !== "floating") {
       undock();
       this.host.dataset.mode = "floating";
@@ -860,8 +854,8 @@ export class VersionsView {
     if (!main) return null;
     if (main.classList.contains("hide-threads")) return "hidden";
     const rows = [...main.querySelectorAll<HTMLElement>(".thread-row[data-thread]:not([data-resolved])")];
-    const box = main.getBoundingClientRect();
-    const line = box.top + box.height * READING_LINE;
+    const box = viewport(main);
+    const line = box.top + (box.bottom - box.top) * READING_LINE;
     const go = (id: string): number => {
       const row = rows.find((each) => each.dataset.thread === id);
       if (!row) return 0;
@@ -869,7 +863,7 @@ export class VersionsView {
       if (file) file.open = true;
       const thread = row.querySelector<HTMLDetailsElement>("details.thread");
       if (thread) thread.open = true;
-      main.scrollBy({ top: row.getBoundingClientRect().top - line, behavior: "instant" });
+      box.scrollBy(row.getBoundingClientRect().top - line);
       thread?.querySelector("summary")?.focus({ preventScroll: true });
       return row.getBoundingClientRect().top;
     };
@@ -922,6 +916,16 @@ export class VersionsView {
     const notice = el("p", { class: "notice", role: "status" });
     const header = el("header");
     header.append(bar, meta, error, notice);
+    // Docked, the header sticks while the page scrolls the diff, and the tree and the files' headers stick below it.
+    // It wraps to more lines on a narrow window, so its height is measured.
+    const headerSize = new ResizeObserver(() => {
+      if (!header.isConnected) {
+        headerSize.disconnect();
+        return;
+      }
+      this.host.style.setProperty("--vd-header-height", `${header.offsetHeight}px`);
+    });
+    headerSize.observe(header);
     const files = el("nav", { class: "files", "aria-label": "Files" });
     const main = el("main");
     main.append(el("p", { class: "message", role: "status" }, "Loading versions…"));
@@ -1804,8 +1808,8 @@ function renderResult(
     if (!viewed || !section) return;
     section.open = !mark;
     // Folded above the top, the file's header would leave the screen: it stays where the diff is read.
-    const { top } = main.getBoundingClientRect();
-    if (mark && section.getBoundingClientRect().top < top) main.scrollBy({ top: section.getBoundingClientRect().top - top, behavior: "instant" });
+    const box = viewport(main);
+    if (mark && section.getBoundingClientRect().top < box.top) box.scrollBy(section.getBoundingClientRect().top - box.top);
     await viewed.set(path, mark);
   };
   const marks = () => {
@@ -1894,7 +1898,7 @@ function renderResult(
   const steps = (): FileSteps | NoFileSteps => {
     const states = viewed?.states();
     if (!states) return "unknown";
-    const box = main.getBoundingClientRect();
+    const box = viewport(main);
     const line = box.top + FILE_LINE_PX;
     const topOf = (path: string) => byPath.get(path)?.getBoundingClientRect().top ?? 0;
     // The filter's hidden files are out of the way, as they are on GitHub's page.
@@ -1905,7 +1909,7 @@ function renderResult(
       const section = byPath.get(path);
       if (!section) return 0;
       section.open = true;
-      main.scrollBy({ top: section.getBoundingClientRect().top - box.top, behavior: "instant" });
+      box.scrollBy(section.getBoundingClientRect().top - box.top);
       section.querySelector("summary")?.focus({ preventScroll: true });
       return section.getBoundingClientRect().top;
     };
@@ -1992,7 +1996,7 @@ function renderResult(
       block.remove();
       blocks.delete(id);
     }
-    if (kept && keptTop !== undefined && kept.isConnected) main.scrollTop += kept.getBoundingClientRect().top - keptTop;
+    if (kept && keptTop !== undefined && kept.isConnected) viewport(main).scrollBy(kept.getBoundingClientRect().top - keptTop);
   };
 
   /** The comment being written: its file, the row it was started on and the row it reaches to, and its box. */
@@ -2113,7 +2117,7 @@ function viewedBox(labelled: boolean): HTMLButtonElement {
  * @param nav Where the tree goes.
  * @param tree The compared files by folder.
  * @param sections Each file's diff.
- * @param main The diff's scroll container.
+ * @param main The diff.
  * @param signal Aborts when another range replaces the diff.
  */
 function renderFileTree(
@@ -2142,7 +2146,8 @@ function renderFileTree(
     const landed = () => {
       landing = false;
     };
-    main.addEventListener("scrollend", landed, { once: true, signal });
+    // Docked, the page scrolls the diff; floating, the diff itself. The view may move between the two while it's open.
+    for (const scroller of [globalThis, main]) scroller.addEventListener("scrollend", landed, { once: true, signal });
     // A jump to a file already in place doesn't scroll, so nothing would end it.
     setTimeout(landed, JUMP_SETTLE_MS);
     mark(rows.get(section));
@@ -2234,7 +2239,7 @@ function renderFileTree(
   let frame = 0;
   const follow = () => {
     frame = 0;
-    const { top, bottom } = main.getBoundingClientRect();
+    const { top, bottom } = viewport(main);
     if (picked && landing) return;
     if (picked) {
       const rect = picked.getBoundingClientRect();
@@ -2250,13 +2255,11 @@ function renderFileTree(
     }
     if (inView) mark(rows.get(inView));
   };
-  main.addEventListener(
-    "scroll",
-    () => {
-      frame ||= requestAnimationFrame(follow);
-    },
-    { signal, passive: true },
-  );
+  const onScroll = () => {
+    frame ||= requestAnimationFrame(follow);
+  };
+  // Docked, the page scrolls the diff; floating, the diff itself.
+  for (const scroller of [globalThis, main]) scroller.addEventListener("scroll", onScroll, { signal, passive: true });
   signal.addEventListener("abort", () => cancelAnimationFrame(frame));
   follow();
   const clear = () => {
@@ -2474,12 +2477,41 @@ function holdsText(element: Element): boolean {
   return [...element.querySelectorAll("textarea")].some((box) => box.value.trim() !== "");
 }
 
+/** The part of the window the diff is read in, and what scrolls it. */
+interface Viewport {
+  top: number;
+  bottom: number;
+  /** Scrolls the diff by so many pixels, at once. */
+  scrollBy: (top: number) => void;
+}
+
 /**
- * @param main The diff's scroll container.
+ * Docked on GitHub's page, the page scrolls the diff, as it scrolls GitHub's own, and the diff is read below the view's
+ * sticky header. Floating over the page, the diff scrolls itself.
+ * @param main The diff.
+ * @returns Where the diff is read, and what scrolls it.
+ */
+function viewport(main: HTMLElement): Viewport {
+  const root = main.getRootNode();
+  const host = root instanceof ShadowRoot ? root.host : null;
+  if (host instanceof HTMLElement && host.dataset.mode === "docked") {
+    const header = root instanceof ShadowRoot ? root.querySelector("header") : null;
+    return {
+      top: Math.max(0, header?.getBoundingClientRect().bottom ?? 0),
+      bottom: innerHeight,
+      scrollBy: (top) => scrollBy({ top, behavior: "instant" }),
+    };
+  }
+  const { top, bottom } = main.getBoundingClientRect();
+  return { top, bottom, scrollBy: (by) => main.scrollBy({ top: by, behavior: "instant" }) };
+}
+
+/**
+ * @param main The diff.
  * @returns The first line of the diff the viewer can see, or null.
  */
 function firstVisibleLine(main: HTMLElement): HTMLElement | null {
-  const { top } = main.getBoundingClientRect();
+  const { top } = viewport(main);
   return [...main.querySelectorAll<HTMLElement>(".line")].find((line) => line.getBoundingClientRect().bottom > top) ?? null;
 }
 

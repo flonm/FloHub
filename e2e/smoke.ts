@@ -1334,20 +1334,36 @@ check(
   (await docked.locator(".hint", { hasText: "are on different bases" }).count()) === 1,
   "versions on different bases say they're compared patch by patch, and won't match GitHub's diff of the two commits",
 );
-const dockedLayout = await splitPage.evaluate(() => {
-  const host = document.querySelector<HTMLElement>("flohub-versions");
-  const box = host?.getBoundingClientRect();
+const dockedLayout = await splitPage.evaluate(async () => {
+  const host = document.querySelector<HTMLElement>("flohub-versions")!;
+  const shadow = host.shadowRoot!;
+  const at = () => [shadow.querySelector("header")!, shadow.querySelector("nav.files")!].map((part) => Math.round(part.getBoundingClientRect().top));
+  const before = at();
+  scrollTo({ top: 1500, behavior: "instant" });
+  await new Promise(requestAnimationFrame);
+  const scrolled = at();
+  const headerHeight = Math.round(shadow.querySelector("header")!.getBoundingClientRect().height);
+  scrollTo({ top: 0, behavior: "instant" });
   return {
-    mode: host?.dataset.mode,
-    top: host && getComputedStyle(host).top,
-    fits: box !== undefined && Math.round(box.top) === 60 && box.bottom <= innerHeight,
-    box: box && [Math.round(box.top), Math.round(box.bottom), innerHeight, Math.round(scrollY)],
+    mode: host.dataset.mode,
+    diffScrollsItself: (() => {
+      const main = shadow.querySelector("main")!;
+      return main.scrollHeight > main.clientHeight;
+    })(),
+    before,
+    scrolled,
+    headerHeight,
     hidden: ["github-pane", "github-diff"].map((id) => getComputedStyle(document.getElementById(id)!).display),
   };
 });
 check(
-  dockedLayout.mode === "docked" && dockedLayout.top === "60px" && dockedLayout.hidden.join(",") === "none,none" && dockedLayout.fits,
-  `on GitHub's split layout the versions view takes the place of the file tree and diff, scrolled to fit under the toolbar: ${JSON.stringify(dockedLayout)}`,
+  dockedLayout.mode === "docked" &&
+    dockedLayout.hidden.join(",") === "none,none" &&
+    !dockedLayout.diffScrollsItself &&
+    (dockedLayout.before[0] ?? 0) > 60 &&
+    dockedLayout.scrolled[0] === 60 &&
+    dockedLayout.scrolled[1] === 60 + dockedLayout.headerHeight,
+  `on GitHub's split layout the versions view takes the place of the file tree and diff, the page scrolls its diff, and its header and file tree stick under the toolbar: ${JSON.stringify(dockedLayout)}`,
 );
 const threadRows = docked.locator(".thread-row");
 await openViewed(docked);
