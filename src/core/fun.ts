@@ -30,7 +30,7 @@ export const CHEERS = [
   "A senior engineer somewhere just nodded.",
   "Your future self sends a fruit basket.",
   "The linter shed a single tear of joy.",
-  "Come on Flo, take it to the fridge!",
+  "Come on Team FloHub, take it to the fridge!",
   "Bigger, faster, and stronger too.",
   "If it breaks prod, it's gonna hurt!",
   "Back in my day we merged by hand, uphill, both ways.",
