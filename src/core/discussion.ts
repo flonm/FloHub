@@ -115,7 +115,7 @@ export function isUnread(item: DiscussionItem, seenAt: string | null, viewer: st
 }
 
 function hasText(text: string): boolean {
-  return text.replace(INVISIBLE, "").length > 0;
+  return text.replaceAll(INVISIBLE, "").length > 0;
 }
 
 function toItem(
