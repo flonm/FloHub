@@ -1,14 +1,22 @@
 import { el } from "./dom";
 
-/** The cow. She faces left and walks right, tail first. Nobody has told her. */
-const COW = String.raw`        ^__^
-        (oo)\_______
-        (__)\       )\/\
-            ||----w |
-            ||     ||`;
+/** The cow, facing right, the way she walks. */
+const COW = String.raw`            ^__^
+    _______/(oo)
+/\/(       /(__)
+   | w----||
+   ||     ||`;
 
 /** What she says, picked at random each time she crosses. */
-export const MOOS = ["Moo. Merged.", "MOOOOO-RGED!", "Another one for main.", "Ship it. Moo.", "I have seen your diff. It is good."] as const;
+export const MOOS = [
+  "Moo. Merged.",
+  "MOOOOO-RGED!",
+  "Another one for main.",
+  "Ship it. Moo.",
+  "I have seen your diff. It is good.",
+  "Leader of the herd, you know her well.",
+  "Finally back to kick some tail.",
+] as const;
 
 /** How long one crossing takes, in milliseconds. */
 const CROSSING_MS = 6000;
@@ -31,6 +39,7 @@ const COW_STYLES = `
   align-items: flex-start;
   animation: cross var(--crossing, 6000ms) linear forwards;
 }
+/* Only a story stands her still; she walks for everyone, reduced motion or not. */
 .herd.still { animation: none; left: 50%; transform: translateX(-50%); }
 .moo {
   margin: 0 0 4px 64px;
@@ -45,6 +54,11 @@ const COW_STYLES = `
 }
 .cow {
   margin: 0;
+  padding: 6px 12px;
+  border: 1px solid var(--borderColor-default, #d1d9e0);
+  border-radius: 12px;
+  background: var(--bgColor-default, #ffffff);
+  box-shadow: var(--shadow-floating-small, 0 1px 3px rgba(31, 35, 40, 0.12));
   color: var(--fgColor-default, #1f2328);
   font: 12px/1.15 var(--fontStack-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
   animation: trot 300ms ease-in-out infinite alternate;
@@ -52,10 +66,6 @@ const COW_STYLES = `
 .herd.still .cow { animation: none; }
 @keyframes cross { from { transform: translateX(-260px); } to { transform: translateX(calc(100vw + 20px)); } }
 @keyframes trot { from { transform: translateY(0); } to { transform: translateY(-3px); } }
-@media (prefers-reduced-motion: reduce) {
-  .herd { animation: none; left: 50%; transform: translateX(-50%); }
-  .cow { animation: none; }
-}
 `;
 
 /** The merge cow: she walks across the bottom of the page when the viewer watches a pull request get merged. */
