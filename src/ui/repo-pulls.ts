@@ -1,4 +1,4 @@
-import { el, icon, type IconName } from "./dom";
+import { el, guardedShadow, icon, type IconName } from "./dom";
 import { REPO_PULLS_STYLES } from "./bar-styles";
 import { type InboxViewActions, type InboxViewState, renderInbox, updatedLabel } from "./inbox-view";
 import type { RepoRef } from "../core/pull-ref";
@@ -90,7 +90,7 @@ export class RepoPullsViews {
       [this.links, this.linksBody],
       [this.list, this.listBody],
     ] as const) {
-      host.attachShadow({ mode: "open" }).append(el("style", {}, REPO_PULLS_STYLES), body);
+      guardedShadow(host).append(el("style", {}, REPO_PULLS_STYLES), body);
     }
   }
 

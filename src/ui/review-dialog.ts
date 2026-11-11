@@ -1,4 +1,4 @@
-import { el, icon } from "./dom";
+import { el, guardedShadow, icon } from "./dom";
 import type { DismissedVerdict } from "../core/reviewers";
 import type { ReviewEvent } from "../core/shortcuts";
 
@@ -191,7 +191,7 @@ export class ReviewDialog {
 
   constructor() {
     this.host = document.createElement("flohub-dialog");
-    const shadow = this.host.attachShadow({ mode: "open" });
+    const shadow = guardedShadow(this.host);
     const style = document.createElement("style");
     style.textContent = DIALOG_STYLES;
     this.dialog = el("dialog", { "aria-labelledby": "review-title" });
@@ -266,10 +266,9 @@ export class ReviewDialog {
       form.removeAttribute("aria-busy");
     };
 
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      void send();
-    });
+    // Only the button and ⌘↵ send: a page script's form.requestSubmit() fires a submit the browser marks as trusted.
+    form.addEventListener("submit", (event) => event.preventDefault());
+    submit.addEventListener("click", () => void send());
     body.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
       event.preventDefault();

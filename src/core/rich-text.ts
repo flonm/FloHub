@@ -48,10 +48,16 @@ const KEPT_CLASS = /^markdown-alert(-(note|tip|important|warning|caution|title))
 const SAFE_LINK = /^(https?:|mailto:)/iu;
 
 /**
+ * Hosts GitHub serves a comment's own images from (uploads, camo, avatars and objects). An image anywhere else
+ * is a tracking pixel: loading it would tell a stranger when the viewer opened the pull request, and from where.
+ */
+const SAFE_IMAGE_HOST = /(^|\.)(github\.com|githubusercontent\.com)$/u;
+
+/**
  * Rebuilds GitHub's rendering of a comment from an allowlist of elements and attributes. The HTML is parsed in an
  * inert document and never assigned to the page: unknown elements are unwrapped, scripts and embeds are dropped with
- * their content, a link that isn't http(s) or mailto becomes plain text, images must be https, and task-list
- * checkboxes stay read-only.
+ * their content, a link that isn't http(s) or mailto becomes plain text, images must be https on GitHub's own hosts,
+ * and task-list checkboxes stay read-only.
  * @param html GitHub's `bodyHTML`.
  * @returns The rebuilt content, or null when the HTML can't be parsed here.
  */
@@ -77,7 +83,7 @@ function appendSafe(parent: ParentNode, node: Node): void {
   if (DROPPED.has(tag)) return;
   const attributes = ALLOWED[tag];
   const href = node.getAttribute("href");
-  const unsafeLink = tag === "a" && (!href || !SAFE_LINK.test(absolute(href) ?? ""));
+  const unsafeLink = tag === "a" && (href === null || safeLinkUrl(href) === null);
   if (!attributes || unsafeLink || (tag === "input" && node.getAttribute("type") !== "checkbox")) {
     for (const child of node.childNodes) appendSafe(parent, child);
     return;
@@ -88,14 +94,14 @@ function appendSafe(parent: ParentNode, node: Node): void {
     const value = node.getAttribute(name);
     if (value === null) continue;
     if (name === "href") {
-      const url = absolute(value);
-      if (!url || !SAFE_LINK.test(url)) continue;
+      const url = safeLinkUrl(value);
+      if (!url) continue;
       copy.setAttribute("href", url);
       copy.setAttribute("target", "_top");
       copy.setAttribute("rel", "noopener noreferrer");
     } else if (name === "src") {
-      const url = absolute(value);
-      if (url?.startsWith("https:")) copy.setAttribute("src", url);
+      const url = safeImageUrl(value);
+      if (url) copy.setAttribute("src", url);
     } else {
       copy.setAttribute(name, value);
     }
@@ -109,9 +115,29 @@ function appendSafe(parent: ParentNode, node: Node): void {
   parent.append(copy);
 }
 
-function absolute(value: string): string | null {
+/**
+ * @param value A link from comment HTML.
+ * @returns The absolute URL when it is an http(s) or mailto link, or null.
+ */
+export function safeLinkUrl(value: string): string | null {
+  const url = resolve(value);
+  if (!url || !SAFE_LINK.test(url.href)) return null;
+  return url.href;
+}
+
+/**
+ * @param value An image source from comment HTML.
+ * @returns The absolute URL when it is an https image on one of GitHub's own hosts, or null.
+ */
+export function safeImageUrl(value: string): string | null {
+  const url = resolve(value);
+  if (url?.protocol !== "https:" || !SAFE_IMAGE_HOST.test(url.hostname)) return null;
+  return url.href;
+}
+
+function resolve(value: string): URL | null {
   try {
-    return new URL(value, "https://github.com").href;
+    return new URL(value, "https://github.com");
   } catch {
     return null;
   }

@@ -21,7 +21,7 @@ import {
 import { clearInbox, ensureInboxAlarm, INBOX_ALARM, loadEverything, refreshBadge, refreshInbox, refreshInboxAgain } from "./api/inbox-sync";
 import { MARKS_KEY } from "./core/inbox-marks";
 import { PROFILES_KEY } from "./core/profiles";
-import type { Message, Reply, ReplyByType } from "./api/messages";
+import { isValidMessage, maySend, type Message, type Reply, type ReplyByType, type SenderInfo } from "./api/messages";
 import { clearOverviewCache, queueCacheWrite, writeCachedOverview } from "./api/overview-cache";
 import {
   clearVersionCache,
@@ -34,7 +34,14 @@ import {
 import type { PullRef } from "./core/pull-ref";
 import { IGNORED_REPOS_KEY, REVIEW_SCOPES_KEY } from "./core/review-scope";
 
-chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) => {
+  const from: SenderInfo = { id: sender.id ?? "", url: sender.url ?? sender.tab?.url };
+  // The content script is the only context that may ask for a GitHub action; a message from anywhere else, or one
+  // whose fields could forge an API path, is refused before the token is read.
+  if (!maySend(message, from, chrome.runtime.id) || !isValidMessage(message)) {
+    sendResponse({ ok: false, code: "failed", message: "FloHub refused a request it could not verify." });
+    return true;
+  }
   void handle(message).then(sendResponse);
   return true;
 });
