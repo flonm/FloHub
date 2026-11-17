@@ -10,8 +10,9 @@
   "rangeStrategy": "bump",
   "labels": ["dependencies"],
   "rebaseWhen": "conflicted",
+  "automerge": true,
   "minimumReleaseAge": "3 days",
-  "minimumReleaseAgeBehaviour": "timestamp-optional",
+  "minimumReleaseAgeBehaviour": "timestamp-required",
   "osvVulnerabilityAlerts": true,
   "vulnerabilityAlerts": {
     "prHourlyLimit": 0
@@ -62,11 +63,6 @@
       "groupName": "digests",
       "matchUpdateTypes": ["digest"],
       "schedule": ["before 4am on monday"]
-    },
-    {
-      "description": "Auto-merge minor, patch and digest updates once CI passes; the main ruleset still requires a human approval",
-      "automerge": true,
-      "matchUpdateTypes": ["minor", "patch", "digest"]
     }
   ]
 }
