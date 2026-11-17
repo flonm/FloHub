@@ -1342,8 +1342,12 @@ const dockedLayout = await splitPage.evaluate(async () => {
   const at = () => [shadow.querySelector("header")!, shadow.querySelector("nav.files")!].map((part) => Math.round(part.getBoundingClientRect().top));
   const before = at();
   scrollTo({ top: 1500, behavior: "instant" });
-  await new Promise(requestAnimationFrame);
-  const scrolled = at();
+  // The header's height reaches the tree's sticky place a frame after the header settles, so wait for the two to meet.
+  let scrolled = at();
+  for (let frame = 0; frame < 60 && scrolled[1] !== Math.round(shadow.querySelector("header")!.getBoundingClientRect().bottom); frame++) {
+    await new Promise(requestAnimationFrame);
+    scrolled = at();
+  }
   const headerHeight = Math.round(shadow.querySelector("header")!.getBoundingClientRect().height);
   scrollTo({ top: 0, behavior: "instant" });
   return {
@@ -2017,6 +2021,8 @@ await cachedWorker?.evaluate(async (current) => {
   if (other) other.savedAt = Date.now();
   await chrome.storage.local.set({ overviewIndex: index });
 }, CURRENT);
+// The fresh overview waits, so the check sees the cached stack before it arrives.
+cachedFixture.overviewDelay = 3000;
 await cachedPage.reload();
 await inlineBar(cachedPage).locator(".stack-list").waitFor({ timeout: 3000 });
 check(
@@ -2024,7 +2030,6 @@ check(
   "a layer's own cache gives way to a later one fetched from another layer of its stack",
 );
 await inlineBar(cachedPage).locator(".reviewer").first().waitFor({ timeout: 10_000 });
-cachedFixture.overviewDelay = 3000;
 cachedFixture.overviewFailure = 502;
 await cachedPage.reload();
 await inlineBar(cachedPage).locator(".stack-list").waitFor({ timeout: 3000 });
