@@ -729,7 +729,8 @@ function openDismissal(reviewer: Reviewer, verdict: DismissedVerdict): void {
 function onKeydown(event: KeyboardEvent): void {
   // macOS sends no keyup for a key pressed with ⌘ held, so a claimed ⌘Esc is let go once Esc goes down again.
   if (event.code === claimedKey) claimedKey = null;
-  if (!current || dialog.isOpen) return;
+  // A page script can dispatch keydown events of its own; only a real press may review, navigate or copy.
+  if (!event.isTrusted || !current || dialog.isOpen) return;
   clearTimeout(hintTimer);
   if (chordHint.isOpen && !["Shift", "Meta", "Control", "Alt", "CapsLock"].includes(event.key)) {
     const listed = chordHint.listsAll;

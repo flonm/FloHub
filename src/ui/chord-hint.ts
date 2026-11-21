@@ -1,5 +1,5 @@
 import type { ShortcutHelp } from "../core/shortcuts";
-import { el } from "./dom";
+import { el, guardedShadow } from "./dom";
 import { renderShortcutList } from "./shortcut-list";
 
 const HINT_STYLES = `
@@ -65,7 +65,7 @@ export class ChordHint {
 
   constructor() {
     this.host = document.createElement("flohub-chord-hint");
-    const shadow = this.host.attachShadow({ mode: "open" });
+    const shadow = guardedShadow(this.host);
     const style = document.createElement("style");
     style.textContent = HINT_STYLES;
     this.panel = el("div", { class: "hint", role: "status" });

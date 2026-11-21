@@ -3,7 +3,7 @@ import type { VersionPatch } from "../api/github";
 import type { ReviewThread } from "../core/threads";
 import type { ViewedState } from "../core/viewed";
 import { BASE, type SavedRange, type Version, type VersionHistory } from "../core/versions";
-import { el } from "../ui/dom";
+import { dispatchOwn, el, press } from "../ui/dom";
 import { type CommentLine, type ViewedMarks, VersionsView } from "../ui/versions-view";
 import { NOW } from "./shadow";
 
@@ -613,7 +613,7 @@ export const FilteredFileTree: Story = {
       const search = nav.querySelector("input");
       if (!search) return;
       search.value = "retry";
-      search.dispatchEvent(new Event("input"));
+      dispatchOwn(search, new Event("input"));
     }),
 };
 
@@ -625,8 +625,9 @@ export const FilteredFileTree: Story = {
 export const FilterMenu: Story = {
   render: () =>
     filtered((nav) => {
-      nav.querySelector<HTMLButtonElement>(".filter-button")?.click();
+      const filter = nav.querySelector<HTMLButtonElement>(".filter-button");
+      if (filter) press(filter);
       const sql = [...nav.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')].find((item) => item.textContent.startsWith(".sql"));
-      sql?.click();
+      if (sql) press(sql);
     }),
 };

@@ -1,5 +1,5 @@
 import { withCheer } from "../core/fun";
-import { el, icon, type IconName } from "./dom";
+import { el, guardedShadow, icon, type IconName } from "./dom";
 
 export type ToastTone = "info" | "success" | "danger";
 
@@ -65,7 +65,7 @@ export class Toast {
 
   constructor() {
     this.host = document.createElement("flohub-toast");
-    const shadow = this.host.attachShadow({ mode: "open" });
+    const shadow = guardedShadow(this.host);
     const style = document.createElement("style");
     style.textContent = TOAST_STYLES;
     this.polite = el("div", { class: "toast", role: "status" });

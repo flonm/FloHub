@@ -1,4 +1,4 @@
-import { el, icon, type IconName } from "./dom";
+import { el, guardedShadow, icon, type IconName, press } from "./dom";
 
 /** One way to look at the code a review comment is on. */
 export interface JumpChoice {
@@ -160,7 +160,7 @@ export class JumpMenu {
 
   constructor() {
     this.host = document.createElement("flohub-jump-menu");
-    const shadow = this.host.attachShadow({ mode: "open" });
+    const shadow = guardedShadow(this.host);
     const style = document.createElement("style");
     style.textContent = MENU_STYLES;
     this.menu = el("div", { class: "menu", role: "menu", "aria-label": "Show the code" });
@@ -259,7 +259,7 @@ export class JumpMenu {
     const picked = this.menu.querySelector<HTMLButtonElement>(`button[data-key="${CSS.escape(event.key)}"]:not(:disabled)`);
     if (picked && !event.metaKey && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
-      picked.click();
+      press(picked);
       return;
     }
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
