@@ -1,7 +1,10 @@
 import { pickByRoll } from "./fun";
 import type { PullState } from "./pull-state";
 
-/** Each trick the merge cow knows, with what she says doing it, picked at random each time she performs. */
+/**
+ * Each trick the merge cow knows, with what she says doing it, picked at random each time she performs. A trick's
+ * weight is how often a random pick lands on it next to the others, 1 unless it says otherwise.
+ */
 export const TRICKS = {
   walk: {
     lines: [
@@ -14,10 +17,34 @@ export const TRICKS = {
       "Finally back to kick some tail.",
     ],
   },
-} as const satisfies Record<string, { lines: readonly [string, ...string[]] }>;
+  backwards: {
+    lines: ["Smooth criminal. Smooth merge.", "Reverting… just kidding.", "git reset --hard? Never heard of her.", "Moonwalked it into main."],
+  },
+  gallop: {
+    lines: ["MOOOOOOOOOO—", "Gotta go fast.", "Faster than your CI.", "Can't stop, shipping."],
+  },
+  stare: {
+    lines: ["…", "I know what you merged.", "Did you write tests? Moo.", "I'm watching you. Good merge."],
+  },
+  trip: {
+    lines: ["Nobody saw that.", "I meant to do that.", "Flaky test, flaky legs.", "Still merged, though."],
+  },
+  peekaboo: {
+    lines: ["Psst. Merged.", "Moo-ve along, nothing to see.", "Peekaboo!", "Don't mind me."],
+  },
+} as const satisfies Record<string, Trick>;
+
+/** What the merge cow says doing a trick, and how often a random pick lands on it. */
+interface Trick {
+  lines: readonly [string, ...string[]];
+  weight?: number;
+}
 
 /** A trick the merge cow knows. */
 export type CowTrick = keyof typeof TRICKS;
+
+/** {@link TRICKS}, seen as plain tricks, so a weight can be read where none is set. */
+const TRICK_INFO: Readonly<Record<CowTrick, Trick>> = TRICKS;
 
 /**
  * @param trick The trick she performs.
@@ -26,6 +53,22 @@ export type CowTrick = keyof typeof TRICKS;
  */
 export function lineFor(trick: CowTrick, roll: number): string {
   return pickByRoll(TRICKS[trick].lines, roll);
+}
+
+/**
+ * @param previous The trick she performed last time, which a random pick never repeats.
+ * @param roll A number in [0, 1), like `Math.random()`, that picks the trick.
+ * @returns A trick picked at random by the weights.
+ */
+export function pickTrick(previous: CowTrick | undefined, roll: number): CowTrick {
+  const candidates = (Object.keys(TRICKS) as CowTrick[]).filter((trick) => trick !== previous);
+  const weights = candidates.map((trick) => TRICK_INFO[trick].weight ?? 1);
+  let left = Math.min(Math.max(roll, 0), 1 - Number.EPSILON) * weights.reduce((sum, weight) => sum + weight, 0);
+  for (const [index, trick] of candidates.entries()) {
+    left -= weights[index] ?? 0;
+    if (left < 0) return trick;
+  }
+  return candidates.at(-1) ?? "walk";
 }
 
 /**

@@ -25,7 +25,7 @@ import { nameList, pokeMessage, rangeFileStats, type StandingVerdict, staleRevie
 import { interdiff } from "./core/interdiff";
 import { deriveStack } from "./core/stack";
 import { Toast } from "./ui/toast";
-import { cowDue } from "./core/cow";
+import { type CowTrick, cowDue, pickTrick } from "./core/cow";
 import { FUN_KEY, funFrom, readFun } from "./core/fun";
 import { MergeCow } from "./ui/merge-cow";
 import { ChordHint } from "./ui/chord-hint";
@@ -115,6 +115,8 @@ const cow = new MergeCow();
 let fun = true;
 /** The state of the pull request the bar last drew, for the merge cow's cue. */
 let lastPull: { key: string; state: PullState } | null = null;
+/** The trick the merge cow performed last, which she doesn't repeat. */
+let lastTrick: CowTrick | undefined;
 const favicon = new Favicon();
 const MAC = isMac(navigator.platform);
 const matchShortcut = createShortcutMatcher(MAC);
@@ -405,7 +407,8 @@ function moo(): void {
   const previous = lastPull?.key === key ? lastPull.state : undefined;
   lastPull = { key, state: pull.state };
   if (!cowDue(previous, pull.state)) return;
-  cow.perform("walk");
+  lastTrick = pickTrick(lastTrick, Math.random());
+  cow.perform(lastTrick);
   toast.show(`#${current.number} is merged.`, "success");
 }
 
