@@ -32,6 +32,23 @@ export const TRICKS = tricks({
   peekaboo: {
     lines: ["Psst. Merged.", "Moo-ve along, nothing to see.", "Peekaboo!", "Don't mind me."],
   },
+  stampede: {
+    lines: ["Wait for meee!", "The whole herd approves.", "Did someone say merge?", "Moo ×7."],
+  },
+  abduction: {
+    lines: ["Moo?!", "Take me to your maintainer.", "Beam me up, it's merged.", "Merged. Gotta go."],
+    // Rare, so it stays a surprise.
+    weight: 0.35,
+  },
+  skateboard: {
+    lines: ["Kickflip. Merged.", "Rad.", "Shred the diff.", "Ollie into main."],
+  },
+  parachute: {
+    lines: ["Special delivery.", "Deployed. Literally.", "Airdrop for main.", "Stuck the landing."],
+  },
+  fence: {
+    lines: ["Parkour!", "Over the wall, into main.", "Hurdles are for CI.", "Clean jump."],
+  },
 });
 
 /** What the merge cow says doing a trick, and how often a random pick lands on it. */

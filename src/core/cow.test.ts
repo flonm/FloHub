@@ -20,6 +20,12 @@ describe("the merge cow", () => {
     for (let roll = 0; roll < 1; roll += 0.01) expect(pickTrick(previous, roll)).not.toBe(previous);
   });
 
+  test("the UFO comes for her about a third as often as any other trick", () => {
+    const picks = Array.from({ length: 10_000 }, (_, index) => pickTrick(undefined, index / 10_000));
+    const count = (trick: CowTrick): number => picks.filter((picked) => picked === trick).length;
+    expect(count("abduction") / count("walk")).toBeCloseTo(0.35, 2);
+  });
+
   test("a roll outside [0, 1) still picks a trick", () => {
     expect(tricks).toContain(pickTrick("walk", 1));
     expect(tricks).toContain(pickTrick("walk", -1));

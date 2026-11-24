@@ -64,6 +64,21 @@ export const Trip: Story = { args: { trick: "trip" } };
 /** Only her head peeks up from the bottom edge. */
 export const Peekaboo: Story = { args: { trick: "peekaboo" } };
 
+/** A herd thunders past; the last cow lags behind and has the last word. */
+export const Stampede: Story = { args: { trick: "stampede" } };
+
+/** A UFO beams her up from the middle of the page. The rarest trick. */
+export const Abduction: Story = { args: { trick: "abduction" } };
+
+/** She kickflips a skateboard in the middle. */
+export const Skateboard: Story = { args: { trick: "skateboard" } };
+
+/** She drifts down under a parachute, lands and walks off. */
+export const Parachute: Story = { args: { trick: "parachute" } };
+
+/** She jumps a fence in the middle of the page. */
+export const Fence: Story = { args: { trick: "fence" } };
+
 /** Any moment of any show, held still: pick the trick and move the slider. */
 export const Moment: Story = { args: { moment: 0.5 } };
 
