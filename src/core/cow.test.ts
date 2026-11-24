@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { cowDue, lineFor, pickTrick, TRICK_NAMES, TRICKS } from "./cow";
+import { type CowTrick, cowDue, lineFor, pickTrick, TRICK_NAMES, TRICKS } from "./cow";
 import type { PullState } from "./pull-state";
 
 const tricks = TRICK_NAMES;
@@ -18,6 +18,12 @@ describe("the merge cow", () => {
 
   test.each(tricks)("a random pick never repeats %p, whatever the roll", (previous) => {
     for (let roll = 0; roll < 1; roll += 0.01) expect(pickTrick(previous, roll)).not.toBe(previous);
+  });
+
+  test("the UFO comes for her about a third as often as any other trick", () => {
+    const picks = Array.from({ length: 10_000 }, (_, index) => pickTrick(undefined, index / 10_000));
+    const count = (trick: CowTrick): number => picks.filter((picked) => picked === trick).length;
+    expect(count("abduction") / count("walk")).toBeCloseTo(0.35, 2);
   });
 
   test("a roll outside [0, 1) still picks a trick", () => {

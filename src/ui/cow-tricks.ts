@@ -175,6 +175,162 @@ const peekaboo: Show = {
   build: (moo) => [actor("peekaboo", bubble(moo), cowHead())],
 };
 
+/** How many cows run in the stampede, the last one lagging behind and talking. */
+const HERD = 7;
+
+/** A herd of small cows thunders past; the last one is out of breath, well behind, and has the last word. */
+const stampede: Show = {
+  ms: 6600,
+  css: `
+.stampede { animation: stampede 2000ms linear both; }
+.stampede .cow { font-size: 7px; padding: 3px 6px; animation-duration: 150ms; }
+.stampede:nth-child(2) { bottom: 54px; animation-delay: 250ms; }
+.stampede:nth-child(3) { bottom: 30px; animation-delay: 400ms; }
+.stampede:nth-child(4) { bottom: 66px; animation-delay: 650ms; }
+.stampede:nth-child(5) { bottom: 22px; animation-delay: 800ms; }
+.stampede:nth-child(6) { bottom: 44px; animation-delay: 1050ms; }
+.stampede-last { bottom: 16px; animation: stampede 4300ms linear 2300ms both; }
+.stampede-last .cow { animation-duration: 450ms; }
+/* Hidden while she waits off the edge for the herd to pass, where it would poke in. */
+.stampede-last .moo { margin-left: 24px; animation: stampede-moo var(--show) step-end both; }
+@keyframes stampede { from { transform: translateX(-160px); } to { transform: translateX(var(--offstage-right)); } }
+@keyframes stampede-moo { 0% { opacity: 0; } 35% { opacity: 1; } }
+`,
+  build: (moo) => [
+    ...Array.from({ length: HERD - 1 }, () => actor("stampede", cowBody())),
+    actor("stampede-last", bubble(moo), cowBody()),
+  ],
+};
+
+/** She walks to the middle, a UFO beams her up and flies off with her. */
+const abduction: Show = {
+  ms: 8000,
+  css: `
+.abduction { transform-origin: 50% 50%; animation: abduction var(--show) both; }
+.abduction .moo { animation: abduction-moo var(--show) step-end both; }
+.abduction-ufo { top: 0; bottom: auto; left: calc(50vw - 100px); animation: abduction-ufo var(--show) both; }
+.abduction-beam {
+  top: calc(12vh + 70px);
+  left: calc(50vw - 110px);
+  width: 220px;
+  background: linear-gradient(var(--bgColor-attention-emphasis, #9a6700), transparent);
+  clip-path: polygon(38% 0, 62% 0, 100% 100%, 0 100%);
+  animation: abduction-beam var(--show) both;
+}
+@keyframes abduction {
+  0% { transform: translateX(var(--offstage-left)); opacity: 1; animation-timing-function: ease-out; }
+  30%, 48% { transform: translateX(calc(50vw - 90px)); opacity: 1; animation-timing-function: ease-in; }
+  80% { transform: translate(calc(50vw - 90px), calc(-88vh + 150px)) scale(0.25); opacity: 1; }
+  82%, 100% { transform: translate(calc(50vw - 90px), calc(-88vh + 150px)) scale(0.25); opacity: 0; }
+}
+@keyframes abduction-moo { 0% { opacity: 0; } 46% { opacity: 1; } }
+@keyframes abduction-ufo {
+  0%, 30% { transform: translateY(-200px); animation-timing-function: ease-out; }
+  40%, 84% { transform: translateY(12vh); animation-timing-function: ease-in; }
+  100% { transform: translate(70vw, -40vh); }
+}
+@keyframes abduction-beam { 0%, 42% { opacity: 0; } 46%, 80% { opacity: 0.45; } 84%, 100% { opacity: 0; } }
+`,
+  build: (moo) => [
+    actor("abduction-beam"),
+    actor("abduction", bubble(moo), cowBody()),
+    actor("abduction-ufo", el("pre", {}, UFO)),
+  ],
+};
+
+const UFO = String.raw`           .-=-.
+      _.--'_____'--._
+    .'  o    o    o  '.
+   (_____________________)
+        '-.________.-'`;
+
+/** She rolls in on a skateboard, kickflips in the middle and rolls off. */
+const skateboard: Show = {
+  ms: 5000,
+  css: `
+.skateboard { animation: skateboard var(--show) linear both; }
+.skateboard .moo { animation: skateboard-moo var(--show) step-end both; }
+.skateboard .body { animation: skateboard-jump var(--show) ease-in-out both; }
+.skateboard .cow { animation: none; rotate: -3deg; }
+.skateboard-board { margin: -2px 0 0 10px; animation: skateboard-flip var(--show) linear both; }
+@keyframes skateboard { from { transform: translateX(var(--offstage-left)); } to { transform: translateX(var(--offstage-right)); } }
+@keyframes skateboard-moo { 0% { opacity: 0; } 58% { opacity: 1; } }
+@keyframes skateboard-jump { 0%, 44% { translate: 0 0; } 51% { translate: 0 -70px; } 58%, 100% { translate: 0 0; } }
+@keyframes skateboard-flip { 0%, 46% { rotate: x 0deg; } 56%, 100% { rotate: x 360deg; } }
+`,
+  build: (moo) => {
+    const body = cowBody();
+    body.append(el("pre", { class: "skateboard-board" }, BOARD));
+    return [actor("skateboard", bubble(moo), body)];
+  },
+};
+
+const BOARD = String.raw`\______________/
+   O        O`;
+
+/** She drifts down from the top under a parachute, lands, drops it and walks off. */
+const parachute: Show = {
+  ms: 7000,
+  css: `
+/* She travels by translate, which comes before the sway's rotate, so she swings under the canopy wherever she is. */
+.parachute { transform-origin: 50% 0; animation: parachute var(--show) both, parachute-sway var(--show) ease-in-out both; }
+/* Beside her rather than above, so the strings reach her. */
+.parachute .moo { position: absolute; left: 100%; bottom: 60px; margin: 0; animation: parachute-moo var(--show) step-end both; }
+.parachute-canopy { color: var(--fgColor-danger, #d1242f); animation: parachute-canopy var(--show) both; }
+@keyframes parachute {
+  0% { translate: 30vw -100vh; }
+  55%, 64% { translate: 30vw 0; }
+  100% { translate: var(--offstage-right) 0; }
+}
+@keyframes parachute-sway {
+  0%, 30% { rotate: -8deg; }
+  15%, 45% { rotate: 8deg; }
+  55%, 100% { rotate: 0deg; }
+}
+@keyframes parachute-canopy {
+  0%, 57% { opacity: 1; transform: none; }
+  66%, 100% { opacity: 0; transform: translate(-30px, -20px) rotate(-25deg); }
+}
+@keyframes parachute-moo { 0% { opacity: 0; } 64% { opacity: 1; } }
+`,
+  build: (moo) => [actor("parachute", el("pre", { class: "parachute-canopy" }, CANOPY), bubble(moo), cowBody())],
+};
+
+const CANOPY = String.raw`      ___.-----.___
+   .-'  /   |   \  '-.
+  /____/____|____\____\
+  \                   /
+    \               /
+      \           /`;
+
+/** A fence stands in the middle of the page and she jumps it. */
+const fence: Show = {
+  ms: 6000,
+  css: `
+/*
+ * She jumps with her bubble, which would vanish behind her otherwise. She travels by translate, which comes before the
+ * jump's transform, so she turns about herself, not about where she started.
+ */
+.fence { animation: fence var(--show) linear both, fence-jump var(--show) ease-in-out both; }
+.fence .moo { animation: fence-moo var(--show) step-end both; }
+.fence-post { left: calc(50vw - 30px); }
+@keyframes fence {
+  0% { translate: var(--offstage-left) 0; }
+  38% { translate: calc(50vw - 230px) 0; }
+  62% { translate: calc(50vw + 70px) 0; }
+  100% { translate: var(--offstage-right) 0; }
+}
+@keyframes fence-jump {
+  0%, 38%, 62%, 100% { transform: none; }
+  44% { transform: translateY(-70px) rotate(-10deg); }
+  50% { transform: translateY(-90px); }
+  56% { transform: translateY(-70px) rotate(10deg); }
+}
+@keyframes fence-moo { 0% { opacity: 0; } 40% { opacity: 1; } }
+`,
+  build: (moo) => [actor("fence-post", el("pre", {}, "|=|=|=|=|\n| | | | |\n| | | | |")), actor("fence", bubble(moo), cowBody())],
+};
+
 /** @returns Only her head, facing the viewer, with eyes that can shut like {@link cowBody}'s. */
 function cowHead(): HTMLElement {
   const head = el("pre", { class: "cow" });
@@ -185,4 +341,4 @@ function cowHead(): HTMLElement {
 }
 
 /** Every show, by the trick it performs. */
-export const SHOWS: Record<CowTrick, Show> = { walk, backwards, gallop, stare, trip, peekaboo };
+export const SHOWS: Record<CowTrick, Show> = { walk, backwards, gallop, stare, trip, peekaboo, stampede, abduction, skateboard, parachute, fence };
