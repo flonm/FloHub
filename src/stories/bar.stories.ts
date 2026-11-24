@@ -160,7 +160,7 @@ function ready(overrides: Partial<Extract<BarState, { kind: "ready" }>> = {}): E
     showBots: false,
     viewer: "tizian",
     versionsOpen: false,
-    pull: { state: "open", canUpdate: true, id: "PR_344" },
+    pull: { state: "open", canUpdate: true, id: "PR_344", inMergeQueue: false },
     ...overrides,
   };
 }
@@ -400,7 +400,7 @@ export const InlineShortcuts: Story = {
 
 /** @returns The bar for a pull request in the state, with its state menu open and its moves live. */
 function stateMenu(state: PullState, canUpdate = true): HTMLElement {
-  const host = interactive(ready({ pull: { state, canUpdate, id: "PR_344" } }));
+  const host = interactive(ready({ pull: { state, canUpdate, id: "PR_344", inMergeQueue: false } }));
   const pullState = host.shadowRoot!.querySelector<HTMLElement>('[data-focus-key="pull-state"]');
   if (pullState) press(pullState);
   return host;
@@ -422,7 +422,7 @@ export const StateNotYours: Story = { render: () => stateMenu("open", false) };
 
 /** While a move is under way, the control spins and its moves wait. */
 export const StateChanging: Story = {
-  render: () => inline(ready({ pull: { state: "draft", canUpdate: true, id: "PR_344" }, busy: new Set([PULL_STATE_BUSY]) })),
+  render: () => inline(ready({ pull: { state: "draft", canUpdate: true, id: "PR_344", inMergeQueue: false }, busy: new Set([PULL_STATE_BUSY]) })),
 };
 
 /** Force-pushes and highlighted changes since the viewer's review. */

@@ -37,7 +37,7 @@ const meta = {
     docs: {
       description: {
         component:
-          "In fun mode, when the viewer watches the pull request on screen get merged, the merge cow performs a trick over the page and a toast says it in words. She performs for everyone, reduced motion or not.",
+          "In fun mode, when the viewer watches the pull request on screen join the merge queue or get merged, the merge cow performs a trick over the page and a toast says it in words. She performs for everyone, reduced motion or not.",
       },
     },
   },

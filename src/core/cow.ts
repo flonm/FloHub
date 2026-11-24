@@ -139,12 +139,24 @@ export function pickTrick(setting: CowSetting, previous: CowTrick | undefined, r
   return candidates.at(-1) ?? "walk";
 }
 
+/** What brings the merge cow: the viewer watched the pull request join the merge queue, or get merged. */
+export type CowCue = "queued" | "merged";
+
+/** Where a pull request stands, as far as the merge cow cares. */
+export interface CowWatch {
+  state: PullState;
+  inMergeQueue: boolean;
+}
+
 /**
- * @param previous The pull request's state last time the bar drew it, or undefined before it knew one.
- * @param next Its state now.
- * @returns Whether the viewer just watched it get merged, which is the merge cow's cue. Opening a pull request that was
- *   merged long ago is no cue: the cow only comes for news.
+ * @param previous Where the pull request stood last time the bar drew it, or undefined before it knew.
+ * @param next Where it stands now.
+ * @returns The merge cow's cue, when the viewer just watched it join the merge queue or get merged; null otherwise.
+ *   Opening a pull request that was queued or merged long ago is no cue: the cow only comes for news.
  */
-export function cowDue(previous: PullState | undefined, next: PullState | undefined): boolean {
-  return previous !== undefined && previous !== "merged" && next === "merged";
+export function cowCue(previous: CowWatch | undefined, next: CowWatch | undefined): CowCue | null {
+  if (!previous || !next) return null;
+  if (previous.state !== "merged" && next.state === "merged") return "merged";
+  if (!previous.inMergeQueue && next.inMergeQueue && next.state !== "merged") return "queued";
+  return null;
 }

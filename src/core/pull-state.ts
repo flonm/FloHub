@@ -11,6 +11,8 @@ export interface PullStatus {
   canUpdate: boolean;
   /** Its node id, which the mutations take; null in an overview cached before it was fetched. */
   id: string | null;
+  /** Whether it waits in the merge queue; false in an overview cached before FloHub asked. */
+  inMergeQueue: boolean;
 }
 
 /** What a shortcut asks for; which move that is depends on the state. */
@@ -24,6 +26,20 @@ export function pullStateOf(pull: { state: "OPEN" | "CLOSED" | "MERGED"; isDraft
   if (pull.state === "MERGED") return "merged";
   if (pull.state === "CLOSED") return "closed";
   return pull.isDraft ? "draft" : "open";
+}
+
+/**
+ * @param pull The pull request as GitHub's GraphQL API gives it.
+ * @returns What FloHub knows of it to offer its moves and cue the merge cow.
+ */
+export function pullStatusOf(pull: {
+  state: "OPEN" | "CLOSED" | "MERGED";
+  isDraft: boolean;
+  viewerCanUpdate: boolean;
+  id?: string;
+  isInMergeQueue?: boolean;
+}): PullStatus {
+  return { state: pullStateOf(pull), canUpdate: pull.viewerCanUpdate, id: pull.id ?? null, inMergeQueue: pull.isInMergeQueue ?? false };
 }
 
 /**

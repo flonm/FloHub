@@ -1,5 +1,5 @@
 import { type BarState, type DiffMode, PULL_STATE_BUSY, ReviewBar } from "./ui/bar";
-import { moveDone, moveFor, MOVE_WORDS, noMoveReason, type PullMove, type PullState, pullStateOf, type StateIntent, stateAfter } from "./core/pull-state";
+import { moveDone, moveFor, MOVE_WORDS, noMoveReason, type PullMove, pullStatusOf, type StateIntent, stateAfter } from "./core/pull-state";
 import { findInlineAnchor, inlineBox } from "./ui/anchor";
 import { POKE_COOLDOWN_MS } from "./ui/reviewer-look";
 import { DiffHighlights, type HighlightStatus } from "./ui/diff-highlights";
@@ -25,7 +25,7 @@ import { nameList, pokeMessage, rangeFileStats, type StandingVerdict, staleRevie
 import { interdiff } from "./core/interdiff";
 import { deriveStack } from "./core/stack";
 import { Toast } from "./ui/toast";
-import { COW_TRICK_KEY, type CowSetting, cowDue, readTrickSetting, trickSettingFrom } from "./core/cow";
+import { COW_TRICK_KEY, type CowSetting, cowCue, type CowWatch, readTrickSetting, trickSettingFrom } from "./core/cow";
 import { FUN_KEY, funFrom, readFun } from "./core/fun";
 import { MergeCow } from "./ui/merge-cow";
 import { ChordHint } from "./ui/chord-hint";
@@ -113,8 +113,8 @@ const toast = new Toast();
 const cow = new MergeCow();
 /** Whether fun mode is on, kept in sync storage. */
 let fun = true;
-/** The state of the pull request the bar last drew, for the merge cow's cue. */
-let lastPull: { key: string; state: PullState } | null = null;
+/** Where the pull request the bar last drew stood, for the merge cow's cue. */
+let lastPull: { key: string; watch: CowWatch } | null = null;
 /** Which trick the merge cow performs, kept in sync storage. */
 let trickSetting: CowSetting = "random";
 const favicon = new Favicon();
@@ -398,23 +398,29 @@ function setFun(on: boolean): void {
 
 function render(): void {
   const shown = state.kind === "ready" ? { ...state, versionsOpen: versionsView.isOpen, fun } : state;
-  if (fun) moo();
+  moo();
   inline.render(shown);
   floating.render(shown);
   const tone = state.kind === "ready" ? (state.stack.entries.find((entry) => entry.current)?.tone ?? null) : null;
   favicon.set(faviconUrl(tone));
 }
 
-/** Sends the merge cow across the page when the pull request on screen was just merged while the viewer watched. */
+/**
+ * Sends the merge cow across the page, in fun mode, when the viewer watched the pull request on screen join the merge
+ * queue or get merged. Only what GitHub just said counts: a cached overview from an earlier visit would make old news
+ * look new. It keeps track while fun mode is off, so turning it on brings no cow for news it missed.
+ */
 function moo(): void {
-  const pull = state.kind === "ready" ? state.pull : null;
-  if (!current || !pull) return;
+  const ready = state.kind === "ready" ? state : null;
+  const pull = ready?.pull;
+  if (!current || !pull || ready.refreshing) return;
   const key = pullKey(current);
-  const previous = lastPull?.key === key ? lastPull.state : undefined;
-  lastPull = { key, state: pull.state };
-  if (!cowDue(previous, pull.state)) return;
+  const previous = lastPull?.key === key ? lastPull.watch : undefined;
+  lastPull = { key, watch: pull };
+  const cue = cowCue(previous, pull);
+  if (!cue || !fun) return;
   cow.perform(trickSetting);
-  toast.show(`#${current.number} is merged.`, "success");
+  toast.show(cue === "merged" ? `#${current.number} is merged.` : `#${current.number} joined the merge queue.`, "success");
 }
 
 /** @param message A notice to show in the bar, kept until the bar has loaded. */
@@ -509,7 +515,7 @@ function readyState(overview: Overview, ref: PullRef, exact: boolean): Extract<B
     versionsOpen: versionsView.isOpen,
     ...turnOf(pullRequest, overview.viewer.login, exact),
     standings: standingsFor(ref, reviewers),
-    pull: exact ? { state: pullStateOf(pullRequest), canUpdate: pullRequest.viewerCanUpdate, id: pullRequest.id ?? null } : null,
+    pull: exact ? pullStatusOf(pullRequest) : null,
   };
 }
 
@@ -870,7 +876,9 @@ async function movePull(move: PullMove): Promise<void> {
   const here = current && pullKey(current) === pullKey(ref);
   if (reply.ok) {
     toast.show(moveDone(move, ref.number, isMac(navigator.platform)), "success");
-    if (here) update({ pull: { ...pull, state: stateAfter(move) } });
+    // A load may have brought news while the move ran; only the state is the move's to change.
+    const latest = state.kind === "ready" ? state.pull : null;
+    if (here) update({ pull: { ...(latest ?? pull), state: stateAfter(move) } });
   } else {
     toast.show(`Could not ${MOVE_WORDS[move].failed} #${ref.number}: ${reply.message}`, "danger");
     if (here) render();

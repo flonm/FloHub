@@ -3,7 +3,8 @@ import { SHOWS } from "./cow-tricks";
 
 /**
  * What every show shares: the stage over the whole window, the bubble, the cow, her trot and her ASCII props. A show
- * reads its own length as `var(--show)`, and the spots just off either edge as `--offstage-left` and `--offstage-right`.
+ * reads its own length as `var(--show)`, and the spots just off either edge as `--offstage-left` and
+ * `--offstage-right`.
  */
 const STAGE_STYLES = `
 :host {
@@ -57,8 +58,9 @@ pre {
 `;
 
 /**
- * The merge cow: she performs a trick across the page when the viewer watches a pull request get merged. Every show
- * plays for everyone, reduced motion or not: she is a few seconds of decoration the viewer opted into with fun mode.
+ * The merge cow: she performs a trick across the page when the viewer watches a pull request join the merge queue or
+ * get merged. Every show plays for everyone, reduced motion or not: she is a few seconds of decoration the viewer opted
+ * into with fun mode.
  */
 export class MergeCow {
   private readonly host: HTMLElement;
