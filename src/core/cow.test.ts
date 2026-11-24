@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { cowDue, lineFor, pickTrick, TRICK_NAMES, TRICKS } from "./cow";
+import { type CowTrick, cowDue, lineFor, pickTrick, TRICK_NAMES, TRICKS } from "./cow";
 import type { PullState } from "./pull-state";
 
 const tricks = TRICK_NAMES;
