@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { type CowTrick, cowDue, lineFor, pickTrick, TRICKS } from "./cow";
+import { cowDue, lineFor, pickTrick, TRICK_NAMES, TRICKS } from "./cow";
 import type { PullState } from "./pull-state";
 
-const tricks = Object.keys(TRICKS) as CowTrick[];
+const tricks = TRICK_NAMES;
 
 describe("the merge cow", () => {
   test.each(tricks)("the roll picks what she says doing %p, from her own lines", (trick) => {

@@ -2,10 +2,10 @@ import { pickByRoll } from "./fun";
 import type { PullState } from "./pull-state";
 
 /**
- * Each trick the merge cow knows, with what she says doing it, picked at random each time she performs. A trick's
- * weight is how often a random pick lands on it next to the others, 1 unless it says otherwise.
+ * Each trick the merge cow knows: the lines she says doing it, one picked at random each time, and its weight, how
+ * often a random pick lands on it next to the others, 1 unless it says otherwise.
  */
-export const TRICKS = {
+export const TRICKS = tricks({
   walk: {
     lines: [
       "Moo. Merged.",
@@ -32,7 +32,7 @@ export const TRICKS = {
   peekaboo: {
     lines: ["Psst. Merged.", "Moo-ve along, nothing to see.", "Peekaboo!", "Don't mind me."],
   },
-} as const satisfies Record<string, Trick>;
+});
 
 /** What the merge cow says doing a trick, and how often a random pick lands on it. */
 interface Trick {
@@ -40,11 +40,16 @@ interface Trick {
   weight?: number;
 }
 
+/** @param table The tricks by name. @returns The same table, its names kept as a type and its tricks checked. */
+function tricks<Name extends string>(table: Record<Name, Trick>): Record<Name, Trick> {
+  return table;
+}
+
 /** A trick the merge cow knows. */
 export type CowTrick = keyof typeof TRICKS;
 
-/** {@link TRICKS}, seen as plain tricks, so a weight can be read where none is set. */
-const TRICK_INFO: Readonly<Record<CowTrick, Trick>> = TRICKS;
+/** Every trick's name, in the order {@link TRICKS} lists them. */
+export const TRICK_NAMES = Object.keys(TRICKS) as CowTrick[];
 
 /**
  * @param trick The trick she performs.
@@ -61,8 +66,8 @@ export function lineFor(trick: CowTrick, roll: number): string {
  * @returns A trick picked at random by the weights.
  */
 export function pickTrick(previous: CowTrick | undefined, roll: number): CowTrick {
-  const candidates = (Object.keys(TRICKS) as CowTrick[]).filter((trick) => trick !== previous);
-  const weights = candidates.map((trick) => TRICK_INFO[trick].weight ?? 1);
+  const candidates = TRICK_NAMES.filter((trick) => trick !== previous);
+  const weights = candidates.map((trick) => TRICKS[trick].weight ?? 1);
   let left = Math.min(Math.max(roll, 0), 1 - Number.EPSILON) * weights.reduce((sum, weight) => sum + weight, 0);
   for (const [index, trick] of candidates.entries()) {
     left -= weights[index] ?? 0;
