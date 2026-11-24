@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CHEERS, cowDue, funFrom, withCheer } from "./fun";
-import type { PullState } from "./pull-state";
+import { CHEERS, funFrom, pickByRoll, withCheer } from "./fun";
 
 describe("fun mode", () => {
   test.each<[unknown, boolean]>([
@@ -23,15 +22,13 @@ describe("fun mode", () => {
     expect(withCheer("Done.", -1)).toBe(`Done. ${CHEERS[0]}`);
   });
 
-  test.each<[PullState | undefined, PullState | undefined, boolean]>([
-    ["open", "merged", true],
-    ["draft", "merged", true],
-    ["closed", "merged", true],
-    [undefined, "merged", false],
-    ["merged", "merged", false],
-    ["open", "closed", false],
-    ["open", undefined, false],
-  ])("the merge cow comes from %p to %p: %p, only for a merge the viewer watched", (previous, next, due) => {
-    expect(cowDue(previous, next)).toBe(due);
+  test.each<[number, string]>([
+    [0, "a"],
+    [0.5, "b"],
+    [0.99, "c"],
+    [1, "c"],
+    [-0.5, "a"],
+  ])("a roll of %p picks %p from three", (roll, picked) => {
+    expect(pickByRoll(["a", "b", "c"], roll)).toBe(picked);
   });
 });

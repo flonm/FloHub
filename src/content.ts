@@ -25,7 +25,8 @@ import { nameList, pokeMessage, rangeFileStats, type StandingVerdict, staleRevie
 import { interdiff } from "./core/interdiff";
 import { deriveStack } from "./core/stack";
 import { Toast } from "./ui/toast";
-import { cowDue, FUN_KEY, funFrom, readFun } from "./core/fun";
+import { cowDue } from "./core/cow";
+import { FUN_KEY, funFrom, readFun } from "./core/fun";
 import { MergeCow } from "./ui/merge-cow";
 import { ChordHint } from "./ui/chord-hint";
 import { type Landed, nextStop, READING_LINE, type Stop, stopToast } from "./core/steps";
@@ -404,7 +405,7 @@ function moo(): void {
   const previous = lastPull?.key === key ? lastPull.state : undefined;
   lastPull = { key, state: pull.state };
   if (!cowDue(previous, pull.state)) return;
-  cow.cross();
+  cow.perform("walk");
   toast.show(`#${current.number} is merged.`, "success");
 }
 

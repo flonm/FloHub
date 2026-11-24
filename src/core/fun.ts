@@ -1,5 +1,3 @@
-import type { PullState } from "./pull-state";
-
 /** Whether fun mode is on, in sync storage; left out, it is on. */
 export const FUN_KEY = "funMode";
 
@@ -47,16 +45,14 @@ export const CHEERS = [
  * @returns The message with a cheer after it.
  */
 export function withCheer(text: string, roll: number): string {
-  const index = Math.min(CHEERS.length - 1, Math.max(0, Math.floor(roll * CHEERS.length)));
-  return `${text} ${CHEERS[index]}`;
+  return `${text} ${pickByRoll(CHEERS, roll)}`;
 }
 
 /**
- * @param previous The pull request's state last time the bar drew it, or undefined before it knew one.
- * @param next Its state now.
- * @returns Whether the viewer just watched it get merged, which is the merge cow's cue. Opening a pull request that was
- *   merged long ago is no cue: the cow only comes for news.
+ * @param list What to pick from.
+ * @param roll A number in [0, 1), like `Math.random()`; one outside that range picks the first or the last.
+ * @returns The item the roll lands on.
  */
-export function cowDue(previous: PullState | undefined, next: PullState | undefined): boolean {
-  return previous !== undefined && previous !== "merged" && next === "merged";
+export function pickByRoll<T>(list: readonly [T, ...T[]], roll: number): T {
+  return list[Math.min(list.length - 1, Math.max(0, Math.floor(roll * list.length)))] ?? list[0];
 }
