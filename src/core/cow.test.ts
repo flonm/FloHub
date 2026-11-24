@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { type CowCue, type CowSetting, type CowTrick, cowCue, type CowWatch, lineFor, pickTrick, TRICK_NAMES, trickSettingFrom, TRICKS } from "./cow";
+import type { PullState } from "./pull-state";
+import { CONFLICT_LINES, conflictDue, conflictLinesFor, type CowCue, type CowSetting, type CowTrick, cowCue, type CowWatch, lineFor, pickTrick, TRICK_NAMES, trickSettingFrom, TRICKS } from "./cow";
 
 const tricks = TRICK_NAMES;
 
@@ -66,5 +67,21 @@ describe("the merge cow", () => {
     ["the pull request goes away", open, undefined, null],
   ])("she comes when %s: %p → %p is %p, only for news the viewer watched", (_, previous, next, cue) => {
     expect(cowCue(previous, next)).toBe(cue);
+  });
+
+  test("the roll picks what the two conflict cows say, as a pair", () => {
+    expect(conflictLinesFor(0)).toEqual(CONFLICT_LINES[0]);
+    expect(conflictLinesFor(0.999)).toEqual(CONFLICT_LINES.at(-1)!);
+  });
+
+  test.each<[string, PullState, boolean, boolean, boolean]>([
+    ["an open one conflicts", "open", true, false, true],
+    ["a draft conflicts", "draft", true, false, true],
+    ["they already locked horns over it", "open", true, true, false],
+    ["it doesn't conflict", "open", false, false, false],
+    ["a closed one conflicts", "closed", true, false, false],
+    ["a merged one conflicts", "merged", true, false, false],
+  ])("two cows lock horns when %s: %p", (_, state, conflict, shown, due) => {
+    expect(conflictDue({ state, conflict }, shown)).toBe(due);
   });
 });

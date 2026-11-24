@@ -72,16 +72,22 @@ describe("after a move", () => {
   });
 });
 
-test("a pull request's status reads its state, the viewer's rights, its id and its place in the merge queue", () => {
-  const pull = { state: "OPEN", isDraft: false, viewerCanUpdate: true, id: "PR_1", isInMergeQueue: true } as const;
-  expect(pullStatusOf(pull)).toEqual({ state: "open", canUpdate: true, id: "PR_1", inMergeQueue: true });
+test("a pull request's status reads its state, the viewer's rights, its id, its place in the merge queue and a conflict", () => {
+  const pull = { state: "OPEN", isDraft: false, viewerCanUpdate: true, id: "PR_1", isInMergeQueue: true, mergeable: "CONFLICTING" } as const;
+  expect(pullStatusOf(pull)).toEqual({ state: "open", canUpdate: true, id: "PR_1", inMergeQueue: true, conflict: true });
+});
+
+test("a pull request whose mergeability GitHub hasn't worked out yet doesn't conflict", () => {
+  const pull = { state: "OPEN", isDraft: false, viewerCanUpdate: true, mergeable: "UNKNOWN" } as const;
+  expect(pullStatusOf(pull).conflict).toBe(false);
 });
 
 test("an overview cached before FloHub asked for the id or the merge queue counts as neither", () => {
-  expect(pullStatusOf({ state: "MERGED", isDraft: false, viewerCanUpdate: false })).toEqual({
+  expect(pullStatusOf({ state: "MERGED", isDraft: false, viewerCanUpdate: false, mergeable: "MERGEABLE" })).toEqual({
     state: "merged",
     canUpdate: false,
     id: null,
     inMergeQueue: false,
+    conflict: false,
   });
 });

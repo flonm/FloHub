@@ -1,17 +1,17 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
-import { type CowTrick, TRICKS } from "../core/cow";
-import { SHOWS } from "../ui/cow-tricks";
+import { CONFLICT_LINES, TRICKS } from "../core/cow";
+import { type ShowName, SHOWS } from "../ui/cow-tricks";
 import { el } from "../ui/dom";
 import { MergeCow } from "../ui/merge-cow";
 
 interface Args {
-  trick: CowTrick;
+  trick: ShowName;
   /** Where in the show to hold her still, from 0 to 1; -1 lets the show play. */
   moment: number;
   moo: string;
 }
 
-const tricks = Object.keys(SHOWS) as CowTrick[];
+const shows = Object.keys(SHOWS) as ShowName[];
 
 /**
  * @param args The trick, the moment to hold and what she says.
@@ -19,7 +19,15 @@ const tricks = Object.keys(SHOWS) as CowTrick[];
  */
 function cow({ trick, moment, moo }: Args): HTMLElement {
   for (const previous of document.querySelectorAll("flohub-merge-cow")) previous.remove();
-  new MergeCow().render(trick, moo || TRICKS[trick].lines[0], moment < 0 ? undefined : moment);
+  const stage = new MergeCow();
+  const held = moment < 0 ? undefined : moment;
+  if (trick === "conflict") {
+    const [[left, right]] = CONFLICT_LINES;
+    stage.render("conflict", [moo || left, right], held);
+  } else {
+    const [first] = TRICKS[trick].lines;
+    stage.render(trick, [moo || first], held);
+  }
   return el("p", {}, "The merge cow performs over the whole window. Reload the story to see a show again.");
 }
 
@@ -29,7 +37,7 @@ const meta = {
   render: cow,
   args: { trick: "walk", moment: -1, moo: "" },
   argTypes: {
-    trick: { control: "select", options: tricks },
+    trick: { control: "select", options: shows },
     moment: { control: { type: "range", min: -1, max: 1, step: 0.01 }, description: "Where to hold the show, from 0 to 1; -1 plays it." },
     moo: { control: "text", description: "What she says; empty takes the trick's first line." },
   },
@@ -37,7 +45,7 @@ const meta = {
     docs: {
       description: {
         component:
-          "In fun mode, when the viewer watches the pull request on screen join the merge queue or get merged, the merge cow performs a trick over the page and a toast says it in words. She performs for everyone, reduced motion or not.",
+          "In fun mode, when the viewer watches the pull request on screen join the merge queue or get merged, the merge cow performs a trick over the page and a toast says it in words. When they open one with a merge conflict, two cows lock horns. She performs for everyone, reduced motion or not.",
       },
     },
   },
@@ -78,6 +86,9 @@ export const Parachute: Story = { args: { trick: "parachute" } };
 
 /** She jumps a fence in the middle of the page. */
 export const Fence: Story = { args: { trick: "fence" } };
+
+/** Two cows lock horns over a merge conflict, when the viewer opens a pull request that has one. */
+export const Conflict: Story = { args: { trick: "conflict" } };
 
 /** Any moment of any show, held still: pick the trick and move the slider. */
 export const Moment: Story = { args: { moment: 0.5 } };

@@ -1,8 +1,11 @@
 import type { CowTrick } from "../core/cow";
 import { el } from "./dom";
 
-/** A show the merge cow puts on: what it puts on the stage, its keyframes, and how long it lasts. */
-interface Show {
+/**
+ * A show the merge cow puts on: what it puts on the stage, its keyframes, and how long it lasts. Its lines are what the
+ * cows in it say: one for a trick, the left cow's and the right one's for the conflict.
+ */
+interface Show<Lines extends string[] = [moo: string]> {
   /** How long it lasts, in milliseconds, after which the stage is cleared; its CSS reads it as `var(--show)`. */
   ms: number;
   /**
@@ -10,9 +13,18 @@ interface Show {
    * all shows share one style sheet; what they share lives in the stage's styles.
    */
   css: string;
-  /** @param moo What she says. @returns The actors, each placed on the full-window stage by its own class. */
-  build: (moo: string) => HTMLElement[];
+  /** @param lines What the cows say. @returns The actors, each placed on the full-window stage by its own class. */
+  build: (...lines: Lines) => HTMLElement[];
 }
+
+/** Every show by its name: each of her tricks, and the two cows locking horns over a merge conflict. */
+type Shows = Record<CowTrick, Show> & { conflict: Show<[moo: string, reply: string]> };
+
+/** A show the merge cow puts on. */
+export type ShowName = keyof Shows;
+
+/** What the cows say in a show. */
+export type ShowLines<Name extends ShowName> = Parameters<Shows[Name]["build"]>;
 
 /**
  * @returns The cow, facing right, the way she walks. Her eyes can shut: `.eyes .shut` lies over `.eyes .open`, hidden
@@ -340,5 +352,72 @@ function cowHead(): HTMLElement {
   return body;
 }
 
-/** Every show, by the trick it performs. */
-export const SHOWS: Record<CowTrick, Show> = { walk, backwards, gallop, stare, trip, peekaboo, stampede, abduction, skateboard, parachute, fence };
+/**
+ * Two cows trot in from both edges, meet in the middle under a sign, push head against head and back off. Neither
+ * wins: the conflict is still there.
+ */
+const conflict: Show<[moo: string, reply: string]> = {
+  ms: 7000,
+  css: `
+.conflict-cow { animation-duration: var(--show); animation-fill-mode: both; }
+.conflict-left { animation-name: conflict-left, conflict-shove; }
+.conflict-right { animation-name: conflict-right, conflict-shove; }
+.conflict-right .cow { scale: -1 1; }
+.conflict-left .moo { animation: conflict-moo var(--show) step-end both; }
+/* Out of the flow, so a long reply doesn't widen her and keep the heads apart. */
+.conflict-right .moo {
+  position: absolute;
+  right: 64px;
+  bottom: calc(100% + 4px);
+  margin: 0;
+  animation: conflict-reply var(--show) step-end both;
+}
+.conflict-sign {
+  left: calc(50vw - 70px);
+  bottom: 150px;
+  padding: 4px 12px;
+  border: 1px solid var(--borderColor-danger-emphasis, #cf222e);
+  border-radius: 12px;
+  background: var(--bgColor-danger-muted, #ffebe9);
+  color: var(--fgColor-danger, #d1242f);
+  font: 700 14px/1.4 var(--fontStack-sansSerif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif);
+  white-space: nowrap;
+  animation: conflict-sign var(--show) both;
+}
+@keyframes conflict-left {
+  0% { transform: translateX(var(--offstage-left)); animation-timing-function: ease-out; }
+  28%, 70% { transform: translateX(calc(50vw - 150px)); animation-timing-function: ease-in; }
+  100% { transform: translateX(var(--offstage-left)); }
+}
+@keyframes conflict-right {
+  0% { transform: translateX(var(--offstage-right)); animation-timing-function: ease-out; }
+  28%, 70% { transform: translateX(calc(50vw - 10px)); animation-timing-function: ease-in; }
+  100% { transform: translateX(var(--offstage-right)); }
+}
+/* Both move together: as one cow pushes forward, the other gives way. */
+@keyframes conflict-shove {
+  0%, 30%, 66%, 100% { translate: 0 0; }
+  36% { translate: 14px 0; }
+  42% { translate: -14px 0; }
+  48% { translate: 18px 0; }
+  54% { translate: -18px 0; }
+  60% { translate: 8px 0; }
+}
+@keyframes conflict-moo { 0% { opacity: 0; } 32% { opacity: 1; } 68%, 100% { opacity: 0; } }
+@keyframes conflict-reply { 0% { opacity: 0; } 40% { opacity: 1; } 68%, 100% { opacity: 0; } }
+@keyframes conflict-sign {
+  0%, 27% { opacity: 0; scale: 0.4; }
+  30% { opacity: 1; scale: 1.3; }
+  34%, 66% { opacity: 1; scale: 1; }
+  70%, 100% { opacity: 0; scale: 1; }
+}
+`,
+  build: (moo, reply) => [
+    actor("conflict-sign", el("span", {}, "💥 CONFLICT")),
+    actor("conflict-cow conflict-left", bubble(moo), cowBody()),
+    actor("conflict-cow conflict-right", bubble(reply), cowBody()),
+  ],
+};
+
+/** Every show by its name: each trick, and the conflict. */
+export const SHOWS: Shows = { walk, backwards, gallop, stare, trip, peekaboo, stampede, abduction, skateboard, parachute, fence, conflict };
