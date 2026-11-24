@@ -307,6 +307,18 @@ kbd {
 .profile-active select {
   font-weight: 400;
 }
+.cow-trick {
+  margin-top: 12px;
+}
+.cow-trick select {
+  height: 32px;
+}
+/* The merge cow takes GitHub's colours on GitHub; here she takes the page's. */
+flohub-merge-cow {
+  --bgColor-default: var(--flo-bg);
+  --fgColor-default: var(--flo-fg);
+  --borderColor-default: var(--flo-border);
+}
 /* A repository listed on its own sits under its owner, indented. */
 .repo-entry .name {
   padding-left: 16px;

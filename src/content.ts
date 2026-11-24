@@ -25,7 +25,7 @@ import { nameList, pokeMessage, rangeFileStats, type StandingVerdict, staleRevie
 import { interdiff } from "./core/interdiff";
 import { deriveStack } from "./core/stack";
 import { Toast } from "./ui/toast";
-import { cowDue } from "./core/cow";
+import { COW_TRICK_KEY, type CowSetting, cowDue, readTrickSetting, trickSettingFrom } from "./core/cow";
 import { FUN_KEY, funFrom, readFun } from "./core/fun";
 import { MergeCow } from "./ui/merge-cow";
 import { ChordHint } from "./ui/chord-hint";
@@ -115,6 +115,8 @@ const cow = new MergeCow();
 let fun = true;
 /** The state of the pull request the bar last drew, for the merge cow's cue. */
 let lastPull: { key: string; state: PullState } | null = null;
+/** Which trick the merge cow performs, kept in sync storage. */
+let trickSetting: CowSetting = "random";
 const favicon = new Favicon();
 const MAC = isMac(navigator.platform);
 const matchShortcut = createShortcutMatcher(MAC);
@@ -207,6 +209,7 @@ const repoViews = new RepoPullsViews(repoActions);
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "sync" && Object.hasOwn(changes, FUN_KEY)) setFun(funFrom(changes[FUN_KEY]?.newValue));
+  if (area === "sync" && Object.hasOwn(changes, COW_TRICK_KEY)) trickSetting = trickSettingFrom(changes[COW_TRICK_KEY]?.newValue);
   if (area !== "local" || !repoPulls) return;
   if (Object.hasOwn(changes, MARKS_KEY)) repoPulls.marks = readMarks(changes[MARKS_KEY]?.newValue);
   if (Object.hasOwn(changes, "inbox")) {
@@ -258,7 +261,12 @@ function schedule(): void {
 }
 
 async function restoreSettings(): Promise<void> {
-  const [stored, funny] = await Promise.all([chrome.storage.local.get(["stackCollapsed", "floatingMinimized", "pokes"]), readFun()]);
+  const [stored, funny, trick] = await Promise.all([
+    chrome.storage.local.get(["stackCollapsed", "floatingMinimized", "pokes"]),
+    readFun(),
+    readTrickSetting(),
+  ]);
+  trickSetting = trick;
   setFun(funny);
   stackCollapsed = stored.stackCollapsed === true;
   floatingMinimized = stored.floatingMinimized === true;
@@ -405,7 +413,7 @@ function moo(): void {
   const previous = lastPull?.key === key ? lastPull.state : undefined;
   lastPull = { key, state: pull.state };
   if (!cowDue(previous, pull.state)) return;
-  cow.perform();
+  cow.perform(trickSetting);
   toast.show(`#${current.number} is merged.`, "success");
 }
 

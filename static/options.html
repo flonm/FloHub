@@ -93,10 +93,17 @@
         <p>
           Code review is serious business, so FloHub isn't. In fun mode the chips joke ("CI is on fire") while their
           tooltips keep the facts, success messages get a cheer, and when you watch a pull request get merged, the merge
-          cow crosses the page.
+          cow performs a trick across the page: the one you pick below, or a different one each time.
         </p>
         <label class="check"><input id="fun" type="checkbox" /> Fun mode</label>
         <p class="fine">On by default. Turning it off sticks, in every browser your profile syncs to. The cow will understand.</p>
+        <div class="cow-trick">
+          <label for="cow-trick">Merge cow</label>
+          <div class="field">
+            <select id="cow-trick"></select>
+            <button type="button" id="cow-show">Show me</button>
+          </div>
+        </div>
       </section>
     </main>
     <script src="options.js"></script>
