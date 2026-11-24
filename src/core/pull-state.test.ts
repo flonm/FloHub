@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { moveDone, moveFor, moveKeys, noMoveReason, pullMoves, pullStateOf, stateAfter } from "./pull-state";
+import { moveDone, moveFor, moveKeys, noMoveReason, pullMoves, pullStateOf, pullStatusOf, stateAfter } from "./pull-state";
 
 describe("pull request state", () => {
   test.each([
@@ -69,5 +69,19 @@ describe("after a move", () => {
     expect(moveDone("close", 7, false)).toBe("Closed #7.");
     expect(moveDone("draft", 7, false)).toBe("Turned #7 into a draft. D then D marks it ready.");
     expect(moveDone("ready", 7, true)).toBe("Marked #7 ready for review. D then D turns it back into a draft.");
+  });
+});
+
+test("a pull request's status reads its state, the viewer's rights, its id and its place in the merge queue", () => {
+  const pull = { state: "OPEN", isDraft: false, viewerCanUpdate: true, id: "PR_1", isInMergeQueue: true } as const;
+  expect(pullStatusOf(pull)).toEqual({ state: "open", canUpdate: true, id: "PR_1", inMergeQueue: true });
+});
+
+test("an overview cached before FloHub asked for the id or the merge queue counts as neither", () => {
+  expect(pullStatusOf({ state: "MERGED", isDraft: false, viewerCanUpdate: false })).toEqual({
+    state: "merged",
+    canUpdate: false,
+    id: null,
+    inMergeQueue: false,
   });
 });

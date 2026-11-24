@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type CowSetting, type CowTrick, cowDue, lineFor, pickTrick, TRICK_NAMES, trickSettingFrom, TRICKS } from "./cow";
-import type { PullState } from "./pull-state";
+import { type CowCue, type CowSetting, type CowTrick, cowCue, type CowWatch, lineFor, pickTrick, TRICK_NAMES, trickSettingFrom, TRICKS } from "./cow";
 
 const tricks = TRICK_NAMES;
 
@@ -48,15 +47,24 @@ describe("the merge cow", () => {
     expect(tricks).toContain(pickTrick("random", "walk", -1));
   });
 
-  test.each<[PullState | undefined, PullState | undefined, boolean]>([
-    ["open", "merged", true],
-    ["draft", "merged", true],
-    ["closed", "merged", true],
-    [undefined, "merged", false],
-    ["merged", "merged", false],
-    ["open", "closed", false],
-    ["open", undefined, false],
-  ])("she comes from %p to %p: %p, only for a merge the viewer watched", (previous, next, due) => {
-    expect(cowDue(previous, next)).toBe(due);
+  const open = { state: "open", inMergeQueue: false } as const;
+  const queued = { state: "open", inMergeQueue: true } as const;
+  const merged = { state: "merged", inMergeQueue: false } as const;
+
+  test.each<[string, CowWatch | undefined, CowWatch | undefined, CowCue | null]>([
+    ["an open one gets merged", open, merged, "merged"],
+    ["a draft gets merged", { state: "draft", inMergeQueue: false }, merged, "merged"],
+    ["a closed one gets merged", { state: "closed", inMergeQueue: false }, merged, "merged"],
+    ["a queued one gets merged", queued, merged, "merged"],
+    ["an open one joins the merge queue", open, queued, "queued"],
+    ["a merged one is opened", undefined, merged, null],
+    ["a queued one is opened", undefined, queued, null],
+    ["a merged one stays merged", merged, merged, null],
+    ["a queued one stays queued", queued, queued, null],
+    ["a queued one leaves the queue", queued, open, null],
+    ["an open one gets closed", open, { state: "closed", inMergeQueue: false }, null],
+    ["the pull request goes away", open, undefined, null],
+  ])("she comes when %s: %p → %p is %p, only for news the viewer watched", (_, previous, next, cue) => {
+    expect(cowCue(previous, next)).toBe(cue);
   });
 });
