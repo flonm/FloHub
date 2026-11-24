@@ -5,7 +5,7 @@ import TOKEN_STYLES from "../styles/tokens.css?raw";
 import { Picker, type PickerOption } from "./picker";
 import { Tooltip } from "./tooltip";
 import { VERDICT_LOOK, verdictFace } from "./verdict-face";
-import { el, icon } from "./dom";
+import { dispatchOwn, el, guardedShadow, icon, press } from "./dom";
 import type { VersionPatch } from "../api/github";
 import { samePatch } from "../api/version-cache";
 import {
@@ -778,7 +778,7 @@ export class VersionsView {
 
   constructor() {
     this.host = document.createElement("flohub-versions");
-    const shadow = this.host.attachShadow({ mode: "open" });
+    const shadow = guardedShadow(this.host);
     const style = document.createElement("style");
     style.textContent = [TOKEN_STYLES, CONTROL_STYLES, FACE_STYLES, VIEW_STYLES].join("\n");
     this.surface = el("section", { class: "surface", "aria-labelledby": "versions-title" });
@@ -2048,7 +2048,7 @@ function renderResult(
     const box = composer.querySelector("textarea");
     if (!box) return;
     box.value = text;
-    box.dispatchEvent(new Event("input"));
+    dispatchOwn(box, new Event("input"));
     box.focus();
   };
 
@@ -2391,7 +2391,8 @@ function filterMenu(
       items[(at + step + items.length) % items.length]?.focus();
     } else if ((event.key === "Enter" || event.key === " ") && at !== -1) {
       event.preventDefault();
-      items[at]?.click();
+      const item = items[at];
+      if (item) press(item);
     }
   });
   // Only a choice the menu shows marks its button: one carried over from other versions may name nothing here.
