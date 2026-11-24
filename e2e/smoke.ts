@@ -329,7 +329,7 @@ const DISCUSSION_COMMENTS = [
 ];
 
 function createFixture(
-  options: { partial?: boolean; failReadd?: boolean; inbox?: object; inboxGate?: Promise<unknown>; discussion?: boolean } = {},
+  options: { partial?: boolean; failReadd?: boolean; inbox?: object; inboxGate?: Promise<unknown>; discussion?: boolean; conflict?: boolean } = {},
 ) {
   const requested: (object | null)[] = [
     actor("mojombo"),
@@ -561,6 +561,7 @@ function createFixture(
                 pullRequest: {
                   ...STACK_PULLS.find((pull) => pull.number === CURRENT),
                   ...(options.partial && { statusCheckRollup: null }),
+                  ...(options.conflict && { mergeable: "CONFLICTING" }),
                   id: "PR_current",
                   state: created.pull.state,
                   isDraft: created.pull.isDraft,
@@ -2754,6 +2755,17 @@ check(
   `a failed re-add is retried once and then tells you to re-request by hand: ${failedFixture.requestLog.join(",")}`,
 );
 await failedPoke.close();
+
+const conflictContext = await launch("light", async (route) => createFixture({ conflict: true }).handle(route));
+await conflictContext.serviceWorkers()[0]?.evaluate(async () => chrome.storage.sync.set({ funMode: true }));
+const conflictPage = await conflictContext.newPage();
+await conflictPage.goto(`${PULL_URL}/files`);
+await conflictPage.locator("flohub-merge-cow .conflict-sign").waitFor({ state: "attached" });
+check(
+  (await conflictPage.locator("flohub-merge-cow .conflict-cow").count()) === 2,
+  "in fun mode, two cows lock horns when the viewer opens a pull request with a merge conflict",
+);
+await conflictContext.close();
 
 const discussionContext = await launch("light", async (route) => createFixture({ discussion: true }).handle(route));
 const [discussionWorker] = discussionContext.serviceWorkers();

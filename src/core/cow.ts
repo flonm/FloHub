@@ -160,3 +160,34 @@ export function cowCue(previous: CowWatch | undefined, next: CowWatch | undefine
   if (!previous.inMergeQueue && next.inMergeQueue && next.state !== "merged") return "queued";
   return null;
 }
+
+/** What the two cows say when they lock horns over a merge conflict: the left one, then the right one. */
+export const CONFLICT_LINES: readonly [ConflictLines, ...ConflictLines[]] = [
+  ["Mine.", "No, mine."],
+  ["I was here first.", "I'm newer."],
+  ["Rebase.", "You rebase."],
+  ["Accept current change.", "Accept incoming change."],
+  ["<<<<<<< HEAD", ">>>>>>> main"],
+];
+
+/** What the two conflict cows say: the left one, then the right one. */
+type ConflictLines = [left: string, right: string];
+
+/**
+ * @param roll A number in [0, 1), like `Math.random()`, that picks the lines.
+ * @returns What the two cows say, the left one first.
+ */
+export function conflictLinesFor(roll: number): ConflictLines {
+  return [...pickByRoll(CONFLICT_LINES, roll)];
+}
+
+/**
+ * @param pull Where the pull request on screen stands, as GitHub just said, and whether it conflicts with its base
+ *   branch. The cache may know of a conflict resolved since.
+ * @param shown Whether the cows already locked horns over it since the viewer opened it.
+ * @returns Whether two cows should lock horns over its merge conflict: once each time the viewer opens a pull request
+ *   that is open, or a draft, and conflicts.
+ */
+export function conflictDue(pull: { state: PullState; conflict: boolean }, shown: boolean): boolean {
+  return pull.conflict && (pull.state === "open" || pull.state === "draft") && !shown;
+}

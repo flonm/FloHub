@@ -25,7 +25,7 @@ import { nameList, pokeMessage, rangeFileStats, type StandingVerdict, staleRevie
 import { interdiff } from "./core/interdiff";
 import { deriveStack } from "./core/stack";
 import { Toast } from "./ui/toast";
-import { COW_TRICK_KEY, type CowSetting, cowCue, type CowWatch, readTrickSetting, trickSettingFrom } from "./core/cow";
+import { conflictDue, COW_TRICK_KEY, type CowSetting, cowCue, type CowWatch, readTrickSetting, trickSettingFrom } from "./core/cow";
 import { FUN_KEY, funFrom, readFun } from "./core/fun";
 import { MergeCow } from "./ui/merge-cow";
 import { ChordHint } from "./ui/chord-hint";
@@ -115,6 +115,8 @@ const cow = new MergeCow();
 let fun = true;
 /** Where the pull request the bar last drew stood, for the merge cow's cue. */
 let lastPull: { key: string; watch: CowWatch } | null = null;
+/** Whether two cows locked horns over the merge conflict of the pull request on screen since the viewer opened it. */
+let conflictCowsShown = false;
 /** Which trick the merge cow performs, kept in sync storage. */
 let trickSetting: CowSetting = "random";
 const favicon = new Favicon();
@@ -281,6 +283,7 @@ function sync(): void {
   syncRepoPulls(parseRepoPullsRef(location.href));
   const ref = parsePullRef(location.href);
   if (!ref) {
+    if (current) cow.stop();
     current = null;
     viewedTree.sync(null);
     highlights.sync(null);
@@ -291,10 +294,13 @@ function sync(): void {
   }
 
   if (!current || pullKey(current) !== pullKey(ref)) {
+    // A show is about the pull request it came for, so it doesn't follow the viewer to another.
+    cow.stop();
     current = ref;
     state = { kind: "loading" };
     busy.clear();
     showMerged = false;
+    conflictCowsShown = false;
     pendingNotice = null;
     loadedFresh = false;
     viewedTree.sync(null);
@@ -407,13 +413,18 @@ function render(): void {
 
 /**
  * Sends the merge cow across the page, in fun mode, when the viewer watched the pull request on screen join the merge
- * queue or get merged. Only what GitHub just said counts: a cached overview from an earlier visit would make old news
- * look new. It keeps track while fun mode is off, so turning it on brings no cow for news it missed.
+ * queue or get merged, and two cows to lock horns when they open one with a merge conflict. Only what GitHub just said
+ * counts: a cached overview from an earlier visit would make old news look new. It keeps track while fun mode is off,
+ * so turning it on brings no cows for news it missed.
  */
 function moo(): void {
   const ready = state.kind === "ready" ? state : null;
   const pull = ready?.pull;
   if (!current || !pull || ready.refreshing) return;
+  if (conflictDue(pull, conflictCowsShown)) {
+    conflictCowsShown = true;
+    if (fun) cow.conflict();
+  }
   const key = pullKey(current);
   const previous = lastPull?.key === key ? lastPull.watch : undefined;
   lastPull = { key, watch: pull };

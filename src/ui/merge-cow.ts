@@ -1,5 +1,5 @@
-import { type CowSetting, type CowTrick, lineFor, pickTrick } from "../core/cow";
-import { SHOWS } from "./cow-tricks";
+import { conflictLinesFor, type CowSetting, type CowTrick, lineFor, pickTrick } from "../core/cow";
+import { type ShowLines, type ShowName, SHOWS } from "./cow-tricks";
 
 /**
  * What every show shares: the stage over the whole window, the bubble, the cow, her trot and her ASCII props. A show
@@ -80,20 +80,23 @@ export class MergeCow {
   }
 
   /**
-   * Puts a show on the stage, without clearing it afterwards. {@link perform} is what the extension uses.
-   * @param trick The trick she performs.
-   * @param moo What she says.
+   * Puts a show on the stage, without clearing it afterwards. {@link perform} and {@link conflict} are what the
+   * extension uses.
+   * @param name The show.
+   * @param lines What the cows in it say.
    * @param moment Where in the show to hold it still, from 0 at its start to 1 at its end, as a story pictures her;
    *   left out, the show plays.
    * @returns How long the show lasts, in milliseconds.
    */
-  render(trick: CowTrick, moo: string, moment?: number): number {
+  render<Name extends ShowName>(name: Name, lines: ShowLines<Name>, moment?: number): number {
     if (!this.host.isConnected) document.body.append(this.host);
-    const show = SHOWS[trick];
+    const show = SHOWS[name];
+    // The lines fit the show by its name; TypeScript can't follow a generic key into the table.
+    const build = show.build as (...lines: ShowLines<Name>) => HTMLElement[];
     const stage = document.createElement("div");
     stage.className = "stage";
     stage.style.setProperty("--show", `${show.ms}ms`);
-    stage.append(...show.build(moo));
+    stage.append(...build(...lines));
     this.shadow.querySelector(".stage")?.remove();
     this.shadow.append(stage);
     if (moment !== undefined) {
@@ -108,8 +111,26 @@ export class MergeCow {
 
   /** @param setting The trick she performs, or random for one picked at random, never the one she did last time. */
   perform(setting: CowSetting): void {
-    this.last = pickTrick(setting, this.last, Math.random());
-    const ms = this.render(this.last, lineFor(this.last, Math.random()));
+    const trick = pickTrick(setting, this.last, Math.random());
+    const ms = this.render(trick, [lineFor(trick, Math.random())]);
+    this.last = trick;
+    this.play(ms);
+  }
+
+  /** Two cows lock horns over a merge conflict. */
+  conflict(): void {
+    const ms = this.render("conflict", conflictLinesFor(Math.random()));
+    this.play(ms);
+  }
+
+  /** Ends the show on stage, as when the viewer leaves the pull request it was for. */
+  stop(): void {
+    clearTimeout(this.timer);
+    this.host.remove();
+  }
+
+  /** @param ms How long the show on stage lasts, after which she leaves. */
+  private play(ms: number): void {
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.host.remove(), ms);
   }

@@ -13,6 +13,8 @@ export interface PullStatus {
   id: string | null;
   /** Whether it waits in the merge queue; false in an overview cached before FloHub asked. */
   inMergeQueue: boolean;
+  /** Whether it conflicts with its base branch, as far as GitHub has worked out. */
+  conflict: boolean;
 }
 
 /** What a shortcut asks for; which move that is depends on the state. */
@@ -38,8 +40,15 @@ export function pullStatusOf(pull: {
   viewerCanUpdate: boolean;
   id?: string;
   isInMergeQueue?: boolean;
+  mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
 }): PullStatus {
-  return { state: pullStateOf(pull), canUpdate: pull.viewerCanUpdate, id: pull.id ?? null, inMergeQueue: pull.isInMergeQueue ?? false };
+  return {
+    state: pullStateOf(pull),
+    canUpdate: pull.viewerCanUpdate,
+    id: pull.id ?? null,
+    inMergeQueue: pull.isInMergeQueue ?? false,
+    conflict: pull.mergeable === "CONFLICTING",
+  };
 }
 
 /**
