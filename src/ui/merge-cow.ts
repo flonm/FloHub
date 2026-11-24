@@ -1,14 +1,24 @@
 import { type CowTrick, lineFor } from "../core/cow";
 import { SHOWS } from "./cow-tricks";
 
-/** What every show shares: the stage over the whole window, the bubble, the cow and her trot. */
+/**
+ * What every show shares: the stage over the whole window, the bubble, the cow, her trot and her ASCII props. A show
+ * reads its own length as `var(--show)`, and the spots just off either edge as `--offstage-left` and `--offstage-right`.
+ */
 const STAGE_STYLES = `
 :host {
+  --offstage-left: -260px;
+  --offstage-right: calc(100vw + 20px);
   position: fixed;
   inset: 0;
   z-index: 2147483001;
   overflow: hidden;
   pointer-events: none;
+}
+pre {
+  margin: 0;
+  color: var(--fgColor-default, #1f2328);
+  font: 12px/1.15 var(--fontStack-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
 }
 .stage { position: absolute; inset: 0; }
 .actor {
@@ -31,14 +41,11 @@ const STAGE_STYLES = `
   box-shadow: var(--shadow-floating-small, 0 1px 3px rgba(31, 35, 40, 0.12));
 }
 .cow {
-  margin: 0;
   padding: 6px 12px;
   border: 1px solid var(--borderColor-default, #d1d9e0);
   border-radius: 12px;
   background: var(--bgColor-default, #ffffff);
   box-shadow: var(--shadow-floating-small, 0 1px 3px rgba(31, 35, 40, 0.12));
-  color: var(--fgColor-default, #1f2328);
-  font: 12px/1.15 var(--fontStack-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
   animation: trot 300ms ease-in-out infinite alternate;
 }
 .eyes { position: relative; }
@@ -78,6 +85,7 @@ export class MergeCow {
     const show = SHOWS[trick];
     const stage = document.createElement("div");
     stage.className = "stage";
+    stage.style.setProperty("--show", `${show.ms}ms`);
     stage.append(...show.build(moo));
     this.shadow.querySelector(".stage")?.remove();
     this.shadow.append(stage);

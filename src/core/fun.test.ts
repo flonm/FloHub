@@ -28,7 +28,7 @@ describe("fun mode", () => {
     [0.99, "c"],
     [1, "c"],
     [-0.5, "a"],
-  ])("a roll of %p picks %p from three", (roll, picked) => {
+  ])("a roll of %p picks %p from three: the roll's share of the list, and a roll outside [0, 1) the first or the last", (roll, picked) => {
     expect(pickByRoll(["a", "b", "c"], roll)).toBe(picked);
   });
 });

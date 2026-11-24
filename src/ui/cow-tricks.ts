@@ -3,9 +3,12 @@ import { el } from "./dom";
 
 /** A show the merge cow puts on: what it puts on the stage, its keyframes, and how long it lasts. */
 interface Show {
-  /** How long it lasts, in milliseconds, after which the stage is cleared. */
+  /** How long it lasts, in milliseconds, after which the stage is cleared; its CSS reads it as `var(--show)`. */
   ms: number;
-  /** The keyframes and rules of this show; every class and keyframe name starts with the show's own name. */
+  /**
+   * The keyframes and rules of this show. Every class and keyframe name it adds starts with the show's own name, since
+   * all shows share one style sheet; what they share lives in the stage's styles.
+   */
   css: string;
   /** @param moo What she says. @returns The actors, each placed on the full-window stage by its own class. */
   build: (moo: string) => HTMLElement[];
@@ -46,8 +49,8 @@ function bubble(moo: string): HTMLElement {
 const walk: Show = {
   ms: 6000,
   css: `
-.walk { animation: walk 6000ms linear both; }
-@keyframes walk { from { transform: translateX(-260px); } to { transform: translateX(calc(100vw + 20px)); } }
+.walk { animation: walk var(--show) linear both; }
+@keyframes walk { from { transform: translateX(var(--offstage-left)); } to { transform: translateX(var(--offstage-right)); } }
 `,
   build: (moo) => [actor("walk", bubble(moo), cowBody())],
 };
