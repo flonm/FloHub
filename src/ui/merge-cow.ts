@@ -1,46 +1,34 @@
-import { el } from "./dom";
+import { type CowTrick, lineFor } from "../core/cow";
+import { SHOWS } from "./cow-tricks";
 
-/** The cow, facing right, the way she walks. */
-const COW = String.raw`            ^__^
-    _______/(oo)
-/\/(       /(__)
-   | w----||
-   ||     ||`;
-
-/** What she says, picked at random each time she crosses. */
-export const MOOS = [
-  "Moo. Merged.",
-  "MOOOOO-RGED!",
-  "Another one for main.",
-  "Ship it. Moo.",
-  "I have seen your diff. It is good.",
-  "Leader of the herd, you know her well.",
-  "Finally back to kick some tail.",
-] as const;
-
-/** How long one crossing takes, in milliseconds. */
-const CROSSING_MS = 6000;
-
-const COW_STYLES = `
+/**
+ * What every show shares: the stage over the whole window, the bubble, the cow, her trot and her ASCII props. A show
+ * reads its own length as `var(--show)`, and the spots just off either edge as `--offstage-left` and `--offstage-right`.
+ */
+const STAGE_STYLES = `
 :host {
+  --offstage-left: -260px;
+  --offstage-right: calc(100vw + 20px);
   position: fixed;
-  inset: auto 0 16px 0;
+  inset: 0;
   z-index: 2147483001;
-  height: 140px;
   overflow: hidden;
   pointer-events: none;
 }
-.herd {
+pre {
+  margin: 0;
+  color: var(--fgColor-default, #1f2328);
+  font: 12px/1.15 var(--fontStack-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+.stage { position: absolute; inset: 0; }
+.actor {
   position: absolute;
-  bottom: 0;
+  bottom: 16px;
   left: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  animation: cross var(--crossing, 6000ms) linear forwards;
 }
-/* Only a story stands her still; she walks for everyone, reduced motion or not. */
-.herd.still { animation: none; left: 50%; transform: translateX(-50%); }
 .moo {
   margin: 0 0 4px 64px;
   padding: 4px 10px;
@@ -53,22 +41,22 @@ const COW_STYLES = `
   box-shadow: var(--shadow-floating-small, 0 1px 3px rgba(31, 35, 40, 0.12));
 }
 .cow {
-  margin: 0;
   padding: 6px 12px;
   border: 1px solid var(--borderColor-default, #d1d9e0);
   border-radius: 12px;
   background: var(--bgColor-default, #ffffff);
   box-shadow: var(--shadow-floating-small, 0 1px 3px rgba(31, 35, 40, 0.12));
-  color: var(--fgColor-default, #1f2328);
-  font: 12px/1.15 var(--fontStack-monospace, ui-monospace, SFMono-Regular, Menlo, monospace);
   animation: trot 300ms ease-in-out infinite alternate;
 }
-.herd.still .cow { animation: none; }
-@keyframes cross { from { transform: translateX(-260px); } to { transform: translateX(calc(100vw + 20px)); } }
-@keyframes trot { from { transform: translateY(0); } to { transform: translateY(-3px); } }
+.eyes { position: relative; }
+.eyes .shut { position: absolute; inset: 0; opacity: 0; }
+@keyframes trot { from { translate: 0 0; } to { translate: 0 -3px; } }
 `;
 
-/** The merge cow: she walks across the bottom of the page when the viewer watches a pull request get merged. */
+/**
+ * The merge cow: she performs a trick across the page when the viewer watches a pull request get merged. Every show
+ * plays for everyone, reduced motion or not: she is a few seconds of decoration the viewer opted into with fun mode.
+ */
 export class MergeCow {
   private readonly host: HTMLElement;
   private readonly shadow: ShadowRoot;
@@ -80,28 +68,44 @@ export class MergeCow {
     this.host.setAttribute("aria-hidden", "true");
     this.shadow = this.host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
-    style.textContent = COW_STYLES;
+    style.textContent = [STAGE_STYLES, ...Object.values(SHOWS).map((show) => show.css)].join("\n");
     this.shadow.append(style);
   }
 
   /**
-   * Paints the cow, without sending her on her way. {@link cross} is what the extension uses.
+   * Puts a show on the stage, without clearing it afterwards. {@link perform} is what the extension uses.
+   * @param trick The trick she performs.
    * @param moo What she says.
-   * @param still Whether she stands in the middle instead of walking, as a story pictures her.
+   * @param moment Where in the show to hold it still, from 0 at its start to 1 at its end, as a story pictures her;
+   *   left out, the show plays.
+   * @returns How long the show lasts, in milliseconds.
    */
-  render(moo: string, still = false): void {
+  render(trick: CowTrick, moo: string, moment?: number): number {
     if (!this.host.isConnected) document.body.append(this.host);
-    const herd = el("div", { class: still ? "herd still" : "herd" });
-    herd.style.setProperty("--crossing", `${CROSSING_MS}ms`);
-    herd.append(el("div", { class: "moo" }, moo), el("pre", { class: "cow" }, COW));
-    this.shadow.querySelector(".herd")?.remove();
-    this.shadow.append(herd);
+    const show = SHOWS[trick];
+    const stage = document.createElement("div");
+    stage.className = "stage";
+    stage.style.setProperty("--show", `${show.ms}ms`);
+    stage.append(...show.build(moo));
+    this.shadow.querySelector(".stage")?.remove();
+    this.shadow.append(stage);
+    if (moment !== undefined) {
+      const animations = stage.getAnimations({ subtree: true });
+      for (const animation of animations) {
+        animation.pause();
+        animation.currentTime = moment * show.ms;
+      }
+    }
+    return show.ms;
   }
 
-  /** @param roll A number in [0, 1), like `Math.random()`, that picks what she says. */
-  cross(roll = Math.random()): void {
-    this.render(MOOS[Math.min(MOOS.length - 1, Math.floor(roll * MOOS.length))] ?? MOOS[0]);
+  /**
+   * @param trick The trick she performs.
+   * @param roll A number in [0, 1), like `Math.random()`, that picks what she says.
+   */
+  perform(trick: CowTrick, roll = Math.random()): void {
+    const ms = this.render(trick, lineFor(trick, roll));
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.host.remove(), CROSSING_MS);
+    this.timer = setTimeout(() => this.host.remove(), ms);
   }
 }

@@ -1,39 +1,63 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
+import { type CowTrick, TRICKS } from "../core/cow";
+import { SHOWS } from "../ui/cow-tricks";
 import { el } from "../ui/dom";
-import { MergeCow, MOOS } from "../ui/merge-cow";
+import { MergeCow } from "../ui/merge-cow";
+
+interface Args {
+  trick: CowTrick;
+  /** Where in the show to hold her still, from 0 to 1; -1 lets the show play. */
+  moment: number;
+  moo: string;
+}
+
+const tricks = Object.keys(SHOWS) as CowTrick[];
 
 /**
- * @param moo What the cow says.
- * @param still Whether she stands still in the middle, so the story can be looked at without chasing her.
- * @returns A line that gives the canvas some height, since the cow walks along the bottom of the window.
+ * @param args The trick, the moment to hold and what she says.
+ * @returns A line that gives the canvas some height, since the cow performs over the whole window.
  */
-function cow(moo: string, still: boolean): HTMLElement {
+function cow({ trick, moment, moo }: Args): HTMLElement {
   for (const previous of document.querySelectorAll("flohub-merge-cow")) previous.remove();
-  new MergeCow().render(moo, still);
-  return el("p", {}, "The merge cow walks along the bottom of the window.");
+  new MergeCow().render(trick, moo || TRICKS[trick].lines[0], moment < 0 ? undefined : moment);
+  return el("p", {}, "The merge cow performs over the whole window. Reload the story to see a show again.");
 }
 
 const meta = {
   title: "Feedback/Merge cow",
   tags: ["autodocs"],
+  render: cow,
+  args: { trick: "walk", moment: -1, moo: "" },
+  argTypes: {
+    trick: { control: "select", options: tricks },
+    moment: { control: { type: "range", min: -1, max: 1, step: 0.01 }, description: "Where to hold the show, from 0 to 1; -1 plays it." },
+    moo: { control: "text", description: "What she says; empty takes the trick's first line." },
+  },
   parameters: {
     docs: {
       description: {
         component:
-          "In fun mode, when the viewer watches the pull request on screen get merged, the merge cow crosses the bottom of the page in six seconds and a toast says it in words. She walks for everyone, reduced motion or not.",
+          "In fun mode, when the viewer watches the pull request on screen get merged, the merge cow performs a trick over the page and a toast says it in words. She performs for everyone, reduced motion or not.",
       },
     },
   },
-} satisfies Meta;
+} satisfies Meta<Args>;
 
 export default meta;
-type Story = StoryObj<typeof meta>;
+type Story = StoryObj<Args>;
 
-/** The cow on her way across, as the extension sends her. */
-export const Crossing: Story = { render: () => cow(MOOS[0], false) };
+/** She walks across, as the extension sends her. */
+export const Walk: Story = {};
 
-/** The cow standing still in the middle, a pose only this story gives her. */
-export const Standing: Story = { render: () => cow(MOOS[1], true) };
+/** Any moment of any show, held still: pick the trick and move the slider. */
+export const Moment: Story = { args: { moment: 0.5 } };
 
-/** Her longest line, for the speech bubble's width. */
-export const LongestMoo: Story = { render: () => cow(MOOS.toSorted((a, b) => b.length - a.length)[0] ?? MOOS[0], true) };
+/** Her longest line of all, for the speech bubble's width. */
+export const LongestMoo: Story = {
+  args: {
+    moment: 0.5,
+    moo: Object.values(TRICKS)
+      .flatMap((trick): readonly string[] => trick.lines)
+      .toSorted((a, b) => b.length - a.length)[0],
+  },
+};
