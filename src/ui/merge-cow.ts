@@ -1,4 +1,4 @@
-import { type CowTrick, lineFor } from "../core/cow";
+import { type CowTrick, lineFor, pickTrick } from "../core/cow";
 import { SHOWS } from "./cow-tricks";
 
 /**
@@ -51,6 +51,9 @@ pre {
 .eyes { position: relative; }
 .eyes .shut { position: absolute; inset: 0; opacity: 0; }
 @keyframes trot { from { translate: 0 0; } to { translate: 0 -3px; } }
+/* Two blinks a little before and after the middle of a show, for her eyes to run over its length. */
+@keyframes blink-open { 0% { opacity: 1; } 42% { opacity: 0; } 44% { opacity: 1; } 54% { opacity: 0; } 56% { opacity: 1; } }
+@keyframes blink-shut { 0% { opacity: 0; } 42% { opacity: 1; } 44% { opacity: 0; } 54% { opacity: 1; } 56% { opacity: 0; } }
 `;
 
 /**
@@ -61,6 +64,8 @@ export class MergeCow {
   private readonly host: HTMLElement;
   private readonly shadow: ShadowRoot;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  /** The trick she performed last, which she doesn't repeat. */
+  private last: CowTrick | undefined;
 
   constructor() {
     this.host = document.createElement("flohub-merge-cow");
@@ -99,12 +104,10 @@ export class MergeCow {
     return show.ms;
   }
 
-  /**
-   * @param trick The trick she performs.
-   * @param roll A number in [0, 1), like `Math.random()`, that picks what she says.
-   */
-  perform(trick: CowTrick, roll = Math.random()): void {
-    const ms = this.render(trick, lineFor(trick, roll));
+  /** She performs a trick picked at random, never the one she did last time. */
+  perform(): void {
+    this.last = pickTrick(this.last, Math.random());
+    const ms = this.render(this.last, lineFor(this.last, Math.random()));
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.host.remove(), ms);
   }

@@ -405,7 +405,7 @@ function moo(): void {
   const previous = lastPull?.key === key ? lastPull.state : undefined;
   lastPull = { key, state: pull.state };
   if (!cowDue(previous, pull.state)) return;
-  cow.perform("walk");
+  cow.perform();
   toast.show(`#${current.number} is merged.`, "success");
 }
 

@@ -49,6 +49,21 @@ type Story = StoryObj<Args>;
 /** She walks across, as the extension sends her. */
 export const Walk: Story = {};
 
+/** She moonwalks from right to left, facing right. */
+export const Backwards: Story = { args: { trick: "backwards" } };
+
+/** She dashes across so fast her words drag along behind her. */
+export const Gallop: Story = { args: { trick: "gallop" } };
+
+/** She stops in the middle, leans in and blinks at the viewer. */
+export const Stare: Story = { args: { trick: "stare" } };
+
+/** She trips, lands on her back with her legs in the air, and gets up. */
+export const Trip: Story = { args: { trick: "trip" } };
+
+/** Only her head peeks up from the bottom edge. */
+export const Peekaboo: Story = { args: { trick: "peekaboo" } };
+
 /** Any moment of any show, held still: pick the trick and move the slider. */
 export const Moment: Story = { args: { moment: 0.5 } };
 
