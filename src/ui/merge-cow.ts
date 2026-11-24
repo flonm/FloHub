@@ -1,4 +1,4 @@
-import { type CowTrick, lineFor, pickTrick } from "../core/cow";
+import { type CowSetting, type CowTrick, lineFor, pickTrick } from "../core/cow";
 import { SHOWS } from "./cow-tricks";
 
 /**
@@ -104,9 +104,9 @@ export class MergeCow {
     return show.ms;
   }
 
-  /** She performs a trick picked at random, never the one she did last time. */
-  perform(): void {
-    this.last = pickTrick(this.last, Math.random());
+  /** @param setting The trick she performs, or random for one picked at random, never the one she did last time. */
+  perform(setting: CowSetting): void {
+    this.last = pickTrick(setting, this.last, Math.random());
     const ms = this.render(this.last, lineFor(this.last, Math.random()));
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.host.remove(), ms);

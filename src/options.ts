@@ -7,6 +7,8 @@ import { renderShortcutList } from "./ui/shortcut-list";
 import { assignEntry, knownEntries, loadProfiles, PROFILES_KEY, type Profiles, saveProfiles } from "./core/profiles";
 import { type ProfileActions, renderProfileEditor } from "./ui/profile-view";
 import { FUN_KEY, funFrom, readFun, writeFun } from "./core/fun";
+import { COW_TRICK_KEY, readTrickSetting, trickSettingFrom, TRICKS, writeTrickSetting } from "./core/cow";
+import { MergeCow } from "./ui/merge-cow";
 
 const form = document.querySelector<HTMLFormElement>("#token-form");
 const input = document.querySelector<HTMLInputElement>("#token");
@@ -23,6 +25,8 @@ const entryForm = document.querySelector<HTMLFormElement>("#add-entry");
 const entryInput = document.querySelector<HTMLInputElement>("#entry");
 const entryStatus = document.querySelector<HTMLParagraphElement>("#entry-status");
 const funBox = document.querySelector<HTMLInputElement>("#fun");
+const trickSelect = document.querySelector<HTMLSelectElement>("#cow-trick");
+const showCow = document.querySelector<HTMLButtonElement>("#cow-show");
 const origins = requiredOrigins();
 
 const shortcuts = shortcutHelp(isMac(navigator.platform));
@@ -68,11 +72,34 @@ if (profileBox && entryForm && entryInput && entryStatus) {
 }
 
 if (funBox) {
-  void readFun().then((on) => (funBox.checked = on));
-  funBox.addEventListener("change", () => void writeFun(funBox.checked));
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "sync" && Object.hasOwn(changes, FUN_KEY)) funBox.checked = funFrom(changes[FUN_KEY]?.newValue);
+  void readFun().then(showFun);
+  funBox.addEventListener("change", () => {
+    showFun(funBox.checked);
+    void writeFun(funBox.checked);
   });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "sync" && Object.hasOwn(changes, FUN_KEY)) showFun(funFrom(changes[FUN_KEY]?.newValue));
+  });
+}
+
+if (trickSelect && showCow) {
+  const random = el("option", { value: "random" }, "Random, a different trick each time");
+  const tricks = Object.entries(TRICKS).map(([trick, { label }]) => el("option", { value: trick }, label));
+  trickSelect.replaceChildren(random, ...tricks);
+  void readTrickSetting().then((setting) => (trickSelect.value = setting));
+  trickSelect.addEventListener("change", () => void writeTrickSetting(trickSettingFrom(trickSelect.value)));
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "sync" && Object.hasOwn(changes, COW_TRICK_KEY)) trickSelect.value = trickSettingFrom(changes[COW_TRICK_KEY]?.newValue);
+  });
+  const cow = new MergeCow();
+  showCow.addEventListener("click", () => cow.perform(trickSettingFrom(trickSelect.value)));
+}
+
+/** @param on Whether fun mode is on, which the checkbox shows; the merge cow's controls only matter while it is. */
+function showFun(on: boolean): void {
+  if (funBox) funBox.checked = on;
+  if (trickSelect) trickSelect.disabled = !on;
+  if (showCow) showCow.disabled = !on;
 }
 
 /** Every change reads the profiles afresh, so one made in the popup meanwhile isn't undone. */
