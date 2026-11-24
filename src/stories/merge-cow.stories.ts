@@ -52,7 +52,7 @@ export const Walk: Story = {};
 /** She moonwalks from right to left, facing right. */
 export const Backwards: Story = { args: { trick: "backwards" } };
 
-/** She dashes across; her words hang where she passed, then drop. */
+/** She dashes across so fast her words drag along behind her. */
 export const Gallop: Story = { args: { trick: "gallop" } };
 
 /** She stops in the middle, leans in and blinks at the viewer. */

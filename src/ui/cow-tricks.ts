@@ -76,22 +76,29 @@ const backwards: Show = {
   build: (moo) => [actor("backwards", bubble(moo), cowBody())],
 };
 
-/** She dashes across in a blur, so fast that her words stay hanging where she passed, then drop. */
+/** She dashes across in a blur, so fast that her words can't keep up: they drag along behind her, tilted back. */
 const gallop: Show = {
-  ms: 2600,
+  ms: 1700,
   css: `
 .gallop { animation: gallop var(--show) linear both; }
 .gallop .body { rotate: 4deg; }
 .gallop .cow { animation-duration: 110ms; }
-.gallop-moo { left: calc(50vw - 100px); bottom: 104px; animation: gallop-moo var(--show) both; }
+/* Pulled by its front edge, the bubble leans back and only slowly gathers speed. */
+.gallop-moo { bottom: 96px; transform-origin: 100% 50%; animation: gallop-moo var(--show) both, gallop-drag var(--show) ease-out both; }
 @keyframes gallop {
   0% { transform: translateX(var(--offstage-left)); }
-  45%, 100% { transform: translateX(var(--offstage-right)); }
+  67%, 100% { transform: translateX(var(--offstage-right)); }
 }
 @keyframes gallop-moo {
-  0%, 22% { opacity: 0; transform: none; }
-  24%, 65% { opacity: 1; transform: none; }
-  100% { opacity: 1; transform: translateY(160px) rotate(25deg); }
+  0%, 5% { transform: translateX(var(--offstage-left)); animation-timing-function: cubic-bezier(0.35, 0, 0.6, 1); }
+  100% { transform: translateX(var(--offstage-right)); }
+}
+@keyframes gallop-drag {
+  0%, 5% { rotate: 0deg; }
+  20% { rotate: -12deg; }
+  50% { rotate: -6deg; }
+  75% { rotate: -9deg; }
+  100% { rotate: -5deg; }
 }
 `,
   build: (moo) => [actor("gallop", cowBody()), actor("gallop-moo", bubble(moo))],
