@@ -1,7 +1,7 @@
 import type { ReviewScope } from "./review-scope";
 import type { Verdict } from "./reviewers";
 import { deriveStatus, lastActivity, type RawStackPull, type StackTone } from "./stack";
-import { isBot, pushTimes, type RawTurnThread, toTurnThread, type Turn, type TurnCode, type TurnReason, VIEWER_VERDICTS, whoseTurn } from "./turn";
+import { askedHow, isBot, pushTimes, type RawReviewRequestEvent, type RawTurnThread, toTurnThread, type Turn, type TurnCode, type TurnReason, VIEWER_VERDICTS, whoseTurn } from "./turn";
 
 /** A pull request as the inbox search returns it. */
 export type RawInboxPull = RawStackPull & {
@@ -11,9 +11,14 @@ export type RawInboxPull = RawStackPull & {
   repository: { nameWithOwner: string };
   author: { login: string; avatarUrl: string } | null;
   latestReviews: { nodes: { state?: string; author: { login: string; avatarUrl?: string } | null; submittedAt: string | null }[] };
+  /**
+   * The viewer's own latest submitted review. GitHub drops a reviewer from `latestReviews` once they're asked again,
+   * so only this keeps it then. Missing from fixtures made before it was fetched.
+   */
+  viewerReviews?: { nodes: { state: string; submittedAt: string | null }[] };
   /** Reviewers that are neither users nor teams come back as empty objects. */
   reviewRequests: { nodes: { requestedReviewer: { login?: string; combinedSlug?: string } | null }[] };
-  reviewRequestedEvents: { nodes: { createdAt: string; requestedReviewer: { combinedSlug?: string } | null }[] };
+  reviewRequestedEvents: { nodes: RawReviewRequestEvent[] };
   stack: {
     number: number;
     size: number;
@@ -244,13 +249,32 @@ function requestedVia(pull: RawInboxPull, viewer: string): "user" | "team" | nul
   if (reviewers.some((reviewer) => reviewer?.login === viewer)) return "user";
   const teams = new Set(reviewers.flatMap((reviewer) => reviewer?.combinedSlug ?? []));
   if (teams.size === 0) return null;
-  const reviewedAt = pull.latestReviews.nodes.find((review) => review.author?.login === viewer)?.submittedAt;
+  const reviewedAt = viewerReview(pull, viewer)?.submittedAt;
   if (!reviewedAt) return "team";
   const asked = pull.reviewRequestedEvents.nodes.some(
     (event) =>
       teams.has(event.requestedReviewer?.combinedSlug ?? "") && Date.parse(event.createdAt) > Date.parse(reviewedAt),
   );
   return asked ? "team" : null;
+}
+
+/**
+ * See {@link RawInboxPull.viewerReviews} and docs/github-quirks.md.
+ * @returns The viewer's latest submitted review, from their own reviews where fetched, else from GitHub's latest ones.
+ */
+function viewerReview(pull: RawInboxPull, viewer: string): { state?: string; submittedAt: string | null } | undefined {
+  return pull.viewerReviews?.nodes.at(-1) ?? pull.latestReviews.nodes.find((review) => review.author?.login === viewer);
+}
+
+/** @returns Who an open request can reach the viewer through: their own login, and every team the pull request asks. */
+function askedThrough(pull: RawInboxPull, viewer: string): Set<string> {
+  return new Set([viewer, ...pull.reviewRequests.nodes.flatMap((request) => request.requestedReviewer?.combinedSlug ?? [])]);
+}
+
+/** @returns Whether someone asked the viewer to review again after their latest review, see {@link askedHow}. */
+function askedAgain(pull: RawInboxPull, viewer: string): boolean {
+  const reviewedAt = viewerReview(pull, viewer)?.submittedAt ?? null;
+  return askedHow(pull.reviewRequestedEvents.nodes, askedThrough(pull, viewer), reviewedAt) === "rerequested";
 }
 
 /**
@@ -266,14 +290,14 @@ function waitingVerdict(pull: RawInboxPull, viewer: string): "changes_requested"
   // A later comment doesn't replace a verdict, and the verdicts only list writers, so a missing one falls back to the latest review.
   const state =
     pull.latestOpinionatedReviews.nodes.find((review) => review.author?.login === viewer)?.state ??
-    pull.latestReviews.nodes.find((review) => review.author?.login === viewer)?.state;
+    viewerReview(pull, viewer)?.state;
   if (state === "CHANGES_REQUESTED") return "changes_requested";
   return state === "COMMENTED" ? "commented" : null;
 }
 
 /** @returns Whether the head branch got a push or commit after the viewer's latest review. */
 function pushedSinceReview(pull: RawInboxPull, viewer: string): boolean {
-  const reviewedAt = pull.latestReviews.nodes.find((review) => review.author?.login === viewer)?.submittedAt;
+  const reviewedAt = viewerReview(pull, viewer)?.submittedAt;
   if (!reviewedAt) return false;
   return pushTimes(pull).some((pushedAt) => Date.parse(pushedAt) > Date.parse(reviewedAt));
 }
@@ -324,7 +348,7 @@ function toInboxPull(pull: RawInboxPull, viewer: string, kind: InboxRole): Inbox
     totalThreads: pull.reviewThreads.totalCount,
     additions: pull.additions,
     deletions: pull.deletions,
-    rerequested: pull.latestReviews.nodes.some((latest) => latest.author?.login === viewer),
+    rerequested: askedAgain(pull, viewer),
     reviews: othersReviews(pull, viewer),
     viaTeam: kind === "review" && pull.reviewRequests.nodes.every((request) => request.requestedReviewer?.login !== viewer),
     ...(kind === "waiting" && { yourVerdict: waitingVerdict(pull, viewer), pushedSinceReview: pushedSinceReview(pull, viewer) }),
@@ -373,7 +397,8 @@ function baseTurn(pull: RawInboxPull, viewer: string, kind: "review" | "waiting"
   const latest = new Map(pull.latestReviews.nodes.flatMap((review) => (review.author ? [[review.author.login, review] as const] : [])));
   const requested = pull.reviewRequests.nodes.flatMap((request) => request.requestedReviewer?.login ?? request.requestedReviewer?.combinedSlug ?? []);
   const standing = new Map(pull.latestOpinionatedReviews.nodes.flatMap((review) => (review.author ? [[review.author.login, review] as const] : [])));
-  const viewerState = standing.get(viewer)?.state ?? latest.get(viewer)?.state;
+  const own = viewerReview(pull, viewer);
+  const viewerState = standing.get(viewer)?.state ?? own?.state;
   const changeRequests = [...standing.values()].flatMap((review) => {
     const login = review.author?.login;
     if (!login || review.state !== "CHANGES_REQUESTED" || login === viewer || isBot(login, review.author?.__typename)) return [];
@@ -387,9 +412,9 @@ function baseTurn(pull: RawInboxPull, viewer: string, kind: "review" | "waiting"
     checksFailed: pull.statusCheckRollup?.state === "FAILURE" || pull.statusCheckRollup?.state === "ERROR",
     readyToMerge: label === "Ready to merge",
     needsReview: label === "Needs review",
-    asked: kind === "review" ? (latest.has(viewer) ? "rerequested" : "requested") : null,
+    asked: kind === "review" ? askedHow(pull.reviewRequestedEvents.nodes, askedThrough(pull, viewer), own?.submittedAt ?? null) : null,
     viewerVerdict: VIEWER_VERDICTS[viewerState ?? ""] ?? null,
-    viewerReviewedAt: latest.get(viewer)?.submittedAt ?? null,
+    viewerReviewedAt: own?.submittedAt ?? null,
     pushes: pushTimes(pull),
     changeRequests,
     requested,

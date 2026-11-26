@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { overviewTurnInput, repliesAwaiting, toTurnThread, type TurnInput, type TurnThread, whoseTurn } from "./turn";
+import { askedHow, overviewTurnInput, repliesAwaiting, toTurnThread, type TurnInput, type TurnThread, whoseTurn } from "./turn";
 
 const REVIEWED = "2026-10-11T09:00:00Z";
 const BEFORE = "2026-10-10T09:00:00Z";
@@ -143,37 +143,42 @@ describe("repliesAwaiting", () => {
   });
 });
 
+/** @returns An overview of someone else's pull request; alice requested changes, then commented at REVIEWED. */
+function overviewPull() {
+  return {
+    author: { login: "octocat" },
+    viewerCanUpdate: true,
+    reviewRequests: { nodes: [{ requestedReviewer: user("carol") }, { requestedReviewer: { __typename: "Team" as const, name: "Core", combinedSlug: "octo-org/core", avatarUrl: null, url: "" } }] },
+    reviews: {
+      nodes: [
+        review("alice", "CHANGES_REQUESTED", BEFORE),
+        review("alice", "COMMENTED", REVIEWED),
+        review("bob", "APPROVED", BEFORE),
+        { state: "CHANGES_REQUESTED" as const, submittedAt: BEFORE, author: { ...user("ai"), __typename: "Bot" as const } },
+      ],
+    },
+    number: 1,
+    title: "",
+    url: "",
+    state: "OPEN" as const,
+    isDraft: false,
+    mergeable: "MERGEABLE" as const,
+    reviewDecision: "CHANGES_REQUESTED" as const,
+    createdAt: BEFORE,
+    lastEditedAt: null,
+    mergedAt: null,
+    statusCheckRollup: { state: "FAILURE" as const },
+    latestOpinionatedReviews: { nodes: [] },
+    reviewThreads: { totalCount: 0, nodes: [] },
+    timelineItems: { nodes: [{ __typename: "HeadRefForcePushedEvent", createdAt: AFTER }, { __typename: "PullRequestCommit", commit: { committedDate: BEFORE } }] },
+    turnThreads: { nodes: [{ isResolved: false, first: { nodes: [{ author: { login: "alice" } }] }, recent: { nodes: [{ author: { login: "octocat" } }] } }] },
+  };
+}
+
 describe("overviewTurnInput", () => {
 
   test("reads requests, standing verdicts, pushes and threads from the overview", () => {
-    const pull = {
-      author: { login: "octocat" },
-      viewerCanUpdate: true,
-      reviewRequests: { nodes: [{ requestedReviewer: user("carol") }, { requestedReviewer: { __typename: "Team" as const, name: "Core", combinedSlug: "octo-org/core", avatarUrl: null, url: "" } }] },
-      reviews: {
-        nodes: [
-          review("alice", "CHANGES_REQUESTED", BEFORE),
-          review("alice", "COMMENTED", REVIEWED),
-          review("bob", "APPROVED", BEFORE),
-          { state: "CHANGES_REQUESTED" as const, submittedAt: BEFORE, author: { ...user("ai"), __typename: "Bot" as const } },
-        ],
-      },
-      number: 1,
-      title: "",
-      url: "",
-      state: "OPEN" as const,
-      isDraft: false,
-      mergeable: "MERGEABLE" as const,
-      reviewDecision: "CHANGES_REQUESTED" as const,
-      createdAt: BEFORE,
-      lastEditedAt: null,
-      mergedAt: null,
-      statusCheckRollup: { state: "FAILURE" as const },
-      latestOpinionatedReviews: { nodes: [] },
-      reviewThreads: { totalCount: 0, nodes: [] },
-      timelineItems: { nodes: [{ __typename: "HeadRefForcePushedEvent", createdAt: AFTER }, { __typename: "PullRequestCommit", commit: { committedDate: BEFORE } }] },
-      turnThreads: { nodes: [{ isResolved: false, first: { nodes: [{ author: { login: "alice" } }] }, recent: { nodes: [{ author: { login: "octocat" } }] } }] },
-    };
+    const pull = overviewPull();
     expect(overviewTurnInput(pull, "octocat")).toMatchObject({
       author: "octocat",
       checksFailed: true,
@@ -185,5 +190,41 @@ describe("overviewTurnInput", () => {
     });
     expect(overviewTurnInput(pull, "carol")).toMatchObject({ asked: "requested", viewerVerdict: null });
     expect(overviewTurnInput(pull, "alice")).toMatchObject({ viewerVerdict: "changes_requested", viewerReviewedAt: REVIEWED });
+  });
+
+  test.each([
+    ["after the viewer's latest review asks again", AFTER, "rerequested"],
+    ["before it is a first request", BEFORE, "requested"],
+  ] as const)("a request for the viewer %s", (_, askedAt, asked) => {
+    const pull = {
+      ...overviewPull(),
+      reviewRequests: { nodes: [{ requestedReviewer: user("alice") }] },
+      reviewRequestedEvents: { nodes: [{ createdAt: askedAt, requestedReviewer: { login: "alice" } }] },
+    };
+    expect(overviewTurnInput(pull, "alice").asked).toBe(asked);
+  });
+
+  test("an overview cached before the timeline's requests counts any review by the viewer as asked again", () => {
+    const pull = { ...overviewPull(), reviewRequests: { nodes: [{ requestedReviewer: user("alice") }] } };
+    expect(overviewTurnInput(pull, "alice").asked).toBe("rerequested");
+  });
+});
+
+function request(createdAt: string, requestedReviewer: { login?: string; combinedSlug?: string } | null) {
+  return { createdAt, requestedReviewer };
+}
+
+describe("askedHow", () => {
+  test.each([
+    ["never reviewed: a first request", [request(AFTER, { login: "me" })], null, "requested"],
+    ["a request after the review: again", [request(AFTER, { login: "me" })], REVIEWED, "rerequested"],
+    ["only requests before the review: a first one", [request(BEFORE, { login: "me" })], REVIEWED, "requested"],
+    ["a later request for someone else: a first one", [request(AFTER, { login: "mona" })], REVIEWED, "requested"],
+    ["a later request for a team that asks the viewer: again", [request(AFTER, { combinedSlug: "octo-org/core" })], REVIEWED, "rerequested"],
+    ["a later request for a team that doesn't: a first one", [request(AFTER, { combinedSlug: "octo-org/other" })], REVIEWED, "requested"],
+    ["a reviewer GitHub can't name: a first one", [request(AFTER, null)], REVIEWED, "requested"],
+    ["no requests in the timeline: a first one", [], REVIEWED, "requested"],
+  ] as const)("%s", (_, requests, reviewedAt, asked) => {
+    expect(askedHow([...requests], new Set(["me", "octo-org/core"]), reviewedAt)).toBe(asked);
   });
 });
