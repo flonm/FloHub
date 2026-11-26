@@ -178,6 +178,31 @@ function pushedAfter(pushes: string[], at: string | null): boolean {
   return pushes.some((pushedAt) => Date.parse(pushedAt) > since);
 }
 
+/** A review request from the timeline: when it was made and whom it named, a user's login or a team's slug. */
+export interface RawReviewRequestEvent {
+  createdAt: string;
+  requestedReviewer: { login?: string; combinedSlug?: string } | null;
+}
+
+/**
+ * FloHub decides being asked again itself, from the timeline, rather than from whether GitHub lists any review by the
+ * viewer: a reply in a thread counts as a review there, so someone who only answered a thread would show as asked
+ * again on their first request.
+ * @param requests The pull request's review requests from the timeline.
+ * @param asked Who an open request can reach the viewer through: their login and the teams it names.
+ * @param reviewedAt When the viewer last submitted a review, or null if never.
+ * @returns How the viewer is asked to review: again when a request for them came after their latest review.
+ */
+export function askedHow(requests: RawReviewRequestEvent[], asked: ReadonlySet<string>, reviewedAt: string | null): "requested" | "rerequested" {
+  if (!reviewedAt) return "requested";
+  const since = Date.parse(reviewedAt);
+  const again = requests.some((event) => {
+    const reviewer = event.requestedReviewer?.login ?? event.requestedReviewer?.combinedSlug;
+    return reviewer !== undefined && asked.has(reviewer) && Date.parse(event.createdAt) > since;
+  });
+  return again ? "rerequested" : "requested";
+}
+
 /** @returns When the head branch got its recent commits and force-pushes. */
 export function pushTimes(pull: Pick<RawStackPull, "timelineItems">): string[] {
   return pull.timelineItems.nodes.flatMap((item) =>
@@ -193,7 +218,12 @@ export const VIEWER_VERDICTS: Partial<Record<string, "approved" | "changes_reque
 };
 
 /** A pull request as the bar's overview has it. */
-type OverviewPull = RawPullRequest & RawStackPull & { turnThreads?: { nodes: RawTurnThread[] } };
+type OverviewPull = RawPullRequest &
+  RawStackPull & {
+    turnThreads?: { nodes: RawTurnThread[] };
+    /** Missing from overviews cached before FloHub read re-requests from the timeline. */
+    reviewRequestedEvents?: { nodes: RawReviewRequestEvent[] };
+  };
 
 /**
  * @param pull The pull request on screen.
@@ -230,7 +260,7 @@ export function overviewTurnInput(pull: OverviewPull, viewer: string): TurnInput
     checksFailed: pull.statusCheckRollup?.state === "FAILURE" || pull.statusCheckRollup?.state === "ERROR",
     readyToMerge: label === "Ready to merge",
     needsReview: label === "Needs review",
-    asked: requested.includes(viewer) ? (lastAt.has(viewer) ? "rerequested" : "requested") : null,
+    asked: requested.includes(viewer) ? askedAgainInOverview(pull, viewer, lastAt.get(viewer) ?? null) : null,
     viewerVerdict: VIEWER_VERDICTS[mine ?? ""] ?? null,
     viewerReviewedAt: lastAt.get(viewer) ?? null,
     pushes: pushTimes(pull),
@@ -238,6 +268,12 @@ export function overviewTurnInput(pull: OverviewPull, viewer: string): TurnInput
     requested,
     threads: (pull.turnThreads?.nodes ?? []).map((thread) => toTurnThread(thread)),
   };
+}
+
+/** @returns How the bar's overview asks the viewer; one cached before the timeline's requests falls back to any review by them. */
+function askedAgainInOverview(pull: OverviewPull, viewer: string, reviewedAt: string | null): "requested" | "rerequested" {
+  if (!pull.reviewRequestedEvents) return reviewedAt ? "rerequested" : "requested";
+  return askedHow(pull.reviewRequestedEvents.nodes, new Set([viewer]), reviewedAt);
 }
 
 /**

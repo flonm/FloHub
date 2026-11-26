@@ -57,8 +57,16 @@ function stackOf(number: number, members: number[]): RawInboxPull["stack"] {
   };
 }
 
-function requestedAt(createdAt: string): Partial<RawInboxPull> {
-  return { reviewRequestedEvents: { nodes: [{ createdAt, requestedReviewer: { combinedSlug: "octo-org/core" } }] } };
+function requestedAt(createdAt: string, requestedReviewer?: { login?: string; combinedSlug?: string }): Partial<RawInboxPull> {
+  return { reviewRequestedEvents: { nodes: [{ createdAt, requestedReviewer: requestedReviewer ?? { combinedSlug: "octo-org/core" } }] } };
+}
+
+/** @returns A pull request the viewer reviewed at `reviewedAt`, and was asked to review by name at `askedAt`. */
+function reviewedThenAsked(reviewedAt: string, askedAt: string, state = "COMMENTED"): Partial<RawInboxPull> {
+  return {
+    latestReviews: { nodes: [{ state, author: { login: "octocat" }, submittedAt: reviewedAt }] },
+    ...requestedAt(askedAt, { login: "octocat" }),
+  };
 }
 
 function buildRaw(review: RawInboxPull[], mine: RawInboxPull[] = [], waiting: RawInboxPull[] = []): RawInbox {
@@ -115,16 +123,51 @@ describe("buildInbox", () => {
     ]);
   });
 
-  test("marks a review request the viewer already answered once as re-requested", () => {
+  test("marks a review request as re-requested only when it came after the viewer's latest review", () => {
     const inbox = buildInbox(
-      buildRaw([buildPull(1, { latestReviews: { nodes: [{ author: { login: "octocat" }, submittedAt: "2026-10-10T10:00:00Z" }] } }), buildPull(2)]),
+      buildRaw([
+        buildPull(1, reviewedThenAsked("2026-10-10T10:00:00Z", "2026-10-11T10:00:00Z")),
+        buildPull(2),
+        // A reply in a thread shows as a review, but the request it came before isn't a second one.
+        buildPull(3, reviewedThenAsked("2026-10-11T10:00:00Z", "2026-10-10T10:00:00Z")),
+        buildPull(4, { latestReviews: { nodes: [{ author: { login: "octocat" }, submittedAt: "2026-10-10T10:00:00Z" }] } }),
+        // A request for someone else after the viewer's review doesn't ask the viewer again.
+        buildPull(5, { ...reviewedThenAsked("2026-10-10T10:00:00Z", "2026-10-09T10:00:00Z"), ...requestedAt("2026-10-11T10:00:00Z", { login: "mona" }) }),
+      ]),
       0,
     );
     const rerequested = inbox.review.flatMap((entry) => entry.pulls.map((pull) => [pull.number, pull.rerequested] as const));
     expect(rerequested.toSorted(([a], [b]) => a - b)).toEqual([
       [1, true],
       [2, false],
+      [3, false],
+      [4, false],
+      [5, false],
     ]);
+  });
+
+  test("finds the viewer's review in their own reviews when GitHub drops it from the latest ones after asking again", () => {
+    const own = { latestReviews: { nodes: [] }, viewerReviews: { nodes: [{ state: "APPROVED", submittedAt: "2026-10-10T10:00:00Z" }] } };
+    const inbox = buildInbox(
+      buildRaw([
+        buildPull(1, { ...own, ...requestedAt("2026-10-11T10:00:00Z", { login: "octocat" }) }),
+        buildPull(2, { ...own, ...requestedAt("2026-10-09T10:00:00Z", { login: "octocat" }) }),
+      ]),
+      0,
+    );
+    const asked = inbox.review.flatMap((entry) => entry.pulls.map((pull) => [pull.number, pull.rerequested, pull.turn?.reasons] as const));
+    expect(asked.toSorted(([a], [b]) => a - b)).toEqual([
+      [1, true, [{ code: "rerequested" }]],
+      [2, false, [{ code: "requested" }]],
+    ]);
+  });
+
+  test("marks a team request made after the viewer's latest review as re-requested", () => {
+    const team = { reviewRequests: { nodes: [{ requestedReviewer: { combinedSlug: "octo-org/core" } }] } };
+    const reviewed = { latestReviews: { nodes: [{ author: { login: "octocat" }, submittedAt: "2026-10-11T09:00:00Z" }] } };
+    const inbox = buildInbox(buildRaw([buildPull(1, { ...team, ...requestedAt("2026-10-12T09:00:00Z"), ...reviewed })]), 0);
+    expect(inbox.review[0]?.pulls[0]?.rerequested).toBe(true);
+    expect(inbox.review[0]?.pulls[0]?.turn?.reasons).toEqual([{ code: "rerequested" }]);
   });
 
   test("leaves out drafts and pull requests that no longer ask the viewer", () => {
@@ -416,14 +459,19 @@ describe("buildInbox turns", () => {
   });
 
   test("says a review request was asked again", () => {
-    const inbox = buildInbox(buildRaw([buildPull(1, { latestReviews: { nodes: [{ state: "COMMENTED", author: { login: "octocat" }, submittedAt: "2026-10-11T09:00:00Z" }] } })]), 0);
+    const inbox = buildInbox(buildRaw([buildPull(1, reviewedThenAsked("2026-10-11T09:00:00Z", "2026-10-12T09:00:00Z"))]), 0);
     expect(inbox.review[0]?.pulls[0]?.turn?.reasons).toEqual([{ code: "rerequested" }]);
+  });
+
+  test("says a review request is a first one when the viewer's only review came after it", () => {
+    const inbox = buildInbox(buildRaw([buildPull(1, reviewedThenAsked("2026-10-12T09:00:00Z", "2026-10-11T09:00:00Z"))]), 0);
+    expect(inbox.review[0]?.pulls[0]?.turn?.reasons).toEqual([{ code: "requested" }]);
   });
 });
 
 /** @returns A pull request the viewer requested changes on, before being asked again. */
 function before(submittedAt: string): Partial<RawInboxPull> {
-  return { latestReviews: { nodes: [{ state: "CHANGES_REQUESTED", author: { login: "octocat" }, submittedAt }] } };
+  return reviewedThenAsked(submittedAt, "2026-10-12T09:00:00Z", "CHANGES_REQUESTED");
 }
 
 /** @returns Each non-empty category's pull request numbers, group by group. */

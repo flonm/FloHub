@@ -5,7 +5,7 @@ import type { PullMove } from "../core/pull-state";
 import type { ReviewEvent } from "../core/shortcuts";
 import type { RawPullRequest } from "../core/reviewers";
 import type { RawStack, RawStackPull } from "../core/stack";
-import type { RawTurnThread } from "../core/turn";
+import type { RawReviewRequestEvent, RawTurnThread } from "../core/turn";
 import type { ViewedFile, ViewedFiles } from "../core/viewed";
 import { type CommentLink, type CommentPlace, threadNumber } from "../core/comment-jump";
 import type { ReviewAction, ReviewDiscussion } from "../core/threads";
@@ -77,6 +77,9 @@ query ($owner: String!, $name: String!, $number: Int!) {
       dismissals: timelineItems(last: 100, itemTypes: [REVIEW_DISMISSED_EVENT]) {
         nodes { ... on ReviewDismissedEvent { previousReviewState review { url } } }
       }
+      reviewRequestedEvents: timelineItems(last: 50, itemTypes: [REVIEW_REQUESTED_EVENT]) {
+        nodes { ... on ReviewRequestedEvent { createdAt requestedReviewer { ... on User { login } ... on Team { combinedSlug } } } }
+      }
       reviewRequests(first: 50) {
         nodes {
           requestedReviewer {
@@ -130,11 +133,14 @@ fragment InboxPull on PullRequest {
   repository { nameWithOwner }
   author { login avatarUrl }
   latestReviews(first: 20) { nodes { state author { login avatarUrl } submittedAt } }
+  viewerReviews: reviews(last: 1, author: $viewer, states: [APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]) {
+    nodes { state submittedAt }
+  }
   reviewRequests(first: 50) {
     nodes { requestedReviewer { ... on User { login } ... on Team { combinedSlug } } }
   }
   reviewRequestedEvents: timelineItems(last: 50, itemTypes: [REVIEW_REQUESTED_EVENT]) {
-    nodes { ... on ReviewRequestedEvent { createdAt requestedReviewer { ... on Team { combinedSlug } } } }
+    nodes { ... on ReviewRequestedEvent { createdAt requestedReviewer { ... on User { login } ... on Team { combinedSlug } } } }
   }
   ...TurnThreads
   stack {
@@ -143,7 +149,7 @@ fragment InboxPull on PullRequest {
     entries(first: 50) { nodes { position pullRequest { number } } }
   }
 }
-query ($ids: [ID!]!) {
+query ($ids: [ID!]!, $viewer: String!) {
   nodes(ids: $ids) { ... on PullRequest { ...InboxPull } }
 }`;
 
@@ -257,6 +263,8 @@ interface RawOverview {
             forcePushes: RawForcePushes;
             /** Missing from overviews cached before turns. */
             turnThreads?: { nodes: RawTurnThread[] };
+            /** Missing from overviews cached before FloHub read re-requests from the timeline. */
+            reviewRequestedEvents?: { nodes: RawReviewRequestEvent[] };
           })
       | null;
   } | null;
@@ -814,14 +822,18 @@ function pullPath(ref: PullRef): string {
  */
 export async function fetchInbox(): Promise<RawInbox> {
   const { data: ids } = await graphql<RawInboxIds>(INBOX_IDS_QUERY, { review: REVIEW_SEARCH, mine: MINE_SEARCH, waiting: WAITING_SEARCH });
-  return assembleRawInbox(ids, await fetchInboxDetails(inboxIds(ids)));
+  return assembleRawInbox(ids, await fetchInboxDetails(inboxIds(ids), ids.viewer.login));
 }
 
-/** @returns Each pull request's details by node id, leaving out those that are gone or out of the token's reach. */
-async function fetchInboxDetails(ids: string[]): Promise<Map<string, RawInboxPull>> {
+/**
+ * @param ids The pull requests' node ids.
+ * @param viewer The viewer's login, whose own reviews are fetched apart from GitHub's latest ones.
+ * @returns Each pull request's details by node id, leaving out those that are gone or out of the token's reach.
+ */
+async function fetchInboxDetails(ids: string[], viewer: string): Promise<Map<string, RawInboxPull>> {
   const chunks = await Promise.all(
     chunk(ids, INBOX_CHUNK).map(async (chunkIds) => {
-      const { data } = await graphql<{ nodes: (RawInboxPull | null)[] }>(INBOX_DETAILS_QUERY, { ids: chunkIds });
+      const { data } = await graphql<{ nodes: (RawInboxPull | null)[] }>(INBOX_DETAILS_QUERY, { ids: chunkIds, viewer });
       return data.nodes;
     }),
   );
@@ -856,9 +868,10 @@ export async function fetchOpenPulls(qualifiers: string[]): Promise<{ viewer: st
     }),
   );
   const ids = [...new Set(searches.flatMap((found) => found.search.nodes.flatMap((node) => (typeof node.id === "string" ? node.id : []))))];
-  const details = await fetchInboxDetails(ids);
+  const viewer = searches[0]?.viewer.login ?? "";
+  const details = await fetchInboxDetails(ids, viewer);
   return {
-    viewer: searches[0]?.viewer.login ?? "",
+    viewer,
     pulls: ids.flatMap((id) => details.get(id) ?? []),
     capped: searches.some((found) => found.search.issueCount > found.search.nodes.length),
   };

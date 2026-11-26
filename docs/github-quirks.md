@@ -76,6 +76,25 @@ were never affected: they come from the events themselves.
 nodes { __typename } }` on a pull request with a few force pushes. If `totalCount` equals the number of nodes, it can be
 read again, which also counts past 100.
 
+## A reviewer who is asked again drops out of the latest reviews
+
+*Seen 2026-11-26 in the GraphQL API, on every pull request tried where a reviewer was re-requested.*
+
+**What GitHub does.** `latestReviews` should list each reviewer's latest review. Once a reviewer is asked to review
+again, GitHub leaves their review out of it, though `reviews` and the timeline still have it. A pull request where two
+people approved and were then both re-requested lists neither of them in `latestReviews`. So "the viewer is requested
+and has a latest review", the obvious test for being asked again, is never true.
+
+**What FloHub does.** The inbox fetches the viewer's own latest submitted review apart, as `viewerReviews: reviews(last:
+1, author: $viewer, states: [...])` in `INBOX_DETAILS_QUERY` (`src/api/github.ts`), and reads the viewer's review from
+it (`viewerReview` in `src/core/inbox.ts`). Being asked again is then decided by FloHub, not GitHub: a review request
+for the viewer, or a team that asks them, made after that review (`askedHow` in `src/core/turn.ts`). The bar reads every
+review from `reviews` and wasn't affected.
+
+**How to tell it's fixed.** Review a pull request, have its author re-request you, and ask for `latestReviews(first:
+20) { nodes { author { login } } }`. If your review is listed, `viewerReviews` can go; `askedHow` stays, since it also
+keeps a reply in a thread from counting as a review that came before the request.
+
 ## A push resets the Viewed marks of files whose change stayed the same
 
 *Expected from how GitHub dismisses Viewed marks (`viewerViewedState: DISMISSED`), not yet observed on a real pull
